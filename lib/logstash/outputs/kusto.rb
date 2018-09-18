@@ -31,7 +31,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :path, validate: :string, required: true
 
   # Flush interval (in seconds) for flushing writes to log files.
-  # 0 will flush on every message.
+  # 0 will flush on every message. Increase this value to recude IO calls but keep 
+  # in mind that events buffered before flush can be lost in case of abrupt failure.
   config :flush_interval, validate: :number, default: 2
 
   # If the generated path is invalid, the events will be saved
@@ -69,7 +70,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Kusto configuration
   config :ingest_url, validate: :string, required: true
   config :app_id, validate: :string, required: true
-  config :app_key, validate: :string, required: true
+  config :app_key, validate: :password, required: true
   config :app_tenant, validate: :string, default: nil
 
   config :database, validate: :string, required: true
