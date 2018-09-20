@@ -30,7 +30,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # E.g: `/%{myfield}/`, `/test-%{myfield}/` are not valid paths
   config :path, validate: :string, required: true
 
-  # Flush interval (in seconds) for flushing writes to log files.
+  # Flush interval (in seconds) for flushing writes to files.
   # 0 will flush on every message. Increase this value to recude IO calls but keep 
   # in mind that events buffered before flush can be lost in case of abrupt failure.
   config :flush_interval, validate: :number, default: 2
@@ -67,15 +67,26 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # If `false`, the plugin will disregard temp files found
   config :recovery, validate: :boolean, default: true
 
-  # Kusto configuration
+  
+  # The Kusto endpoint for ingestion related communication. You can see it on the Azure Portal.
   config :ingest_url, validate: :string, required: true
+
+  # The following are the credentails used to connect to the Kusto service
+  # application id 
   config :app_id, validate: :string, required: true
+  # application key (secret)
   config :app_key, validate: :password, required: true
+  # aad tenant id
   config :app_tenant, validate: :string, default: nil
 
+  # The following are the data settings that impact where events are written to
+  # Database name
   config :database, validate: :string, required: true
+  # Target table name
   config :table, validate: :string, required: true
+  # Mapping name - used by kusto to map an incoming event to the right row format (what value goes into which column)
   config :mapping, validate: :string
+
 
   # Determines if local files used for temporary storage will be deleted
   # after upload is successful

@@ -1,79 +1,70 @@
-# Logstash Plugin
+# Logstash Output Plugin for Azure Kusto
+
+[![Travis Build Status](https://travis-ci.org/Azure/logstash-output-kusto.svg)](https://travis-ci.org/Azure/logstash-output-kusto)
 
 This is a plugin for [Logstash](https://github.com/elastic/logstash).
 
 It is fully free and fully open source. The license is Apache 2.0, meaning you are pretty much free to use it however you want in whatever way.
 
-## Documentation
+This plugin will enable you to transport event into an Azure Kusto database for later analysis. 
 
-Logstash provides infrastructure to automatically generate documentation for this plugin. We use the asciidoc format to write documentation so any comments in the source code will be first converted into asciidoc and then into html. All plugin documentation are placed under one [central location](http://www.elastic.co/guide/en/logstash/current/).
+## Installtion
 
-- For formatting code or config example, you can use the asciidoc `[source,ruby]` directive
-- For more asciidoc formatting tips, see the excellent reference here https://github.com/elastic/docs#asciidoc-guide
-
-## Need Help?
-
-Need help? Try #logstash on freenode IRC or the https://discuss.elastic.co/c/logstash discussion forum.
-
-## Developing
-
-### 1. Plugin Developement and Testing
-
-#### Code
-- To get started, you'll need JRuby with the Bundler gem installed.
-
-- Create a new plugin or clone and existing from the GitHub [logstash-plugins](https://github.com/logstash-plugins) organization. We also provide [example plugins](https://github.com/logstash-plugins?query=example).
-
-- Install dependencies
-```sh
-bundle install
-```
-
-#### Test
-
-- Update your dependencies
-
-```sh
-bundle install
-```
-
-- Run tests
-
-```sh
-bundle exec rspec
-```
-
-### 2. Running your unpublished Plugin in Logstash
-
-#### 2.1 Run in a local Logstash clone
-
-- Edit Logstash `Gemfile` and add the local plugin path, for example:
-```ruby
-gem "logstash-filter-awesome", :path => "/your/local/logstash-filter-awesome"
-```
-- Install plugin
-```sh
-bin/logstash-plugin install --no-verify
-```
-- Run Logstash with your plugin
-```sh
-bin/logstash -e 'filter {awesome {}}'
-```
-At this point any modifications to the plugin code will be applied to this local Logstash setup. After modifying the plugin, simply rerun Logstash.
-
-#### 2.2 Run in an installed Logstash
-
-You can use the same **2.1** method to run your plugin in an installed Logstash by editing its `Gemfile` and pointing the `:path` to your local plugin development directory or you can build the gem and install it using:
-
-- Build your plugin gem
-```sh
-gem build logstash-filter-awesome.gemspec
-```
+To make the plugin available in your Logstash environment follow these steps:
+- Download the latest release from this repository
 - Install the plugin from the Logstash home
 ```sh
-bin/logstash-plugin install /your/local/plugin/logstash-filter-awesome.gem
+bin/logstash-plugin install /path/to/logstash-output-kusto-0.1.6.gem
 ```
-- Start Logstash and proceed to test the plugin
+
+## Configuration
+
+Before you can start sending events from Logstash to Kusto you need to provide some required configuration.
+
+The following exmaple shows the bear minimum you should provide and it would be enough for most use-cases:
+```
+output {
+	kusto {
+		path => "/tmp/kusto/%{+YYYY-MM-dd-HH-mm}.txt"
+		ingest_url => "https://ingest-<cluster-name>.kusto.windows.net/"
+		app_id => "<application id>"
+		app_key => "<application key/secret>"
+        app_tenant => "<tenant id>"
+		database => "<database name>"
+		table => "<target table>"
+		mapping => "<mapping name>"
+	}
+}
+```
+
+### Available Configuration Keys
+
+path
+The plugin writes events to temporary files before it sends them to Kusto. This settings should include a path where these files should be written as well as some sort of time expression to note when file rotation should happen and trigger an upload to the Kusto service. The example above shows how to rotate the files every minute, check the Logstash docs for more information on time expressions.
+
+ingest_url
+The Kusto endpoint for ingestion related communication. You can see it on the Azure Portal.
+
+app_id, app_key, app_tenant
+Those are the credentials required to connect to the Kusto service. Be sure to use an application with 'ingest' privilages.
+
+database
+Database name where events should go to.
+
+table
+Target table name where events should be saved
+
+mapping
+The mapping object name used by kusto to map an incoming event to the right row format (what value goes into which column)
+
+recovery
+Notes if the plugin will attemp to resend pre-existing temp files upon startup (default is true)
+
+delete_temp_files
+Determines if temp files will be deleted after a successful upload (default is true, set false only for debug purposes)
+
+flush_interval
+Flush interval (in seconds) for flushing writes to files. Defaults to 2 seconds, 0 will flush on every message. Increase this value to recude IO calls but keep in mind that events in the buffer will be lost in case of abrupt failure.
 
 ## Contributing
 
