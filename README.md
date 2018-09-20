@@ -6,7 +6,7 @@ This is a plugin for [Logstash](https://github.com/elastic/logstash).
 
 It is fully free and fully open source. The license is Apache 2.0, meaning you are pretty much free to use it however you want in whatever way.
 
-This plugin will enable you to process events from Logstash into an Azure Kusto database for later analysis. 
+This plugin will enable you to process events from Logstash into an **Azure Kusto** database for later analysis. 
 
 ## Installation
 
@@ -48,7 +48,7 @@ The Kusto endpoint for ingestion related communication. You can see it on the Az
 Those are the credentials required to connect to the Kusto service. Be sure to use an application with 'ingest' privilages.
 
 #### database
-Database name where events should go to.
+Database name where events should go to
 
 #### table
 Target table name where events should be saved
