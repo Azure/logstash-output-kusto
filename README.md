@@ -14,7 +14,7 @@ To make the plugin available in your Logstash environment follow these steps:
 - Download the latest release from this repository
 - Install the plugin from the Logstash home
 ```sh
-bin/logstash-plugin install /path/to/logstash-output-kusto-0.1.6.gem
+bin/logstash-plugin install logstash-output-kusto
 ```
 
 ## Configuration
