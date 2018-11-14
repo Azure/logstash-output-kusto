@@ -1,4 +1,4 @@
-# Logstash Output Plugin for Azure Data Explorer
+# Logstash Output Plugin for Azure Data Explorer (Kusto)
 
 [![Travis Build Status](https://travis-ci.org/Azure/logstash-output-kusto.svg)](https://travis-ci.org/Azure/logstash-output-kusto)
 
