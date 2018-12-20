@@ -8,7 +8,7 @@ require 'logstash/outputs/kusto/ingestor'
 require 'logstash/outputs/kusto/interval'
 
 ##
-# This plugin send messages to Azure Kusto in batches.
+# This plugin sends messages to Azure Kusto in batches.
 #
 class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config_name 'kusto'
@@ -152,8 +152,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   private
   def validate_path
     if (root_directory =~ FIELD_REF) != nil
-      @logger.error('File: The starting part of the path should not be dynamic.', path: @path)
+      @logger.error('The starting part of the path should not be dynamic.', path: @path)
       raise LogStash::ConfigurationError.new('The starting part of the path should not be dynamic.')
+    end
+
+    if !path_with_field_ref?
+      @logger.error('Path should include some time related fields to allow for file rotation.', path: @path)
+      raise LogStash::ConfigurationError.new('Path should include some time related fields to allow for file rotation.')
     end
   end
 
