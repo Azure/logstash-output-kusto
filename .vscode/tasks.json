@@ -11,6 +11,15 @@
                 "kind": "build",
                 "isDefault": true
             }
+        },
+        {
+            "label": "Run tests",
+            "type": "shell",
+            "command": "bundle exec rspec spec",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
         }
     ]
 }

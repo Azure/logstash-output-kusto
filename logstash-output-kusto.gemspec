@@ -1,12 +1,12 @@
 Gem::Specification.new do |s|
   s.name          = 'logstash-output-kusto'
-  s.version       = '0.1.6'
+  s.version       = '0.2.0'
   s.licenses      = ['Apache-2.0']
-  s.summary       = 'Writes events to Azure KustoDB'
-  s.description   = 'This is a logstash output plugin used to write events to an Azure KustoDB instance'
-  s.homepage      = 'https://github.com/Azure/azure-diagnostics-tools/tree/master/Logstash'
+  s.summary       = 'Writes events to Azure Data Explorer (Kusto)'
+  s.description   = 'This is a logstash output plugin used to write events to an Azure Data Explorer (a.k.a Kusto)'
+  s.homepage      = 'https://github.com/Azure/logstash-output-kusto'
   s.authors       = ['Tamir Kamara']
-  s.email         = 'tamir.kamara@microsoft.com'
+  s.email         = 'nugetkusto@microsoft.com'
   s.require_paths = ['lib']
 
   # Files

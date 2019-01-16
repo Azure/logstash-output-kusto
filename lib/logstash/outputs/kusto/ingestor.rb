@@ -9,7 +9,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # This handles the overall logic and communication with Kusto
   #
   class Ingestor
-    require 'kusto/KustoClient-0.1.6.jar'
+    require 'kusto/kusto-ingest-1.0.0-BETA-01-jar-with-dependencies.jar'
 
     RETRY_DELAY_SECONDS = 3
     DEFAULT_THREADPOOL = Concurrent::ThreadPoolExecutor.new(
@@ -29,11 +29,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
       @logger.debug('Preparing Kusto resources.')
 
-      kusto_connection_string = Java::KustoConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key, app_tenant)
+      kusto_connection_string = Java::com.microsoft.azure.kusto.data.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
 
-      @kusto_client = Java::KustoIngestClient.new(kusto_connection_string)
+      @kusto_client = Java::com.microsoft.azure.kusto.ingest.IngestClientFactory.createClient(kusto_connection_string)
 
-      @ingestion_properties = Java::KustoIngestionProperties.new(database, table)
+      @ingestion_properties = Java::com.microsoft.azure.kusto.ingest.IngestionProperties.new(database, table)
       @ingestion_properties.setJsonMappingName(mapping)
 
       @delete_local = delete_local
@@ -48,12 +48,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       end
 
       if table =~ FIELD_REF
-        @logger.error('table config value should not be dynamic.', database)
+        @logger.error('table config value should not be dynamic.', table)
         raise LogStash::ConfigurationError.new('table config value should not be dynamic.')
       end
 
       if mapping =~ FIELD_REF
-        @logger.error('mapping config value should not be dynamic.', database)
+        @logger.error('mapping config value should not be dynamic.', mapping)
         raise LogStash::ConfigurationError.new('mapping config value should not be dynamic.')
       end
     end
@@ -90,7 +90,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       #   local_ingestion_properties.addJsonMappingName(mapping)
       # end
 
-      @kusto_client.ingestFromSingleFile(path, @ingestion_properties)
+      file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, 0); # 0 - let the sdk figure out the size of the file
+      @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
 
       File.delete(path) if delete_on_success
 
