@@ -40,6 +40,7 @@ output {
 	}
 }
 ```
+More information about configuring Logstash can be found in the [logstash configuration guide](https://www.elastic.co/guide/en/logstash/current/configuration.html)
 
 ### Available Configuration Keys
 
