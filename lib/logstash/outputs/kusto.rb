@@ -353,6 +353,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   private
   def recover_past_files
     require 'find'
+    require 'fileutils'
 
     # we need to find the last "regular" part in the path before any dynamic vars
     path_last_char = @path.length - 1
@@ -360,6 +361,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     pattern_start = @path.index('%') || path_last_char
     last_folder_before_pattern = @path.rindex('/', pattern_start) || path_last_char
     new_path = path[0..last_folder_before_pattern]
+    if not File.directory?(new_path)
+      @logger.info("Path does not exist. Creating directory #{@new_path}")
+      FileUtils.mkdir_p new_path  # ensure directory is present before traversing
+    end
     @logger.info("Going to recover old files in path #{@new_path}")
 
     begin
