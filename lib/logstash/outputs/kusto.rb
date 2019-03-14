@@ -362,10 +362,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     last_folder_before_pattern = @path.rindex('/', pattern_start) || path_last_char
     new_path = path[0..last_folder_before_pattern]
     if not File.directory?(new_path)
-      @logger.info("Path does not exist. Creating directory #{@new_path}")
+      @logger.info("Path does not exist. Creating directory #{new_path}")
       FileUtils.mkdir_p new_path  # ensure directory is present before traversing
     end
-    @logger.info("Going to recover old files in path #{@new_path}")
+    @logger.info("Going to recover old files in path #{new_path}")
 
     begin
       old_files = Find.find(new_path).select { |p| /.*\.kusto$/ =~ p }
