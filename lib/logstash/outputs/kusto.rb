@@ -360,9 +360,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     pattern_start = @path.index('%') || path_last_char
     last_folder_before_pattern = @path.rindex('/', pattern_start) || path_last_char
     new_path = path[0..last_folder_before_pattern]
-    @logger.info("Going to recover old files in path #{@new_path}")
-
+    
     begin
+      return unless Dir.exist?(new_path)
+      @logger.info("Going to recover old files in path #{@new_path}")
+      
       old_files = Find.find(new_path).select { |p| /.*\.kusto$/ =~ p }
       @logger.info("Found #{old_files.length} old file(s), sending them now...")
 
