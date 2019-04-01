@@ -134,6 +134,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, database, table, mapping, delete_temp_files, @logger, executor)
 
+    # send existing files
+    recover_past_files if recovery
+
+    @last_stale_cleanup_cycle = Time.now
+
     @flush_interval = @flush_interval.to_i
     if @flush_interval > 0
       @flusher = Interval.start(@flush_interval, -> { flush_pending_files })
@@ -142,11 +147,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     if (@stale_cleanup_type == 'interval') && (@stale_cleanup_interval > 0)
       @cleaner = Interval.start(stale_cleanup_interval, -> { close_stale_files })
     end
-
-    @last_stale_cleanup_cycle = Time.now
-
-    # send existing files
-    recover_past_files if recovery
   end
 
   private
