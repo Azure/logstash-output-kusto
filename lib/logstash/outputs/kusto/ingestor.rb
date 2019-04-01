@@ -96,6 +96,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       File.delete(path) if delete_on_success
 
       @logger.debug("File #{path} sent to kusto.")
+    rescue Errno::ENOENT => e
+      @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
     rescue Java::JavaNioFile::NoSuchFileException => e
       @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
     rescue => e
