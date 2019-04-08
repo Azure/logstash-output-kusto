@@ -134,6 +134,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, database, table, mapping, delete_temp_files, @logger, executor)
 
+    # send existing files
+    recover_past_files if recovery
+
+    @last_stale_cleanup_cycle = Time.now
+
     @flush_interval = @flush_interval.to_i
     if @flush_interval > 0
       @flusher = Interval.start(@flush_interval, -> { flush_pending_files })
@@ -142,11 +147,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     if (@stale_cleanup_type == 'interval') && (@stale_cleanup_interval > 0)
       @cleaner = Interval.start(stale_cleanup_interval, -> { close_stale_files })
     end
-
-    @last_stale_cleanup_cycle = Time.now
-
-    # send existing files
-    recover_past_files if recovery
   end
 
   private
@@ -360,9 +360,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     pattern_start = @path.index('%') || path_last_char
     last_folder_before_pattern = @path.rindex('/', pattern_start) || path_last_char
     new_path = path[0..last_folder_before_pattern]
-    @logger.info("Going to recover old files in path #{@new_path}")
-
+    
     begin
+      return unless Dir.exist?(new_path)
+      @logger.info("Going to recover old files in path #{@new_path}")
+      
       old_files = Find.find(new_path).select { |p| /.*\.#{database}\.#{table}$/ =~ p }
       @logger.info("Found #{old_files.length} old file(s), sending them now...")
 
