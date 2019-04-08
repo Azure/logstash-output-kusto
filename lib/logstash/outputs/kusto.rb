@@ -113,9 +113,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     # TODO: add id to the tmp path to support multiple outputs of the same type
     # add fields from the meta that will note the destination of the events in the file
     @path = if dynamic_event_routing
-              File.expand_path("#{path}.kusto.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][mapping]}")
+              File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][mapping]}")
             else
-              File.expand_path("#{path}.kusto")
+              File.expand_path("#{path}.#{database}.#{table}")
             end
 
     validate_path
@@ -365,7 +365,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       return unless Dir.exist?(new_path)
       @logger.info("Going to recover old files in path #{@new_path}")
       
-      old_files = Find.find(new_path).select { |p| /.*\.kusto$/ =~ p }
+      old_files = Find.find(new_path).select { |p| /.*\.#{database}\.#{table}$/ =~ p }
       @logger.info("Found #{old_files.length} old file(s), sending them now...")
 
       old_files.each do |file|
