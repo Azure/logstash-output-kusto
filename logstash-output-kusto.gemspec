@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name          = 'logstash-output-kusto'
-  s.version       = '0.2.0'
+  s.version       = '0.3.0'
   s.licenses      = ['Apache-2.0']
   s.summary       = 'Writes events to Azure Data Explorer (Kusto)'
   s.description   = 'This is a logstash output plugin used to write events to an Azure Data Explorer (a.k.a Kusto)'
@@ -23,10 +23,12 @@ Gem::Specification.new do |s|
   s.add_runtime_dependency 'logstash-codec-json_lines'
   s.add_runtime_dependency 'logstash-codec-line'
 
-  s.add_development_dependency "logstash-devutils"
+  s.add_development_dependency 'logstash-devutils'
   s.add_development_dependency 'flores'
   s.add_development_dependency 'logstash-input-generator'
+  s.add_development_dependency 'ruby-maven', '~> 3.3.11'
 
   # Jar dependencies
+  # s.requirements << "jar 'com.microsoft.azure.kusto:kusto-ingest', '1.0.0-BETA-04'"
   s.add_runtime_dependency 'jar-dependencies'
 end
