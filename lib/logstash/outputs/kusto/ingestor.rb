@@ -9,7 +9,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # This handles the overall logic and communication with Kusto
   #
   class Ingestor
-    require 'kusto/kusto-ingest-1.0.0-BETA-01-jar-with-dependencies.jar'
+    require 'kusto/kusto-ingest-1.0.0-BETA-04-jar-with-dependencies.jar'
 
     RETRY_DELAY_SECONDS = 3
     DEFAULT_THREADPOOL = Concurrent::ThreadPoolExecutor.new(
