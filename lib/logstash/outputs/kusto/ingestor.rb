@@ -30,6 +30,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.debug('Preparing Kusto resources.')
 
       kusto_connection_string = Java::com.microsoft.azure.kusto.data.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
+      
+      # Unfortunately there's no way to avoid using the gem/plugin name directly...
+      name_for_tracing = "logstash-output-kusto:#{Gem.loaded_specs['logstash-output-kusto'].version}"
+      @logger.debug("Client name for tracing: #{name_for_tracing}")
+      kusto_connection_string.setClientVersionForTracing(name_for_tracing)      
 
       @kusto_client = Java::com.microsoft.azure.kusto.ingest.IngestClientFactory.createClient(kusto_connection_string)
 

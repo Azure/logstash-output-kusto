@@ -20,3 +20,7 @@
 
 - move to version 1.0.0-BETA-04 of azure-kusto-java sdk
 - better support multiple kusto outputs running in parallel
+
+## 0.4.0
+
+- set 'client name for tracing' to identify usage of this plugin on Kusto logs
