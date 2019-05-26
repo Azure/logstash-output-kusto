@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
-  s.name          = 'logstash-output-kusto'
-  s.version       = '0.3.0'
+  s.name          = 'logstash-output-kusto' #WATCH OUT: we hardcoded usage of this name in one of the classes.
+  s.version       = '0.4.0'
   s.licenses      = ['Apache-2.0']
   s.summary       = 'Writes events to Azure Data Explorer (Kusto)'
   s.description   = 'This is a logstash output plugin used to write events to an Azure Data Explorer (a.k.a Kusto)'
