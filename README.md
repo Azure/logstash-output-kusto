@@ -58,6 +58,20 @@ More information about configuring Logstash can be found in the [logstash config
 | **delete_temp_files** | Determines if temp files will be deleted after a successful upload (true is default; set false for debug purposes only)| |
 | **flush_interval** | The time (in seconds) for flushing writes to temporary files. Default is 2 seconds, 0 will flush on every event. Increase this value to reduce IO calls but keep in mind that events in the buffer will be lost in case of abrupt failure.| |
 
+## Development Requirements
+
+- Openjdk **8 64bit** (https://www.openlogic.com/openjdk-downloads)
+- JRuby 9.2 or higher, defined with openjdk 8 64bit
+- Logstash, defined with openjdk 8 64bit
+
+To fully build the gem, run: 
+
+```shell
+bundle install
+lock_jars
+gem build
+```
+
 ## Contributing
 
 All contributions are welcome: ideas, patches, documentation, bug reports, and complaints.

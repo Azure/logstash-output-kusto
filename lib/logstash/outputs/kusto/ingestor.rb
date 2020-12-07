@@ -9,8 +9,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # This handles the overall logic and communication with Kusto
   #
   class Ingestor
-    require 'kusto/kusto-ingest-1.0.0-BETA-04-jar-with-dependencies.jar'
-
+    require 'logstash-output-kusto_jars'
     RETRY_DELAY_SECONDS = 3
     DEFAULT_THREADPOOL = Concurrent::ThreadPoolExecutor.new(
       min_threads: 1,
@@ -29,17 +28,19 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
       @logger.debug('Preparing Kusto resources.')
 
-      kusto_connection_string = Java::com.microsoft.azure.kusto.data.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
-      
+      kusto = Java::com.microsoft.azure.kusto
+      kusto_connection_string = kusto.data.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
+      @logger.debug(Gem.loaded_specs.to_s)
       # Unfortunately there's no way to avoid using the gem/plugin name directly...
-      name_for_tracing = "logstash-output-kusto:#{Gem.loaded_specs['logstash-output-kusto'].version}"
+      name_for_tracing = "logstash-output-kusto:#{Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"}"
       @logger.debug("Client name for tracing: #{name_for_tracing}")
       kusto_connection_string.setClientVersionForTracing(name_for_tracing)      
 
-      @kusto_client = Java::com.microsoft.azure.kusto.ingest.IngestClientFactory.createClient(kusto_connection_string)
+      @kusto_client = kusto.ingest.IngestClientFactory.createClient(kusto_connection_string)
 
-      @ingestion_properties = Java::com.microsoft.azure.kusto.ingest.IngestionProperties.new(database, table)
-      @ingestion_properties.setJsonMappingName(mapping)
+      @ingestion_properties = kusto.ingest.IngestionProperties.new(database, table)
+      @ingestion_properties.setIngestionMapping(mapping, kusto.ingest.IngestionMapping::IngestionMappingKind::Json) #TODO
+      @ingestion_properties.setDataFormat(kusto.ingest.IngestionProperties::DATA_FORMAT::json) #TODO
 
       @delete_local = delete_local
 
