@@ -84,8 +84,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :database, validate: :string, required: true
   # Target table name
   config :table, validate: :string, required: true
-  # Mapping name - used by kusto to map an incoming event to the right row format (what value goes into which column)
-  config :mapping, validate: :string
+  # Mapping name - used by kusto to map an incoming event to the right row format (what value goes into which column).
+  # Note that this *must* be a json mapping, as this is the interface between logstash and kusto
+  config :json_mapping, validate: :string
 
 
   # Determines if local files used for temporary storage will be deleted
@@ -113,7 +114,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     # TODO: add id to the tmp path to support multiple outputs of the same type
     # add fields from the meta that will note the destination of the events in the file
     @path = if dynamic_event_routing
-              File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][mapping]}")
+              File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][json_mapping]}")
             else
               File.expand_path("#{path}.#{database}.#{table}")
             end
@@ -132,7 +133,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                                                   max_queue: upload_queue_size,
                                                   fallback_policy: :caller_runs)
 
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, database, table, mapping, delete_temp_files, @logger, executor)
+    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, database, table, json_mapping, delete_temp_files, @logger, executor)
 
     # send existing files
     recover_past_files if recovery

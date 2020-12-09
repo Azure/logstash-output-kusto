@@ -20,11 +20,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     LOW_QUEUE_LENGTH = 3
     FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, database, table, mapping, delete_local, logger, threadpool = DEFAULT_THREADPOOL)
+    def initialize(ingest_url, app_id, app_key, app_tenant, database, table, json_mapping, delete_local, logger, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool
       @logger = logger
 
-      validate_config(database, table, mapping)
+      validate_config(database, table, json_mapping)
 
       @logger.debug('Preparing Kusto resources.')
 
@@ -39,8 +39,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @kusto_client = kusto.ingest.IngestClientFactory.createClient(kusto_connection_string)
 
       @ingestion_properties = kusto.ingest.IngestionProperties.new(database, table)
-      @ingestion_properties.setIngestionMapping(mapping, kusto.ingest.IngestionMapping::IngestionMappingKind::Json) #TODO
-      @ingestion_properties.setDataFormat(kusto.ingest.IngestionProperties::DATA_FORMAT::json) #TODO
+      @ingestion_properties.setIngestionMapping(json_mapping, kusto.ingest.IngestionMapping::IngestionMappingKind::Json)
+      @ingestion_properties.setDataFormat(kusto.ingest.IngestionProperties::DATA_FORMAT::json)
 
       @delete_local = delete_local
 

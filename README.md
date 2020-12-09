@@ -38,7 +38,7 @@ output {
             app_tenant => "<tenant id>"
             database => "<database name>"
             table => "<target table>"
-            mapping => "<mapping name>"
+            json_mapping => "<mapping name>"
 	}
 }
 ```
@@ -53,7 +53,7 @@ More information about configuring Logstash can be found in the [logstash config
 | **app_id, app_key, app_tenant**| Credentials required to connect to the ADX service. Be sure to use an application with 'ingest' priviledges. | Required|
 | **database**| Database name to place events | Required |
 | **table** | Target table name to place events | Required
-| **mapping** | Mapping is used to map an incoming event json string into the correct row format (which property goes into which column) | Required |
+| **json_mapping** | Mapping is used to map an incoming event json string into the correct row format (which property goes into which column). Note that this *must* be a json mapping, as this is the interface between logstash and kusto| Required |
 | **recovery** | If set to true (default), plugin will attempt to resend pre-existing temp files found in the path upon startup | |
 | **delete_temp_files** | Determines if temp files will be deleted after a successful upload (true is default; set false for debug purposes only)| |
 | **flush_interval** | The time (in seconds) for flushing writes to temporary files. Default is 2 seconds, 0 will flush on every event. Increase this value to reduce IO calls but keep in mind that events in the buffer will be lost in case of abrupt failure.| |
