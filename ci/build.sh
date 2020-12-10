@@ -18,4 +18,6 @@ else
     bundle install
     bundle exec rake vendor
     bundle exec rspec spec
+    lock_jars
+    gem build
 fi
