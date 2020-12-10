@@ -51,10 +51,10 @@ describe LogStash::Outputs::Kusto::Ingestor do
     end
 
     context 'doesnt allow mapping to have some dynamic part' do
-      dynamic_name_array.each do |test_mapping|
-        it "with database: #{test_mapping}" do
+      dynamic_name_array.each do |test_json_mapping|
+        it "with database: #{test_json_mapping}" do
           expect {
-            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, database, table, test_mapping, delete_local, logger)
+            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, database, table, test_json_mapping, delete_local, logger)
             ingestor.stop
           }.to raise_error(LogStash::ConfigurationError)          
         end

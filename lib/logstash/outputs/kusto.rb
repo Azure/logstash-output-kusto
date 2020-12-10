@@ -84,8 +84,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :database, validate: :string, required: true
   # Target table name
   config :table, validate: :string, required: true
-  # Mapping name - used by kusto to map an incoming event to the right row format (what value goes into which column).
-  # Note that this *must* be a json mapping, as this is the interface between logstash and kusto
+  # Mapping name - Used by Kusto to map each attribute from incoming event JSON strings to the appropriate column in the table.
+  # Note that this must be in JSON format, as this is the interface between Logstash and Kusto
   config :json_mapping, validate: :string
 
 
