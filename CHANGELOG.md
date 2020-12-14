@@ -27,4 +27,5 @@
 
 # 1.0.0
 
-- Use stable(2.1.2) version of the java sdk, and retrieve it from maven with bundler.
+- Use stable (2.1.2) version of the java sdk, and retrieve it from maven with bundler.
+- Renamed `mapping` to `json_mapping` in order to clarify usage. `mapping` still remains as a deprecated parameter.  

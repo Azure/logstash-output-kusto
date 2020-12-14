@@ -86,7 +86,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :table, validate: :string, required: true
   # Mapping name - Used by Kusto to map each attribute from incoming event JSON strings to the appropriate column in the table.
   # Note that this must be in JSON format, as this is the interface between Logstash and Kusto
-  config :json_mapping, validate: :string
+  config :json_mapping, validate: :string, required: true
+
+  # Mappung name - deprecated, use json_mapping
+  config :mapping, validate: :string, deprecated: true
 
 
   # Determines if local files used for temporary storage will be deleted
@@ -110,6 +113,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     @files = {}
     @io_mutex = Mutex.new
+
+    json_mapping ||= mapping
 
     # TODO: add id to the tmp path to support multiple outputs of the same type
     # add fields from the meta that will note the destination of the events in the file
