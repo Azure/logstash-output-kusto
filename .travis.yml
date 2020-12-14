@@ -4,6 +4,8 @@ cache: bundler
 matrix:
   include:
   - rvm: jruby-9.2.13.0
+    env: LOGSTASH_BRANCH=7.x
+  - rvm: jruby-9.2.13.0
     env: LOGSTASH_BRANCH=7.0
   - rvm: jruby-9.2.13.0
     env: LOGSTASH_BRANCH=6.8
