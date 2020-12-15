@@ -16,7 +16,7 @@ matrix:
   fast_finish: true
 install: true
 script: ci/build.sh
-jdk: oraclejdk8
+jdk: openjdk8
 deploy:
   provider: rubygems
   api_key: $rubygems_api_key
