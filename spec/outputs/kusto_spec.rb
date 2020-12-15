@@ -13,7 +13,7 @@ describe LogStash::Outputs::Kusto do
     "app_tenant" => "mytenant", 
     "database" => "mydatabase",
     "table" => "mytable",
-    "mapping" => "mymapping"
+    "json_mapping" => "mymapping"
   } }
 
   describe '#register' do

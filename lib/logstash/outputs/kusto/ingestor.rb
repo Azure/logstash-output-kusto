@@ -20,11 +20,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     LOW_QUEUE_LENGTH = 3
     FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, database, table, mapping, delete_local, logger, threadpool = DEFAULT_THREADPOOL)
+    def initialize(ingest_url, app_id, app_key, app_tenant, database, table, json_mapping, delete_local, logger, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool
       @logger = logger
 
-      validate_config(database, table, mapping)
+      validate_config(database, table, json_mapping)
 
       @logger.debug('Preparing Kusto resources.')
 
@@ -39,15 +39,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @kusto_client = kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
 
       @ingestion_properties = kusto_java.ingest.IngestionProperties.new(database, table)
-      @ingestion_properties.setIngestionMapping(mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::Json) #TODO
-      @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DATA_FORMAT::json) #TODO
+      @ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::Json)
+      @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DATA_FORMAT::json)
 
       @delete_local = delete_local
 
       @logger.debug('Kusto resources are ready.')
     end
 
-    def validate_config(database, table, mapping)
+    def validate_config(database, table, json_mapping)
       if database =~ FIELD_REF
         @logger.error('database config value should not be dynamic.', database)
         raise LogStash::ConfigurationError.new('database config value should not be dynamic.')
@@ -58,9 +58,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         raise LogStash::ConfigurationError.new('table config value should not be dynamic.')
       end
 
-      if mapping =~ FIELD_REF
-        @logger.error('mapping config value should not be dynamic.', mapping)
-        raise LogStash::ConfigurationError.new('mapping config value should not be dynamic.')
+      if json_mapping =~ FIELD_REF
+        @logger.error('json_mapping config value should not be dynamic.', json_mapping)
+        raise LogStash::ConfigurationError.new('json_mapping config value should not be dynamic.')
       end
     end
 
@@ -87,13 +87,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # file_metadata_parts = file_metadata.split('.')
 
       # if file_metadata_parts.length == 3
-      #   # this is the number we expect - database, table, mapping
+      #   # this is the number we expect - database, table, json_mapping
       #   database = file_metadata_parts[0]
       #   table = file_metadata_parts[1]
-      #   mapping = file_metadata_parts[2]
+      #   json_mapping = file_metadata_parts[2]
 
       #   local_ingestion_properties = Java::KustoIngestionProperties.new(database, table)
-      #   local_ingestion_properties.addJsonMappingName(mapping)
+      #   local_ingestion_properties.addJsonMappingName(json_mapping)
       # end
 
       file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, 0); # 0 - let the sdk figure out the size of the file
