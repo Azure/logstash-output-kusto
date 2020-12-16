@@ -1,3 +1,5 @@
+gem 'ruby-maven', '~> 3.3.11'
+
 source 'https://rubygems.org'
 gemspec
 
