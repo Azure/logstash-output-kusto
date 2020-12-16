@@ -11,7 +11,7 @@ matrix:
     env: LOGSTASH_BRANCH=6.8
   - rvm: jruby-9.2.13.0
     env: LOGSTASH_BRANCH=6.7
-  - rvm: jruby-9.2.13.0
+  - rvm: jruby-9.1.13.0
     env: LOGSTASH_BRANCH=6.6
   fast_finish: true
 install: true
