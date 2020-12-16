@@ -19,5 +19,5 @@ else
     bundle exec rake vendor
     bundle exec rspec spec
     lock_jars
-    gem build
+    gem build logstash-output-kusto.gemspec
 fi
