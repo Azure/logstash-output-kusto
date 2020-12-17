@@ -24,3 +24,8 @@
 ## 0.4.0
 
 - set 'client name for tracing' to identify usage of this plugin on Kusto logs
+
+# 1.0.0
+
+- Use stable (2.1.2) version of the java sdk, and retrieve it from maven with bundler.
+- Renamed `mapping` to `json_mapping` in order to clarify usage. `mapping` still remains as a deprecated parameter.  
