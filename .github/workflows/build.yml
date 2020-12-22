@@ -16,7 +16,7 @@ jobs:
             bundler-cache: true
         - run: bundle install
         - name: Test
-          run: rake spec
+          run: bundle exec rake spec
         - run: gem build *.gemspec
         - name: Upload gem
           uses: actions/upload-artifact@v2
