@@ -39,12 +39,12 @@ jobs:
             LOGSTASH_SOURCE: 1
             LOGSTASH_PATH: logstash
         - run: gem build *.gemspec
-        - name: Upload gem
+        - if: matrix.logstash-version == '7.x'
+          name: Upload gem
           uses: actions/upload-artifact@v2
           with:
             name: logstash-kusto.gem
             path: '*.gem'
-          if: ${{ matrix.logstash-version }} == '7.x'
         - name: Publish Unit Test Results
           uses: EnricoMi/publish-unit-test-result-action@v1.6
           if: always()
