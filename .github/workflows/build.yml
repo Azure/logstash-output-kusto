@@ -14,6 +14,10 @@ jobs:
           uses: actions/setup-java@v1
           with:
             java-version: 1.8
+        - uses: ruby/setup-ruby@v1
+          with:
+            ruby-version: jruby
+            bundler-cache: true
         - name: Checkout logstash ${{ matrix.logstash-version }}
           uses: actions/checkout@v2
           with:
@@ -21,12 +25,8 @@ jobs:
             ref: ${{ matrix.logstash-version }}
             path: logstash
         - name: Build logstash
-          run: ./gradlew build
+          run: ./gradlew assemble
           working-directory: logstash
-        - uses: ruby/setup-ruby@v1
-          with:
-            ruby-version: jruby
-            bundler-cache: true
         - name: Checkout code
           uses: actions/checkout@v2
         - run: bundle install
