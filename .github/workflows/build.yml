@@ -8,7 +8,7 @@ jobs:
       runs-on: ubuntu-latest
       strategy:
         matrix:
-          logstash-version: [6.6, 6.7, 6.8, 7.0, 7.x]
+          logstash-version: [v6.6, v6.7, v6.8, v7.0, v7.x]
       steps:
         - name: Set up JDK 1.8
           uses: actions/setup-java@v1
@@ -44,7 +44,7 @@ jobs:
           with:
             name: logstash-kusto.gem
             path: '*.gem'
-          if: ${{ matrix.logstash-version }} == '7.x'
+          if: ${{ matrix.logstash-version }} == 'v7.x'
         - name: Publish Unit Test Results
           uses: EnricoMi/publish-unit-test-result-action@v1.6
           if: always()
