@@ -11,3 +11,7 @@ begin
   RSpec::Core::RakeTask.new(:spec)
 rescue LoadError
 end
+
+RSpec::Core::RakeTask.new(:spec_junit) do |t|
+  t.rspec_opts = '--format RspecJunitFormatter --out rspec.xml'
+end
