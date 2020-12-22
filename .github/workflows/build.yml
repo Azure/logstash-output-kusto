@@ -44,7 +44,7 @@ jobs:
           with:
             name: logstash-kusto.gem
             path: '*.gem'
-          if: matrix.logstash-version == "7.x"
+          if: ${{ matrix.logstash-version }} == '7.x'
         - name: Publish Unit Test Results
           uses: EnricoMi/publish-unit-test-result-action@v1.6
           if: always()
