@@ -23,8 +23,8 @@ jobs:
         - name: Checkout logstash ${{ matrix.logstash-version }}
           uses: actions/checkout@v2
           with:
-            repository: "https://github.com/elastic/logstash.git"
-            ref: logstash-version
+            repository: "elastic/logstash"
+            ref: ${{ matrix.logstash-version }}
             path: logstash
         - name: Build logstash
           run: ./gradlew build
