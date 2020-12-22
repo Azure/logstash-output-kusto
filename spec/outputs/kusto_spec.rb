@@ -21,7 +21,6 @@ describe LogStash::Outputs::Kusto do
     it 'doesnt allow the path to start with a dynamic string' do
       kusto = described_class.new(options.merge( {'path' => '/%{name}'} ))
       expect { kusto.register }.to raise_error(LogStash::ConfigurationError)
-      expect { 1 }.to be {2}
       kusto.close
     end
 
