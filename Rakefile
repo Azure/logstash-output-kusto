@@ -5,3 +5,9 @@ task :default do
 end
 
 require "logstash/devutils/rake"
+
+begin
+  require 'rspec/core/rake_task'
+  RSpec::Core::RakeTask.new(:spec)
+rescue LoadError
+end
