@@ -15,5 +15,4 @@ jobs:
             ruby-version: jruby
             bundler-cache: true
         - run: bundle install
-        - run: lock_jars
         - run: gem build *.gemspec
