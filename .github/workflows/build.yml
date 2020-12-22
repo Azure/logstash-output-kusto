@@ -11,7 +11,7 @@ jobs:
         logstash-version: [ '6.6', 'default' ]
     env:
       LOGSTASH_SOURCE: 1
-      LOGSTASH_PATH: ./logstash
+      LOGSTASH_PATH: ..//logstash
     steps:
       - if: matrix.logstash-version != 'default'
         name: Set up JDK 1.8
@@ -35,19 +35,24 @@ jobs:
         working-directory: logstash
       - name: Checkout code
         uses: actions/checkout@v2
+        with:
+          path: 'kusto'
       - run: bundle install
+        working-directory: 'kusto'
       - name: Test
         run: bundle exec rake spec_junit
+        working-directory: 'kusto'
       - run: gem build *.gemspec
+        working-directory: 'kusto'
       - if: matrix.logstash-version == 'default'
         name: Upload gem
         uses: actions/upload-artifact@v2
         with:
           name: logstash-kusto.gem
-          path: '*.gem'
+          path: 'kusto/*.gem'
       - if: matrix.logstash-version == 'default'
         name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v1.6
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          files: rspec.xml
+          files: kusto/rspec.xml
