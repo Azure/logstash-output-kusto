@@ -61,6 +61,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: jruby
+          bundler-cache: true
       - name: Checkout code
         uses: actions/checkout@v2
       - name: Download gem
@@ -73,6 +77,8 @@ jobs:
           sudo apt-get install apt-transport-https
           echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
           sudo apt-get update && sudo apt-get install logstash
+      - name: Install plugin
+        run: bin/logstash-plugin install logstash-kusto.gem
       - name: Run e2e
         run:
-          jruby e2e.rb
+          ruby e2e.rb
