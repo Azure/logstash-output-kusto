@@ -79,41 +79,58 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
 
     def upload(path, delete_on_success)
-      file_size = File.size(path)
-      @logger.debug("Sending file to kusto: #{path}. size: #{file_size}")
+      begin
+        file_size = File.size(path)
+        @logger.debug("Sending file to kusto: #{path}. size: #{file_size}")
 
-      # TODO: dynamic routing
-      # file_metadata = path.partition('.kusto.').last
-      # file_metadata_parts = file_metadata.split('.')
+        # TODO: dynamic routing
+        # file_metadata = path.partition('.kusto.').last
+        # file_metadata_parts = file_metadata.split('.')
 
-      # if file_metadata_parts.length == 3
-      #   # this is the number we expect - database, table, json_mapping
-      #   database = file_metadata_parts[0]
-      #   table = file_metadata_parts[1]
-      #   json_mapping = file_metadata_parts[2]
+        # if file_metadata_parts.length == 3
+        #   # this is the number we expect - database, table, json_mapping
+        #   database = file_metadata_parts[0]
+        #   table = file_metadata_parts[1]
+        #   json_mapping = file_metadata_parts[2]
 
-      #   local_ingestion_properties = Java::KustoIngestionProperties.new(database, table)
-      #   local_ingestion_properties.addJsonMappingName(json_mapping)
-      # end
+        #   local_ingestion_properties = Java::KustoIngestionProperties.new(database, table)
+        #   local_ingestion_properties.addJsonMappingName(json_mapping)
+        # end
 
-      file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, 0); # 0 - let the sdk figure out the size of the file
-      @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
+        file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, 0); # 0 - let the sdk figure out the size of the file
+        @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
 
-      File.delete(path) if delete_on_success
+        @logger.debug("File #{path} sent to kusto.")
+      rescue Errno::ENOENT => e
+        @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+      rescue Java::JavaNioFile::NoSuchFileException => e
+        @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+      rescue => e
+        # When the retry limit is reached or another error happen we will wait and retry.
+        #
+        # Thread might be stuck here, but I think its better than losing anything
+        # its either a transient errors or something bad really happened.
+        @logger.error('Uploading failed, retrying.', exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+        sleep RETRY_DELAY_SECONDS
+        retry
+      end
 
-      @logger.debug("File #{path} sent to kusto.")
-    rescue Errno::ENOENT => e
-      @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
-    rescue Java::JavaNioFile::NoSuchFileException => e
-      @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
-    rescue => e
-      # When the retry limit is reached or another error happen we will wait and retry.
-      #
-      # Thread might be stuck here, but I think its better than losing anything
-      # its either a transient errors or something bad really happened.
-      @logger.error('Uploading failed, retrying.', exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
-      sleep RETRY_DELAY_SECONDS
-      retry
+      begin
+        File.delete(path) if delete_on_success
+        @logger.debug("File #{path} deleted.")
+      rescue Errno::ENOENT => e
+        @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+      rescue Java::JavaNioFile::NoSuchFileException => e
+        @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+      rescue => e
+        # When the retry limit is reached or another error happen we will wait and retry.
+        #
+        # Thread might be stuck here, but I think its better than losing anything
+        # its either a transient errors or something bad really happened.
+        @logger.error('Deleting failed, retrying.', exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+        sleep RETRY_DELAY_SECONDS
+        retry
+      end
     end
 
     def stop
