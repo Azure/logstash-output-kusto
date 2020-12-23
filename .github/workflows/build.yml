@@ -56,3 +56,22 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           files: kusto/rspec.xml
+  e2e:
+    name: End-To-End Testing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download gem
+        uses: actions/download-artifact@v2
+        with:
+          name: logstash-kusto.gem
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Install logstash # taken from logstash's website https://www.elastic.co/guide/en/logstash/7.10/installing-logstash.html#_apt
+        run: |
+          wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+          sudo apt-get install apt-transport-https
+          echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
+          sudo apt-get update && sudo apt-get install logstash
+      - name: Run e2e
+        run:
+          jruby e2e.rb

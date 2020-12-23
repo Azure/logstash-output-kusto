@@ -1,0 +1,1 @@
+puts %(bin/logstash --version)
