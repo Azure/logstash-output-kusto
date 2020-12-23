@@ -71,6 +71,7 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: logstash-kusto.gem
+          path: logstash-kusto.gem
       - name: Install logstash # taken from logstash's website https://www.elastic.co/guide/en/logstash/7.10/installing-logstash.html#_apt
         run: |
           wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
