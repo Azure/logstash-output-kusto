@@ -78,7 +78,7 @@ jobs:
           echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
           sudo apt-get update && sudo apt-get install logstash
       - name: Install plugin
-        run: 'echo `whereis -b logstash` && `whereis -b logstash`/bin/logstash-plugin install logstash-kusto.gem'
+        run: '/usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem'
       - name: Run e2e
         run:
           ruby e2e.rb
