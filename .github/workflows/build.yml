@@ -44,12 +44,14 @@ jobs:
         working-directory: 'kusto'
       - run: gem build *.gemspec
         working-directory: 'kusto'
+      - run: mv *.gem logstash-kusto.gem
+        working-directory: 'kusto'
       - if: matrix.logstash-version == 'default'
         name: Upload gem
         uses: actions/upload-artifact@v2
         with:
           name: logstash-kusto.gem
-          path: 'kusto/*.gem'
+          path: 'kusto/logstash-kusto.gem'
       - if: matrix.logstash-version == 'default'
         name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v1.6
@@ -78,7 +80,7 @@ jobs:
           echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
           sudo apt-get update && sudo apt-get install logstash
       - name: Install plugin
-        run: sudo /usr/share/logstash/bin/logstash-plugin install ${{steps.download.outputs.download-path}}
+        run: ls -la logstash-kusto.gem && sudo /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
       - name: Run e2e
         run:
           sudo ruby e2e.rb
