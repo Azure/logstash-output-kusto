@@ -57,8 +57,7 @@ output {
     pid = spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
     sleep(15)
     input_file.write(File.read("dataset.csv"))
-    sleep(30)
-    puts File.read(@output_file)
+    sleep(60)
   end
 
   def start
