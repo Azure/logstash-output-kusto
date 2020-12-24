@@ -2,29 +2,22 @@ require '../lib/logstash-output-kusto_jars'
 $kusto_java = Java::com.microsoft.azure.kusto
 
 class E2E
-  @input_file = "input_file.txt"
-  @output_file = "output_file.txt"
-  @columns = "(rownumber:int, rowguid:string, xdouble:real, xfloat:real, xbool:bool, xint16:int, xint32:int, xint64:long, xuint8:long, xuint16:long, xuint32:long, xuint64:long, xdate:datetime, xsmalltext:string, xtext:string, xnumberAsText:string, xtime:timespan, xtextWithNulls:string, xdynamicWithNulls:dynamic)"
-  @csv_columns = 'rownumber", "rowguid", "xdouble", "xfloat", "xbool", "xint16", "xint32", "xint64", "xuint8", "xuint16", "xuint32", "xuint64", "xdate", "xsmalltext", "xtext", "xnumberAsText", "xtime", "xtextWithNulls", "xdynamicWithNulls"'
-  @engine_url = ENV["ENGINE_URL"]
-  @ingest_url = ENV["INGEST_URL"]
-  @app_id = ENV["APP_ID"]
-  @app_kay = ENV['APP_KEY']
-  @tenant_id = ENV['TENANT_ID']
-  @database = ENV['TEST_DATABASE']
-  @table = "RubyE2E#{Time.now.getutc}"
-  @mapping_name = "test_mapping"
-
-  def create_table_and_mapping
-    puts "Creating table #{@table}"
-    @query_client.execute(@database, ".drop table #{@table} ifexists")
-    sleep(1)
-    @query_client.execute(@database, ".create table #{@table} #{@columns}")
-    @query_client.execute(@database, ".create table #{@table} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
-  end
 
   def initialize
     super
+    @input_file = "input_file.txt"
+    @output_file = "output_file.txt"
+    @columns = "(rownumber:int, rowguid:string, xdouble:real, xfloat:real, xbool:bool, xint16:int, xint32:int, xint64:long, xuint8:long, xuint16:long, xuint32:long, xuint64:long, xdate:datetime, xsmalltext:string, xtext:string, xnumberAsText:string, xtime:timespan, xtextWithNulls:string, xdynamicWithNulls:dynamic)"
+    @csv_columns = 'rownumber", "rowguid", "xdouble", "xfloat", "xbool", "xint16", "xint32", "xint64", "xuint8", "xuint16", "xuint32", "xuint64", "xdate", "xsmalltext", "xtext", "xnumberAsText", "xtime", "xtextWithNulls", "xdynamicWithNulls"'
+    @engine_url = ENV["ENGINE_URL"]
+    @ingest_url = ENV["INGEST_URL"]
+    @app_id = ENV["APP_ID"]
+    @app_kay = ENV['APP_KEY']
+    @tenant_id = ENV['TENANT_ID']
+    @database = ENV['TEST_DATABASE']
+    @table = "RubyE2E#{Time.now.getutc}"
+    @mapping_name = "test_mapping"
+
     @logstash_config = %{
 input {
   file { path => "#{@input_file}"}
@@ -47,6 +40,15 @@ output {
 }
 }
   end
+
+  def create_table_and_mapping
+    puts "Creating table #{@table}"
+    @query_client.execute(@database, ".drop table #{@table} ifexists")
+    sleep(1)
+    @query_client.execute(@database, ".create table #{@table} #{@columns}")
+    @query_client.execute(@database, ".create table #{@table} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
+  end
+
 
   def run_logstash
     File.write("logstash.conf", @logstash_config)
