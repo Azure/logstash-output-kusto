@@ -52,7 +52,7 @@ output {
 
   def run_logstash
     File.write("logstash.conf", @logstash_config)
-    pid = Process.fork { spawn("/usr/share/logstash/bin/logstash -f logstash.conf") }
+    pid = spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
     sleep(15)
     open(@input_file).write(File.read("dataset.csv"))
     sleep(15)
@@ -63,7 +63,7 @@ output {
   def start
     @query_client = $kusto_java.data.ClientImpl.new($kusto_java.data.ConnectionStringBuilder::createWithAadApplicationCredentials(@engine_url, @app_id, @app_kay, @tenant_id))
     create_table_and_mapping
-
+    run_logstash
   end
 
 end
