@@ -55,13 +55,13 @@ output {
     input_file = open(@input_file, "w")
     File.write(@output_file, "")
     puts "ehre0 ", input_file
-    pid = spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
+    pid = fork { spawn("/usr/share/logstash/bin/logstash -f logstash.conf") }
     puts "ehre1"
     sleep(15)
     puts "ehre2"
     input_file.write(File.read("dataset.csv"))
     puts "ehre3"
-    sleep(60)
+    sleep(240)
     puts "ehre4"
   end
 
