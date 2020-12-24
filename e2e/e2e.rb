@@ -5,7 +5,7 @@ class E2E
 
   def initialize
     super
-    @input_file = "input_file.txt"
+    @input_file = "/tmp/input_file.txt"
     @output_file = "output_file.txt"
     @columns = "(rownumber:int, rowguid:string, xdouble:real, xfloat:real, xbool:bool, xint16:int, xint32:int, xint64:long, xuint8:long, xuint16:long, xuint32:long, xuint64:long, xdate:datetime, xsmalltext:string, xtext:string, xnumberAsText:string, xtime:timespan, xtextWithNulls:string, xdynamicWithNulls:dynamic)"
     @csv_columns = '"rownumber", "rowguid", "xdouble", "xfloat", "xbool", "xint16", "xint32", "xint64", "xuint8", "xuint16", "xuint32", "xuint64", "xdate", "xsmalltext", "xtext", "xnumberAsText", "xtime", "xtextWithNulls", "xdynamicWithNulls"'
@@ -53,9 +53,9 @@ output {
   def run_logstash
     File.write("logstash.conf", @logstash_config)
     pid = spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
-
-    File.write(@input_file, "dataset.csv")
-    sleep(5)
+    sleep(15)
+    open(@input_file).write(File.read("dataset.csv"))
+    sleep(15)
     Process.kill("KILL", pid)
     puts File.read(@output_file)
   end
