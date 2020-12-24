@@ -57,6 +57,7 @@ output {
     File.write(@input_file, "dataset.csv")
     sleep(5)
     Process.kill("KILL", pid)
+    puts File.read(@output_file)
   end
 
   def start
