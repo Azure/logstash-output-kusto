@@ -61,7 +61,7 @@ output {
     puts "ehre2"
     input_file.write(File.read("dataset.csv"))
     puts "ehre3"
-    sleep(240)
+    sleep(120)
     puts "ehre4"
   end
 
