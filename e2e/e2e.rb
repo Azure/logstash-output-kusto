@@ -52,16 +52,19 @@ output {
 
   def run_logstash
     File.write("logstash.conf", @logstash_config)
-    input_file = open(@input_file, "w")
+
     File.write(@output_file, "")
+    File.write(@input_file, "")
     puts "ehre0 ", input_file
     pid = spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
     puts "ehre1"
     sleep(15)
     puts "ehre2"
-    input_file.write(File.read("dataset.csv"))
+    data = File.read("dataset.csv")
+    puts data.length
+    File.write(@input_file, data)
     puts "ehre3"
-    sleep(180)
+    sleep(120)
     puts "ehre4"
     File.read(@output_file)
     puts "here5"
