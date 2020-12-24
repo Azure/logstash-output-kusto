@@ -82,10 +82,8 @@ jobs:
       - name: Install plugin
         run: sudo /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
       - run: bundle install
-        working-directory: 'kusto'
       - name: Run e2e
-        run:
-          sudo ruby e2e/e2e.rb
+        run: sudo ruby e2e/e2e.rb
         env:
           ENGINE_URL: ${{ secrets.ENGINE_URL }}
           INGEST_URL: ${{ secrets.INGEST_URL }}
