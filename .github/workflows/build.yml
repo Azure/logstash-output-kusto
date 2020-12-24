@@ -71,7 +71,7 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: logstash-kusto.gem
-          path: /tmp/logstash-kusto.gem
+          path: /usr/share/logstash/bin/logstash-kusto.gem
       - name: Install logstash # taken from logstash's website https://www.elastic.co/guide/en/logstash/7.10/installing-logstash.html#_apt
         run: |
           wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
@@ -79,7 +79,7 @@ jobs:
           echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
           sudo apt-get update && sudo apt-get install logstash
       - name: Install plugin
-        run: 'ls -la && sudo /usr/share/logstash/bin/logstash-plugin install /tmp/logstash-kusto.gem'
+        run: ls -la /usr/share/logstash/bin/ && sudo /usr/share/logstash/bin/logstash-plugin install /usr/share/logstash/bin/logstash-kusto.gem
       - name: Run e2e
         run:
           sudo ruby e2e.rb
