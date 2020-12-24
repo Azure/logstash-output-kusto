@@ -55,7 +55,7 @@ output {
 
     File.write(@output_file, "")
     File.write(@input_file, "")
-    puts "ehre0 ", input_file
+    puts "ehre0 "
     pid = spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
     puts "ehre1"
     sleep(15)
