@@ -15,7 +15,7 @@ class E2E
     @app_kay = ENV['APP_KEY']
     @tenant_id = ENV['TENANT_ID']
     @database = ENV['TEST_DATABASE']
-    @table = "RubyE2E#{Time.now.getutc}"
+    @table = "RubyE2E#{Time.now.getutc.to_i}"
     @mapping_name = "test_mapping"
 
     @logstash_config = %{
