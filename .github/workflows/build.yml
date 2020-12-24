@@ -83,7 +83,7 @@ jobs:
         run: sudo /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
       - run: sudo env "PATH=$PATH" bundle install
       - name: Run e2e
-        run: sudo env "PATH=$PATH" ruby e2e.rb
+        run: ruby e2e.rb
         working-directory: 'e2e'
         env:
           ENGINE_URL: ${{ secrets.ENGINE_URL }}
