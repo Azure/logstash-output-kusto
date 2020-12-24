@@ -93,4 +93,4 @@ jobs:
           APP_ID: ${{ secrets.APP_ID }}
           APP_KEY: ${{ secrets.APP_KEY }}
           TENANT_ID: ${{ secrets.TENANT_ID }}
-          TEST_DATABASE: e2e
+          TEST_DATABASE: ${{ secrets.TEST_DATABASE }}
