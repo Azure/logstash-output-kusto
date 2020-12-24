@@ -52,12 +52,13 @@ output {
 
   def run_logstash
     File.write("logstash.conf", @logstash_config)
+    input_file = open(@input_file, "w")
     pid = spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
     sleep(15)
-    open(@input_file).write(File.read("dataset.csv"))
+    input_file.write(File.read("dataset.csv"))
     sleep(15)
-    Process.kill("KILL", pid)
     puts File.read(@output_file)
+    Process.kill("KILL", pid)
   end
 
   def start
