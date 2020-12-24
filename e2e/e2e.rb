@@ -52,7 +52,7 @@ output {
 
   def run_logstash
     File.write("logstash.conf", @logstash_config)
-    pid = spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
+    pid = Process.fork { spawn("/usr/share/logstash/bin/logstash -f logstash.conf") }
     sleep(15)
     open(@input_file).write(File.read("dataset.csv"))
     sleep(15)
