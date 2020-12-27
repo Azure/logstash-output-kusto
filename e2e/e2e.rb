@@ -89,7 +89,7 @@ output {
         puts "Item #{i}"
         (0...@column_count).each do |j|
           csv_item = csv_data[i][j]
-          result_item = result.get(i) == nil ? "" : result.getString(i)
+          result_item = result.getObject(i) == nil ? "" : result.getString(i)
           puts "  csv[#{j}] = #{csv_item}"
           puts "  result[#{j}] = #{result_item}"
           raise "Result Doesn't match csv" unless csv_item == result_item
