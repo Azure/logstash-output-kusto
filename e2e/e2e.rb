@@ -86,9 +86,12 @@ output {
       end
       (0..csv_data.length).each do |i|
         result.next()
+        puts "Item #{i}"
         (0..@column_count).each do |j|
-          raise "Wrong data in row #{i}, col #{j} - expected #{csv_data[i][j]}, got #{result.getString(j)}" unless csv_data[i][j] == result.getString(j)
+          print "csv[#{j}] = #{csv_data[i][j]}"
+          print "result[#{j}] = #{result.getString(j)}"
         end
+        puts ""
       end
       return
 
