@@ -75,7 +75,7 @@ output {
     max_timeout = 10
     csv_data = CSV.read(@csv_file)
 
-    (0..max_timeout).each do |_|
+    (0...max_timeout).each do |_|
       begin
         sleep(5)
         query = @query_client.execute(@database, @table)
@@ -84,12 +84,12 @@ output {
       rescue Exception => e
         puts "Error: #{e}"
       end
-      (0..csv_data.length).each do |i|
+      (0...csv_data.length).each do |i|
         result.next()
         puts "Item #{i}"
-        (0..@column_count).each do |j|
-          print "csv[#{j}] = #{csv_data[i][j]}"
-          print "result[#{j}] = #{result.getString(j)}"
+        (0...@column_count).each do |j|
+          puts "  csv[#{j}] = #{csv_data[i][j]}"
+          puts "  result[#{j}] = #{result.getString(j)}"
         end
         puts ""
       end
