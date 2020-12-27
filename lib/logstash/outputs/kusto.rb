@@ -115,7 +115,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @io_mutex = Mutex.new
 
     puts "1=#{json_mapping}"
-    if !defined?(json_mapping) || json_mapping.empty?
+    if json_mapping.empty?
       json_mapping = mapping
     end
     puts "2=#{json_mapping}"
