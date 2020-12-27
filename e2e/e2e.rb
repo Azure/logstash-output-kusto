@@ -51,7 +51,7 @@ output {
     @query_client.execute(@database, ".drop table #{@table} ifexists")
     sleep(1)
     @query_client.execute(@database, ".create table #{@table} #{@columns}")
-    @query_client.execute(@database, ".alter table #{@table} policy ingestionbatching @'{\"MaximumBatchingTimeSpan\":\"00:00:01\", \"MaximumNumberOfItems\": 1, \"MaximumRawDataSizeMB\": 1}'
+    @query_client.execute(@database, ".alter table #{@table} policy ingestionbatching @'{\"MaximumBatchingTimeSpan\":\"00:00:10\", \"MaximumNumberOfItems\": 1, \"MaximumRawDataSizeMB\": 100}'
 ")
     @query_client.execute(@database, ".create table #{@table} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
   end
