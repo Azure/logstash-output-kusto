@@ -60,7 +60,7 @@ output {
 
     File.write(@output_file, "")
     File.write(@input_file, "")
-    spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
+    spawn("C:\\Users\\asafmahlev\\logstash-fun\\logstash-7.10.0\\bin\\logstash -f logstash.conf")
     sleep(60)
     data = File.read(@csv_file)
     f = File.open(@input_file, "a")
@@ -71,7 +71,7 @@ output {
   end
 
   def assert_data
-    max_timeout = 20
+    max_timeout = 200
     csv_data = CSV.read(@csv_file)
 
     (0..max_timeout).each do |_|
@@ -79,7 +79,7 @@ output {
         sleep(5)
         query = @query_client.execute(@database, @table)
         result = query.getPrimaryResults()
-        raise "Wrong count - expected #{result.count()}, got #{csv_data.length}" unless result.count() == csv_data.length
+        raise "Wrong count - expected #{csv_data.length}, got #{result.count()}" unless result.count() == csv_data.length
         (0..csv_data.length).each do |i|
           result.next()
           (0..@column_count).each do |j|
@@ -91,6 +91,7 @@ output {
         puts "Error: #{e}"
       end
     end
+    raise "Failed after timeouts"
 
   end
 
