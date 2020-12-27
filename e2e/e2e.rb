@@ -27,6 +27,7 @@ filter {
 }
 output {
   file { path => "#{@output_file}"}
+  stdout { codec => rubydebug }
   kusto {
     path => "tmp%{+YYYY-MM-dd-HH-mm}.txt"
     ingest_url => "#{@ingest_url}"
