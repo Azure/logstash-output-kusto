@@ -1,4 +1,6 @@
 require '../lib/logstash-output-kusto_jars'
+require 'csv'
+
 $kusto_java = Java::com.microsoft.azure.kusto
 
 class E2E
