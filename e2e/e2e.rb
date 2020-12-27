@@ -9,6 +9,7 @@ class E2E
     @output_file = "output_file.txt"
     @columns = "(rownumber:int, rowguid:string, xdouble:real, xfloat:real, xbool:bool, xint16:int, xint32:int, xint64:long, xuint8:long, xuint16:long, xuint32:long, xuint64:long, xdate:datetime, xsmalltext:string, xtext:string, xnumberAsText:string, xtime:timespan, xtextWithNulls:string, xdynamicWithNulls:dynamic)"
     @csv_columns = '"rownumber", "rowguid", "xdouble", "xfloat", "xbool", "xint16", "xint32", "xint64", "xuint8", "xuint16", "xuint32", "xuint64", "xdate", "xsmalltext", "xtext", "xnumberAsText", "xtime", "xtextWithNulls", "xdynamicWithNulls"'
+    @column_count = 19
     @engine_url = ENV["ENGINE_URL"]
     @ingest_url = ENV["INGEST_URL"]
     @app_id = ENV["APP_ID"]
@@ -17,6 +18,7 @@ class E2E
     @database = ENV['TEST_DATABASE']
     @table = "RubyE2E#{Time.now.getutc.to_i}"
     @mapping_name = "test_mapping"
+    @csv_file = "dataset.csv"
 
     @logstash_config = %{
 input {
@@ -56,26 +58,45 @@ output {
 
     File.write(@output_file, "")
     File.write(@input_file, "")
-    puts "ehre0 "
-    pid = spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
-    puts "ehre1"
+    spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
     sleep(60)
-    puts "ehre2"
-    data = File.read("dataset.csv")
+    data = File.read(@csv_file)
     f = File.open(@input_file, "a")
     f.write(data)
     f.close
-    puts "ehre3"
     sleep(60)
-    puts "ehre4"
     puts File.read(@output_file)
-    puts "here5"
+  end
+
+  def assert_data
+    max_timeout = 20
+    csv_data = CSV.read(@csv_file)
+
+    (0..max_timeout).each do |_|
+      begin
+        sleep(5)
+        query = @query_client.execute(@database, @table)
+        result = query.getPrimaryResults()
+        raise "Wrong count - expected #{result.count()}, got #{csv_data.length}" unless result.count() == csv_data.length
+        (0..csv_data.length).each do |i|
+          result.next()
+          (0..@column_count).each do |j|
+            raise "Wrong data - expected #{csv_data[i][j]}, got #{result.getString(j)}" unless csv_data[i][j] == result.getString(j)
+          end
+        end
+        return
+      rescue Exception => e
+        puts "Error: #{e}"
+      end
+    end
+
   end
 
   def start
     @query_client = $kusto_java.data.ClientImpl.new($kusto_java.data.ConnectionStringBuilder::createWithAadApplicationCredentials(@engine_url, @app_id, @app_kay, @tenant_id))
     create_table_and_mapping
     run_logstash
+    assert_data
   end
 
 end

@@ -118,7 +118,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     if final_mapping.empty?
       final_mapping = mapping
     end
-    puts "2=#{final_mapping}"
 
     # TODO: add id to the tmp path to support multiple outputs of the same type
     # add fields from the meta that will note the destination of the events in the file
