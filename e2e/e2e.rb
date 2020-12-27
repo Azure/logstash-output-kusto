@@ -78,7 +78,7 @@ output {
     (0...max_timeout).each do |_|
       begin
         sleep(5)
-        query = @query_client.execute(@database, @table)
+        query = @query_client.execute(@database, "#{@table} | sort by rownumber asc")
         result = query.getPrimaryResults()
         raise "Wrong count - expected #{csv_data.length}, got #{result.count()}" unless result.count() == csv_data.length
       rescue Exception => e
@@ -88,8 +88,11 @@ output {
         result.next()
         puts "Item #{i}"
         (0...@column_count).each do |j|
-          puts "  csv[#{j}] = #{csv_data[i][j]}"
-          puts "  result[#{j}] = #{result.getString(j)}"
+          csv_item = csv_data[i][j]
+          result_item = result.get(i) == nil ? "" : result.getString(i)
+          puts "  csv[#{j}] = #{csv_item}"
+          puts "  result[#{j}] = #{result_item}"
+          raise "Result Doesn't match csv" unless csv_item == result_item
         end
         puts ""
       end
