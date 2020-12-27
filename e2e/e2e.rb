@@ -59,15 +59,16 @@ output {
     puts "ehre0 "
     pid = spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
     puts "ehre1"
-    sleep(15)
+    sleep(60)
     puts "ehre2"
     data = File.read("dataset.csv")
-    puts data.length
-    File.write(@input_file, data)
+    f = File.open(@input_file, "a")
+    f.write(data)
+    f.close
     puts "ehre3"
-    sleep(120)
+    sleep(60)
     puts "ehre4"
-    File.read(@output_file)
+    puts File.read(@output_file)
     puts "here5"
   end
 
