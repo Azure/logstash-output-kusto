@@ -114,7 +114,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @files = {}
     @io_mutex = Mutex.new
 
+    puts "1=", json_mapping
     json_mapping ||= mapping
+    puts "2=", json_mapping
 
     # TODO: add id to the tmp path to support multiple outputs of the same type
     # add fields from the meta that will note the destination of the events in the file
