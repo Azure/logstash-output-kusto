@@ -28,6 +28,11 @@ jobs:
           release_name: Version ${{ github.ref }}
           draft: false
           prerelease: false
+      - name: Publish gem
+        uses: dawidd6/action-publish-gem@v1
+        with:
+          api_key: ${{secrets.RUBYGEMS_KEY}}
+          github_token: ${{secrets.GITHUB_TOKEN}}
       - name: Set artifact name
         id: set_artifact_name
         run: |
@@ -43,8 +48,3 @@ jobs:
           asset_path: ./${{ steps.set_artifact_name.outputs.artifact_name }}
           asset_name: ${{ steps.set_artifact_name.outputs.artifact_name }}
           asset_content_type: application/zip
-      - name: Publish gem
-        uses: dawidd6/action-publish-gem@v1
-        with:
-          api_key: ${{secrets.RUBYGEMS_KEY}}
-          github_token: ${{secrets.GITHUB_TOKEN}}
