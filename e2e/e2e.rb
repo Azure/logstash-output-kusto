@@ -51,6 +51,8 @@ output {
     @query_client.execute(@database, ".drop table #{@table} ifexists")
     sleep(1)
     @query_client.execute(@database, ".create table #{@table} #{@columns}")
+    @query_client.execute(@database, ".alter table MyTable policy ingestionbatching @'{\"MaximumBatchingTimeSpan\":\"00:00:01\", \"MaximumNumberOfItems\": 1, \"MaximumRawDataSizeMB\": 1}'
+")
     @query_client.execute(@database, ".create table #{@table} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
   end
 
@@ -71,7 +73,7 @@ output {
   end
 
   def assert_data
-    max_timeout = 200
+    max_timeout = 10
     csv_data = CSV.read(@csv_file)
 
     (0..max_timeout).each do |_|
