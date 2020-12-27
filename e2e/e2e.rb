@@ -97,7 +97,9 @@ output {
           elsif j == 12 # date formatting
             csv_item = csv_item.sub(".0000000", "")
           elsif j == 15 # numbers as text
-            result_item = j.to_s
+            result_item = i.to_s
+          elsif j == 17 #null
+            next
           end
           puts "  csv[#{j}] = #{csv_item}"
           puts "  result[#{j}] = #{result_item}"
