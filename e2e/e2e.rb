@@ -62,7 +62,7 @@ output {
 
     File.write(@output_file, "")
     File.write(@input_file, "")
-    spawn("C:\\Users\\asafmahlev\\logstash-fun\\logstash-7.10.0\\bin\\logstash -f logstash.conf")
+    spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
     sleep(60)
     data = File.read(@csv_file)
     f = File.open(@input_file, "a")
