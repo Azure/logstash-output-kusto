@@ -56,7 +56,6 @@ output {
     @query_client.execute(@database, ".create table #{@table} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
   end
 
-
   def run_logstash
     File.write("logstash.conf", @logstash_config)
 
@@ -73,7 +72,7 @@ output {
   end
 
   def assert_data
-  max_timeout = 10
+    max_timeout = 10
     csv_data = CSV.read(@csv_file)
 
     (0..max_timeout).each do |_|
@@ -82,16 +81,17 @@ output {
         query = @query_client.execute(@database, @table)
         result = query.getPrimaryResults()
         raise "Wrong count - expected #{csv_data.length}, got #{result.count()}" unless result.count() == csv_data.length
-        (0..csv_data.length).each do |i|
-          result.next()
-          (0..@column_count).each do |j|
-            raise "Wrong data - expected #{csv_data[i][j]}, got #{result.getString(j)}" unless csv_data[i][j] == result.getString(j)
-          end
-        end
-        return
       rescue Exception => e
         puts "Error: #{e}"
       end
+      (0..csv_data.length).each do |i|
+        result.next()
+        (0..@column_count).each do |j|
+          raise "Wrong data in row #{i}, col #{j} - expected #{csv_data[i][j]}, got #{result.getString(j)}" unless csv_data[i][j] == result.getString(j)
+        end
+      end
+      return
+
     end
     raise "Failed after timeouts"
 
