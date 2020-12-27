@@ -89,7 +89,7 @@ output {
         puts "Item #{i}"
         (0...@column_count).each do |j|
           csv_item = csv_data[i][j]
-          result_item = result.getObject(j) == nil ? nil : result.getString(j)
+          result_item = result.getObject(j) == nil ? "null" : result.getString(j)
 
           #special cases for data that is different in csv vs kusto
           if j == 4 #kusto boolean field
@@ -103,7 +103,7 @@ output {
           end
           puts "  csv[#{j}] = #{csv_item}"
           puts "  result[#{j}] = #{result_item}"
-          puts "Result Doesn't match csv" unless csv_item == result_item
+          raise "Result Doesn't match csv" unless csv_item == result_item
         end
         puts ""
       end

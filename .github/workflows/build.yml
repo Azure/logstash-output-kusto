@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        logstash-version: ['default' ]
+        logstash-version: ['6.7', '6.8', '7.0', '7.x', 'default' ]
     env:
       LOGSTASH_SOURCE: 1
       LOGSTASH_PATH: ..//logstash
@@ -94,3 +94,21 @@ jobs:
           APP_KEY: ${{ secrets.APP_KEY }}
           TENANT_ID: ${{ secrets.TENANT_ID }}
           TEST_DATABASE: ${{ secrets.TEST_DATABASE }}
+  deploy:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    needs: e2e
+    steps:
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: jruby
+          bundler-cache: true
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Get version
+        run: echo "::set-output name=VERSION::`cat logstash-output-kusto.gemspec | grep .version | cut -d \' -f2`"
+        id: get-version
+      - name: Get color
+        run: echo "The selected color is ${{ steps.random-color-generator.outputs.SELECTED_COLOR }}"
+      - name: get version
+        run:
