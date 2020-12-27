@@ -73,7 +73,7 @@ output {
   end
 
   def assert_data
-    max_timeout = 200
+  max_timeout = 10
     csv_data = CSV.read(@csv_file)
 
     (0..max_timeout).each do |_|
