@@ -31,7 +31,7 @@ jobs:
       - name: Set artifact name
         id: set_artifact_name
         run: |
-          ARTIFACT_PATH=$(ls *.gem)
+          ARTIFACT_PATH=$(find . -maxdepth 1 -iname '*.gem')
           echo "::set-output name=artifact_name::$ARTIFACT_PATH"
       - name: Upload Release Asset
         id: upload-release-asset
