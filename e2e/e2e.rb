@@ -92,7 +92,7 @@ output {
           result_item = result.getObject(j) == nil ? "" : result.getString(j)
           puts "  csv[#{j}] = #{csv_item}"
           puts "  result[#{j}] = #{result_item}"
-          raise "Result Doesn't match csv" unless csv_item == result_item
+          puts "Result Doesn't match csv" unless csv_item == result_item
         end
         puts ""
       end
