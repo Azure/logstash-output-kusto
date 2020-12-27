@@ -89,7 +89,16 @@ output {
         puts "Item #{i}"
         (0...@column_count).each do |j|
           csv_item = csv_data[i][j]
-          result_item = result.getObject(j) == nil ? "" : result.getString(j)
+          result_item = result.getObject(j) == nil ? nil : result.getString(j)
+
+          #special cases for data that is different in csv vs kusto
+          if j == 4 #kusto boolean field
+            csv_item = csv_item.to_s == "1" ? "true" : "false"
+          elsif j == 12 # date formatting
+            csv_item = csv_item.sub(".0000000", "")
+          elsif j == 15 # numbers as text
+            result_item = j.to_s
+          end
           puts "  csv[#{j}] = #{csv_item}"
           puts "  result[#{j}] = #{result_item}"
           puts "Result Doesn't match csv" unless csv_item == result_item
