@@ -1,8 +1,6 @@
 on:
-  push:
-    # Sequence of patterns matched against refs/tags
-    tags:
-      - '*'
+  release:
+    types: [created]
 
 name: Deploy and Create Release
 
@@ -18,16 +16,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
       - run: bundle install
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
+      - name: Get release
+        id: get_release
+        uses: bruceadams/get-release@v1.2.2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Version ${{ github.ref }}
-          draft: false
-          prerelease: false
+          GITHUB_TOKEN: ${{ github.token }}
       - name: Publish gem
         uses: dawidd6/action-publish-gem@v1
         with:
@@ -44,7 +37,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          upload_url: ${{ steps.get_release.outputs.upload_url }}
           asset_path: ./${{ steps.set_artifact_name.outputs.artifact_name }}
           asset_name: ${{ steps.set_artifact_name.outputs.artifact_name }}
           asset_content_type: application/zip
