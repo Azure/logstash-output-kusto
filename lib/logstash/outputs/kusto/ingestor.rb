@@ -41,7 +41,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @ingestion_properties = kusto_java.ingest.IngestionProperties.new(database, table)
       @ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::Json)
       @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DATA_FORMAT::json)
-
       @delete_local = delete_local
 
       @logger.debug('Kusto resources are ready.')
