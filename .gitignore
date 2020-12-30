@@ -31,3 +31,11 @@ Gemfile.lock
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+
+#IDEA
+.idea
+.idea/*
+
+#Jar files and generated files
+**/*.jar
+**/*_jars.rb
