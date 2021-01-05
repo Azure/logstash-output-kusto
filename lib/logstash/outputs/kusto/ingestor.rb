@@ -11,6 +11,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   class Ingestor
     require 'logstash-output-kusto_jars'
     RETRY_DELAY_SECONDS = 3
+	MAX_DELETING_RETRY = 3
     DEFAULT_THREADPOOL = Concurrent::ThreadPoolExecutor.new(
       min_threads: 1,
       max_threads: 8,
@@ -115,18 +116,21 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         retry
       end
 
+      # Try to delete the file
+      deleting_retry_count = 0
       begin
-        File.delete(path) if delete_on_success
-        @logger.debug("File #{path} deleted.")
+        deleting_retry_count += 1
+        if deleting_retry_count <= MAX_DELETING_RETRY
+          File.delete(path) if delete_on_success
+          @logger.debug("File #{path} deleted.")
+        else
+          @logger.error("Failed to delete file #{path} too many times. Skip deleting.")
+        end
       rescue Errno::ENOENT => e
-        @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+        @logger.error("File doesn't exist! Skip deleting.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
       rescue Java::JavaNioFile::NoSuchFileException => e
-        @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+        @logger.error("File doesn't exist! Skip deleting.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
       rescue => e
-        # When the retry limit is reached or another error happen we will wait and retry.
-        #
-        # Thread might be stuck here, but I think its better than losing anything
-        # its either a transient errors or something bad really happened.
         @logger.error('Deleting failed, retrying.', exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
         sleep RETRY_DELAY_SECONDS
         retry
