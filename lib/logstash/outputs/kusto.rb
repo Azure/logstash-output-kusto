@@ -114,12 +114,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @files = {}
     @io_mutex = Mutex.new
 
-    json_mapping ||= mapping
+    final_mapping = json_mapping
+    if final_mapping.empty?
+      final_mapping = mapping
+    end
 
     # TODO: add id to the tmp path to support multiple outputs of the same type
     # add fields from the meta that will note the destination of the events in the file
     @path = if dynamic_event_routing
-              File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][json_mapping]}")
+              File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][final_mapping]}")
             else
               File.expand_path("#{path}.#{database}.#{table}")
             end
@@ -138,7 +141,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                                                   max_queue: upload_queue_size,
                                                   fallback_policy: :caller_runs)
 
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, database, table, json_mapping, delete_temp_files, @logger, executor)
+    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, database, table, final_mapping, delete_temp_files, @logger, executor)
 
     # send existing files
     recover_past_files if recovery

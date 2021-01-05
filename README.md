@@ -1,7 +1,7 @@
 # Logstash Output Plugin for Azure Data Explorer (Kusto)
 
-[![Build Status](https://img.shields.io/travis/azure/logstash-output-kusto/master.svg?label=master)](https://travis-ci.org/Azure/logstash-output-kusto) 
-[![Build Status](https://img.shields.io/travis/azure/logstash-output-kusto/dev.svg?label=dev)](https://travis-ci.org/Azure/logstash-output-kusto)
+![build](https://github.com/Azure/logstash-output-kusto/workflows/build/badge.svg)
+![build](https://github.com/Azure/logstash-output-kusto/workflows/build/badge.svg?branch=master)
 [![Gem](https://img.shields.io/gem/v/logstash-output-kusto.svg)](https://rubygems.org/gems/logstash-output-kusto)
 [![Gem](https://img.shields.io/gem/dt/logstash-output-kusto.svg)](https://rubygems.org/gems/logstash-output-kusto)
 

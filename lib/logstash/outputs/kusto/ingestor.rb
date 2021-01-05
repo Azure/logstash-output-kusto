@@ -11,7 +11,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   class Ingestor
     require 'logstash-output-kusto_jars'
     RETRY_DELAY_SECONDS = 3
-	MAX_DELETING_RETRY = 3
+    MAX_DELETING_RETRY = 3
     DEFAULT_THREADPOOL = Concurrent::ThreadPoolExecutor.new(
       min_threads: 1,
       max_threads: 8,
@@ -42,7 +42,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @ingestion_properties = kusto_java.ingest.IngestionProperties.new(database, table)
       @ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::Json)
       @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DATA_FORMAT::json)
-
       @delete_local = delete_local
 
       @logger.debug('Kusto resources are ready.')
