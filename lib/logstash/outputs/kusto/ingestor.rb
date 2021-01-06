@@ -116,23 +116,22 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       end
 
       # Try to delete the file
-      deleting_retry_count = 0
+      retries = 0
       begin
-        deleting_retry_count += 1
-        if deleting_retry_count <= MAX_DELETING_RETRY
-          File.delete(path) if delete_on_success
-          @logger.debug("File #{path} deleted.")
-        else
-          @logger.error("Failed to delete file #{path} too many times. Skip deleting.")
-        end
+        File.delete(path) if delete_on_success
+        @logger.debug("File #{path} deleted.")
       rescue Errno::ENOENT => e
         @logger.error("File doesn't exist! Skip deleting.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
       rescue Java::JavaNioFile::NoSuchFileException => e
         @logger.error("File doesn't exist! Skip deleting.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
       rescue => e
-        @logger.error('Deleting failed, retrying.', exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
-        sleep RETRY_DELAY_SECONDS
-        retry
+        if (retries += 1) <= MAX_DELETING_RETRY
+          @logger.error('Deleting failed, retrying.', exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+          sleep RETRY_DELAY_SECONDS
+          retry
+        else
+          @logger.error("Failed to delete file #{path} too many times. Skip deleting.")
+        end
       end
     end
 
