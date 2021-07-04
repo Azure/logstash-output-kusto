@@ -7,7 +7,7 @@ require 'logstash/event'
 describe LogStash::Outputs::Kusto do
 
   let(:options) { { "path" => "./kusto_tst/%{+YYYY-MM-dd-HH-mm}",
-    "ingest_url" => "https://ingest-mycluster.kusto.windows.net",
+    "ingest_url" => "https://ingest-sdkse2etest.eastus.kusto.windows.net/",
     "app_id" => "myid",
     "app_key" => "mykey",
     "app_tenant" => "mytenant", 
