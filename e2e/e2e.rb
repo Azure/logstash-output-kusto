@@ -2,7 +2,7 @@ require '../lib/logstash-output-kusto_jars'
 require 'csv'
 
 $kusto_java = Java::com.microsoft.azure.kusto
-
+#dummy
 class E2E
 
   def initialize
