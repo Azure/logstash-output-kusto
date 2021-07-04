@@ -90,7 +90,7 @@ jobs:
       - run: sudo chmod -R 777 /usr/share/logstash
       - run: sudo chmod -R 777 .
       - name: Run e2e
-        run: ruby e2e.rb
+        run: jruby e2e.rb
         working-directory: 'e2e'
         env:
           ENGINE_URL: ${{ secrets.ENGINE_URL }}
