@@ -5,7 +5,7 @@ require 'logstash/outputs/kusto/ingestor'
 
 describe LogStash::Outputs::Kusto::Ingestor do
 
-  let(:ingest_url) { "mycluster" }
+  let(:ingest_url) { "https://ingest-sdkse2etest.eastus.kusto.windows.net/" }
   let(:app_id) { "myid" }
   let(:app_key) { LogStash::Util::Password.new("mykey") }
   let(:app_tenant) { "mytenant" }
