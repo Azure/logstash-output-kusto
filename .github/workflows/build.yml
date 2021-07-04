@@ -86,6 +86,7 @@ jobs:
       - name: Install plugin
         run: sudo /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
       - run: sudo env "PATH=$PATH" bundle install
+      - run: sudo env "PATH=$PATH" lock_jars
       - run: sudo chmod -R 777 /usr/share/logstash
       - run: sudo chmod -R 777 .
       - name: Run e2e
