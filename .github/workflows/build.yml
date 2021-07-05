@@ -85,11 +85,12 @@ jobs:
           sudo apt-get update && sudo apt-get install logstash
       - name: Install plugin
         run: sudo /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
-      - run: sudo env "PATH=$PATH" bundle install
       - run: sudo chmod -R 777 /usr/share/logstash
       - run: sudo chmod -R 777 .
+      - run: bundle install
+      - run: lock_jars
       - name: Run e2e
-        run: ruby e2e.rb
+        run: jruby e2e.rb
         working-directory: 'e2e'
         env:
           ENGINE_URL: ${{ secrets.ENGINE_URL }}
