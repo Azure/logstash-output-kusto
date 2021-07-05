@@ -30,6 +30,6 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'ruby-maven', '~> 3.3.11'
 
   # Jar dependencies
-  s.requirements << "jar 'com.microsoft.azure.kusto, kusto-ingest, 2.8.1"
+  s.requirements << "jar 'com.microsoft.azure.kusto, kusto-ingest, 2.8.2"
   s.add_runtime_dependency 'jar-dependencies'
 end
