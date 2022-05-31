@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        logstash-version: ['6.7', '6.8', '7.0', 'default' ]
+        logstash-version: ['6.7', '6.8', '7.0' ]
     env:
       LOGSTASH_SOURCE: 1
       LOGSTASH_PATH: ../logstash
