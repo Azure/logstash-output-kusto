@@ -15,7 +15,7 @@ jobs:
         logstash-version: ['6.7', '6.8', '7.0', 'default' ]
     env:
       LOGSTASH_SOURCE: 1
-      LOGSTASH_PATH: ..//logstash
+      LOGSTASH_PATH: ../logstash
     steps:
       - if: matrix.logstash-version != 'default'
         name: Set up JDK 1.8
