@@ -12,51 +12,49 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        logstash-version: ['6.7', '6.8', '7.0', '7.x', 'default' ]
+        logstash: [
+          { version: '7.17.4', url: "https://artifacts.elastic.co/downloads/logstash/logstash-7.17.4-linux-x86_64.tar.gz" , main: 'true' },
+          { version: '6.8.23', url: "https://artifacts.elastic.co/downloads/logstash/logstash-6.8.23.tar.gz" , main: 'false' },
+          { version: '8.2.2', url: "https://artifacts.elastic.co/downloads/logstash/logstash-8.2.2-linux-x86_64.tar.gz" , main: 'false' }
+        ]
     env:
       LOGSTASH_SOURCE: 1
-      LOGSTASH_PATH: ..//logstash
+      LOGSTASH_PATH: /home/runner/logstash
+      JRUBY_HOME: /home/runner/logstash/vendor/jruby
     steps:
-      - if: matrix.logstash-version != 'default'
-        name: Set up JDK 1.8
-        uses: actions/setup-java@v1
-        with:
-          java-version: 1.8
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: jruby
-          bundler-cache: true
-      - if: matrix.logstash-version != 'default'
-        name: Checkout logstash ${{ matrix.logstash-version }}
-        uses: actions/checkout@v2
-        with:
-          repository: "elastic/logstash"
-          ref: ${{ matrix.logstash-version }}
-          path: logstash
-      - if: matrix.logstash-version != 'default'
-        name: Build logstash
-        run: ./gradlew assemble
-        working-directory: logstash
+      - name: Build logstash
+        run: |
+          echo "Getting logstash version ${{matrix.logstash.version}}"
+          wget -O logstash.tar.gz ${{matrix.logstash.url}}
+          tar -xf logstash.tar.gz
+          mv logstash*/ logstash
+        working-directory: /home/runner
+      - name: Set Path
+        run: |
+          echo "$LOGSTASH_PATH/bin" >> $GITHUB_PATH
+          echo "$LOGSTASH_PATH/vendor/jruby/bin" >> $GITHUB_PATH
+      - name: Install bundler
+        run: jruby -S gem install bundler
       - name: Checkout code
         uses: actions/checkout@v2
         with:
           path: 'kusto'
-      - run: bundle install
+      - run: ruby -S bundle install
         working-directory: 'kusto'
       - name: Test
-        run: bundle exec rake spec_junit
+        run: ruby -S bundle exec rake spec_junit
         working-directory: 'kusto'
-      - run: gem build *.gemspec
+      - run: ruby -S gem build *.gemspec
         working-directory: 'kusto'
       - run: mv *.gem logstash-kusto.gem
         working-directory: 'kusto'
-      - if: matrix.logstash-version == 'default'
+      - if: matrix.logstash.main == 'true'
         name: Upload gem
         uses: actions/upload-artifact@v2
         with:
           name: logstash-kusto.gem
           path: 'kusto/logstash-kusto.gem'
-      - if: matrix.logstash-version == 'default'
+      - if: matrix.logstash.main == 'true'
         name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v1.6
         with:

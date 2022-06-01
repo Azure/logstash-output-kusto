@@ -1,6 +1,6 @@
 # encoding: utf-8
 
-require 'logstash/outputs/base' 
+require 'logstash/outputs/base'
 require 'logstash/namespace'
 require 'logstash/errors'
 
@@ -34,13 +34,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # Unfortunately there's no way to avoid using the gem/plugin name directly...
       name_for_tracing = "logstash-output-kusto:#{Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"}"
       @logger.debug("Client name for tracing: #{name_for_tracing}")
-      kusto_connection_string.setClientVersionForTracing(name_for_tracing)      
+      kusto_connection_string.setClientVersionForTracing(name_for_tracing)
 
       @kusto_client = kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
 
       @ingestion_properties = kusto_java.ingest.IngestionProperties.new(database, table)
-      @ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::Json)
-      @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DATA_FORMAT::json)
+      @ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
+      @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
       @delete_local = delete_local
 
       @logger.debug('Kusto resources are ready.')

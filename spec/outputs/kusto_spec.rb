@@ -1,5 +1,4 @@
 # encoding: utf-8
-require 'logstash/devutils/rspec/spec_helper'
 require 'logstash/outputs/kusto'
 require 'logstash/codecs/plain'
 require 'logstash/event'
@@ -10,7 +9,7 @@ describe LogStash::Outputs::Kusto do
     "ingest_url" => "https://ingest-sdkse2etest.eastus.kusto.windows.net/",
     "app_id" => "myid",
     "app_key" => "mykey",
-    "app_tenant" => "mytenant", 
+    "app_tenant" => "mytenant",
     "database" => "mydatabase",
     "table" => "mytable",
     "json_mapping" => "mymapping"
@@ -50,5 +49,5 @@ describe LogStash::Outputs::Kusto do
     end
 
   end
-  
+
 end

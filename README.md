@@ -64,6 +64,8 @@ More information about configuring Logstash can be found in the [logstash config
 - JRuby 9.2 or higher, defined with openjdk 8 64bit
 - Logstash, defined with openjdk 8 64bit
 
+*It is reccomened to use the bundled jdk and jruby with logstash to avoid compatibility issues.*
+
 To fully build the gem, run: 
 
 ```shell
