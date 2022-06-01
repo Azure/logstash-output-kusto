@@ -29,8 +29,7 @@ jobs:
       - name: Set Path 2
         run: echo "/home/runner/work/logstash-output-kusto/logstash/vendor/jruby/bin" >> $GITHUB_PATH
       - name: env
-        run: echo "$PATH" && ls /home/runner/work/logstash-output-kusto/logstash/bin && ls
-        /home/runner/work/logstash-output-kusto/logstash/vendor/jruby/bin
+        run: echo "$PATH" && ls /home/runner/work/logstash-output-kusto/logstash/bin && ls /home/runner/work/logstash-output-kusto/logstash/vendor/jruby/bin
       - name: Install bundler
         run: jruby -S gem install bundler
       - name: Build logstash
