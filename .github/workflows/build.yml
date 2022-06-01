@@ -18,10 +18,10 @@ jobs:
       LOGSTASH_PATH: /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash
       JRUBY_HOME: /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash/vendor/jruby
     steps:
-      - uses: actions/setup-java@v3
-        with:
-          distribution: 'temurin' # See 'Supported distributions' for available options
-          java-version: '11'
+#      - uses: actions/setup-java@v3
+#        with:
+#          distribution: 'temurin' # See 'Supported distributions' for available options
+#          java-version: '11'
       - name: Checkout logstash ${{ matrix.logstash-version }}
         uses: actions/checkout@v2
         with:
