@@ -13,8 +13,6 @@ jobs:
     strategy:
       matrix:
         logstash-version: [ '7.0.0' ]
-    env:
-      LOGSTASH_PATH: ..//logstash
     steps:
       - uses: actions/setup-java@v3
         with:
