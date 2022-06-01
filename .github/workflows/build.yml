@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        logstash-version: [ 'main' ]
+        logstash-version: [ '7.0' ]
     env:
       LOGSTASH_SOURCE: 1
       LOGSTASH_PATH: /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash
