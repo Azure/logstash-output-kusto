@@ -15,8 +15,8 @@ jobs:
         logstash-version: [ 'main' ]
     env:
       LOGSTASH_SOURCE: 1
-      LOGSTASH_PATH: /home/runner/work/logstash-output-kusto/logstash
-      JRUBY_HOME: /home/runner/work/logstash-output-kusto/logstash/vendor/jruby
+      LOGSTASH_PATH: /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash
+      JRUBY_HOME: /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash/vendor/jruby
     steps:
       - name: Checkout logstash ${{ matrix.logstash-version }}
         uses: actions/checkout@v2
@@ -24,17 +24,17 @@ jobs:
           repository: "elastic/logstash"
           ref: ${{ matrix.logstash-version }}
           path: logstash
-      - name: Set Path
-        run: echo "/home/runner/work/logstash-output-kusto/logstash/bin" >> $GITHUB_PATH
-      - name: Set Path 2
-        run: echo "/home/runner/work/logstash-output-kusto/logstash/vendor/jruby/bin" >> $GITHUB_PATH
-      - name: env
-        run: echo "$PATH" && ls /home/runner/work/logstash-output-kusto/logstash/bin && ls /home/runner/work/logstash-output-kusto/logstash/vendor/jruby/bin
-      - name: Install bundler
-        run: jruby -S gem install bundler
       - name: Build logstash
         run: ./gradlew assemble
-        working-directory: /home/runner/work/logstash-output-kusto/logstash
+        working-directory: /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash
+      - name: Set Path
+        run: echo "/home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash/bin" >> $GITHUB_PATH
+      - name: Set Path 2
+        run: echo "/home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash/vendor/jruby/bin" >> $GITHUB_PATH
+      - name: env
+        run: echo "$PATH" && ls /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash/bin && ls /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash/vendor/jruby/bin
+      - name: Install bundler
+        run: jruby -S gem install bundler
       - name: Checkout code
         uses: actions/checkout@v2
         with:
