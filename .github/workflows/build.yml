@@ -26,8 +26,8 @@ jobs:
           bundler-cache: true
       - name: Install logstash # taken from logstash's website https://www.elastic.co/guide/en/logstash/7.10/installing-logstash.html#_apt
         run: |
-          wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${{matrix.logstash-version}-amd64.deb
-          sudo dpkg -i elasticsearch-${{matrix.logstash-version}-amd64.deb
+          wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${{matrix.logstash-version}}-amd64.deb
+          sudo dpkg -i elasticsearch-${{matrix.logstash-version}}-amd64.deb
       - name: Checkout code
         uses: actions/checkout@v2
         with:
