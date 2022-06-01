@@ -43,12 +43,12 @@ jobs:
         uses: actions/checkout@v2
         with:
           path: 'kusto'
-      - run: jruby -S bundle install
+      - run: ruby -S bundle install
         working-directory: 'kusto'
       - name: Test
-        run: jruby -S bundle exec rake spec_junit
+        run: ruby -S bundle exec rake spec_junit
         working-directory: 'kusto'
-      - run: jruby -S gem build *.gemspec
+      - run: ruby -S gem build *.gemspec
         working-directory: 'kusto'
       - run: mv *.gem logstash-kusto.gem
         working-directory: 'kusto'
