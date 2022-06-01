@@ -25,7 +25,7 @@ jobs:
       - name: Build logstash
         run: |
           wget https://artifacts.elastic.co/downloads/logstash/logstash-7.0.0.tar.gz
-          tar -xf logstash-7.0.0-linux-x86_64.tar.gz
+          tar -xf logstash*.tar.gz
           mv logstash* logstash
         working-directory: /home/runner
       - name: Set Path
