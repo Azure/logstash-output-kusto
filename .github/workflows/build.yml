@@ -16,7 +16,7 @@ jobs:
     env:
       LOGSTASH_SOURCE: 1
       LOGSTASH_PATH: ../logstash
-      JRUBY_HOME: ~/logstash/bin/ruby
+      JRUBY_HOME: ~/logstash/vendor/jruby
     steps:
       - name: Checkout logstash ${{ matrix.logstash-version }}
         uses: actions/checkout@v2
@@ -24,23 +24,25 @@ jobs:
           repository: "elastic/logstash"
           ref: ${{ matrix.logstash-version }}
           path: logstash
+      - name: Set Path
+        run: echo "~/logstash/bin" >> $GITHUB_PATH
+      - name: Set Path 2
+        run: echo "~/logstash/bin" >> $GITHUB_PATH
+      - name: Install bundler
+        run: jruby -S gem install bundler
       - name: Build logstash
         run: ./gradlew assemble
         working-directory: logstash
-      - name: Set Path
-        run: echo "~/logstash/bin" >> $GITHUB_PATH
-      - name: Install bundler
-        run: ruby -S gem install bundler
       - name: Checkout code
         uses: actions/checkout@v2
         with:
           path: 'kusto'
-      - run: bundle install
+      - run: jruby -S bundle install
         working-directory: 'kusto'
       - name: Test
-        run: bundle exec rake spec_junit
+        run: jruby -S bundle exec rake spec_junit
         working-directory: 'kusto'
-      - run: gem build *.gemspec
+      - run: jruby -S gem build *.gemspec
         working-directory: 'kusto'
       - run: mv *.gem logstash-kusto.gem
         working-directory: 'kusto'
