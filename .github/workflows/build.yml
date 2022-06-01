@@ -12,40 +12,50 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        logstash-version: [ '7.0.0' ]
+        logstash-version: [ 'main' ]
+    env:
+      LOGSTASH_SOURCE: 1
+      LOGSTASH_PATH: /home/runner/logstash
+      JRUBY_HOME: /home/runner/logstash/vendor/jruby
     steps:
       - uses: actions/setup-java@v3
         with:
           distribution: 'temurin' # See 'Supported distributions' for available options
-          java-version: '8'
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: jruby
-          bundler-cache: true
-      - name: Install logstash # taken from logstash's website https://www.elastic.co/guide/en/logstash/7.10/installing-logstash.html#_apt
+          java-version: '11'
+      - name: Build logstash
         run: |
-          wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${{matrix.logstash-version}}-amd64.deb
-          sudo dpkg -i elasticsearch-${{matrix.logstash-version}}-amd64.deb
+          wget https://artifacts.elastic.co/downloads/logstash/logstash-7.0.0-linux-x86_64.tar.gz
+          tar -xf logstash-7.0.0-linux-x86_64.tar.gz
+          mv logstash* logstash
+        working-directory: /home/runner
+      - name: Set Path
+        run: |
+          echo "/home/runner/logstash/bin" >> $GITHUB_PATH
+          echo "/home/runner/logstash/vendor/jruby/bin" >> $GITHUB_PATH
+          echo "JRUBY_HOME=/home/runner/logstash/vendor/jruby" >> $GITHUB_ENV
+          ls -R /home/runner/logstash/
+      - name: Install bundler
+        run: jruby -S gem install bundler
       - name: Checkout code
         uses: actions/checkout@v2
         with:
           path: 'kusto'
-      - run: bundle install
+      - run: ruby -S bundle install
         working-directory: 'kusto'
       - name: Test
-        run: bundle exec rake spec_junit
+        run: ruby -S bundle exec rake spec_junit
         working-directory: 'kusto'
-      - run: gem build *.gemspec
+      - run: ruby -S gem build *.gemspec
         working-directory: 'kusto'
       - run: mv *.gem logstash-kusto.gem
         working-directory: 'kusto'
-      - if: matrix.logstash-version == '7.0'
+      - if: matrix.logstash-version == 'main'
         name: Upload gem
         uses: actions/upload-artifact@v2
         with:
           name: logstash-kusto.gem
           path: 'kusto/logstash-kusto.gem'
-      - if: matrix.logstash-version == '7.0'
+      - if: matrix.logstash-version == 'main'
         name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v1.6
         with:
