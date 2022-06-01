@@ -24,6 +24,10 @@ jobs:
           repository: "elastic/logstash"
           ref: ${{ matrix.logstash-version }}
           path: logstash
+      - name: find test
+        run: ls -R ~/
+       - name: find test 2
+         run: ls -R ..
       - name: Set Path
         run: echo "~/logstash/bin" >> $GITHUB_PATH
       - name: Set Path 2
