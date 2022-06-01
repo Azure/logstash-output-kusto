@@ -24,7 +24,7 @@ jobs:
           java-version: '11'
       - name: Build logstash
         run: |
-          wget https://artifacts.elastic.co/downloads/logstash/logstash-7.0.0-linux-x86_64.tar.gz
+          wget https://artifacts.elastic.co/downloads/logstash/logstash-7.0.0.tar.gz
           tar -xf logstash-7.0.0-linux-x86_64.tar.gz
           mv logstash* logstash
         working-directory: /home/runner
