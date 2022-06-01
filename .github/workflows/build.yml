@@ -48,13 +48,13 @@ jobs:
         working-directory: 'kusto'
       - run: mv *.gem logstash-kusto.gem
         working-directory: 'kusto'
-      - if: ${{matrix.logstash.main}} == 'true'
+      - if: matrix.logstash.main == 'true'
         name: Upload gem
         uses: actions/upload-artifact@v2
         with:
           name: logstash-kusto.gem
           path: 'kusto/logstash-kusto.gem'
-      - if: ${{matrix.logstash.main}} == 'true'
+      - if: matrix.logstash.main == 'true'
         name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v1.6
         with:
