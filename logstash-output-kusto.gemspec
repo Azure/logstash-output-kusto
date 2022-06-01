@@ -28,8 +28,9 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'flores'
   s.add_development_dependency 'logstash-input-generator'
   s.add_development_dependency 'ruby-maven', '~> 3.3.11'
+  s.add_development_dependency 'rspec_junit_formatter'
 
   # Jar dependencies
-  s.requirements << "jar 'com.microsoft.azure.kusto, kusto-ingest, 3.1.1"
+  s.requirements << "jar 'com.microsoft.azure.kusto, kusto-ingest, 3.1.1'"
   s.add_runtime_dependency 'jar-dependencies'
 end
