@@ -24,22 +24,11 @@ jobs:
         with:
           ruby-version: jruby
           bundler-cache: true
-      #      - if: matrix.logstash-version != 'default'
-      #        name: Checkout logstash ${{ matrix.logstash-version }}
-      #        uses: actions/checkout@v2
-      #        with:
-      #          repository: "elastic/logstash"
-      #          ref: ${{ matrix.logstash-version }}
-      #          path: logstash
-      #      - if: matrix.logstash-version != 'default'
-      #        name: Build logstash
-      #        run: ./gradlew assemble
-      #        working-directory: logstash
       - name: Install logstash # taken from logstash's website https://www.elastic.co/guide/en/logstash/7.10/installing-logstash.html#_apt
         run: |
           wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
           sudo apt-get install apt-transport-https
-          echo "deb https://artifacts.elastic.co/packages/${{logstash-version}}/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
+          echo "deb https://artifacts.elastic.co/packages/${{matrix.logstash-version}}/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
           sudo apt-get update && sudo apt-get install logstash
       - name: Checkout code
         uses: actions/checkout@v2
