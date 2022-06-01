@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        logstash-version: ['7.0']
+        logstash-version: [ '7.0' ]
     env:
       LOGSTASH_PATH: ..//logstash
     steps:
@@ -24,17 +24,17 @@ jobs:
         with:
           ruby-version: jruby
           bundler-cache: true
-#      - if: matrix.logstash-version != 'default'
-#        name: Checkout logstash ${{ matrix.logstash-version }}
-#        uses: actions/checkout@v2
-#        with:
-#          repository: "elastic/logstash"
-#          ref: ${{ matrix.logstash-version }}
-#          path: logstash
-#      - if: matrix.logstash-version != 'default'
-#        name: Build logstash
-#        run: ./gradlew assemble
-#        working-directory: logstash
+      #      - if: matrix.logstash-version != 'default'
+      #        name: Checkout logstash ${{ matrix.logstash-version }}
+      #        uses: actions/checkout@v2
+      #        with:
+      #          repository: "elastic/logstash"
+      #          ref: ${{ matrix.logstash-version }}
+      #          path: logstash
+      #      - if: matrix.logstash-version != 'default'
+      #        name: Build logstash
+      #        run: ./gradlew assemble
+      #        working-directory: logstash
       - name: Install logstash # taken from logstash's website https://www.elastic.co/guide/en/logstash/7.10/installing-logstash.html#_apt
         run: |
           wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
