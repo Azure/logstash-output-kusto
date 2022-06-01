@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        logstash-version: [ '7.0' ]
+        logstash-version: [ '7.0.0' ]
     env:
       LOGSTASH_PATH: ..//logstash
     steps:
@@ -26,10 +26,8 @@ jobs:
           bundler-cache: true
       - name: Install logstash # taken from logstash's website https://www.elastic.co/guide/en/logstash/7.10/installing-logstash.html#_apt
         run: |
-          wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
-          sudo apt-get install apt-transport-https
-          echo "deb https://artifacts.elastic.co/packages/${{matrix.logstash-version}}/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
-          sudo apt-get update && sudo apt-get install logstash
+          wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${{matrix.logstash-version}-amd64.deb
+          sudo dpkg -i elasticsearch-${{matrix.logstash-version}-amd64.deb
       - name: Checkout code
         uses: actions/checkout@v2
         with:
