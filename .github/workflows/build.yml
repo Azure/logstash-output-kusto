@@ -12,9 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        logstash-version: [ { version: '7.17.4', url: "https://artifacts.elastic.co/downloads/logstash/logstash-7.17.4-linux-x86_64.tar.gz" , main: true },
-                            { version: '6.8.23', url: "https://artifacts.elastic.co/downloads/logstash/logstash-6.8.23.tar.gz" , main: false },
-                            { version: '8.2.2', url: "https://artifacts.elastic.co/downloads/logstash/logstash-8.2.2-linux-x86_64.tar.gz" , main: false } ]
+        logstash: [
+          { version: '7.17.4', url: "https://artifacts.elastic.co/downloads/logstash/logstash-7.17.4-linux-x86_64.tar.gz" , main: true },
+          { version: '6.8.23', url: "https://artifacts.elastic.co/downloads/logstash/logstash-6.8.23.tar.gz" , main: false },
+          { version: '8.2.2', url: "https://artifacts.elastic.co/downloads/logstash/logstash-8.2.2-linux-x86_64.tar.gz" , main: false }
+        ]
     env:
       LOGSTASH_SOURCE: 1
       LOGSTASH_PATH: /home/runner/logstash
@@ -22,8 +24,8 @@ jobs:
     steps:
       - name: Build logstash
         run: |
-          echo "Getting logstash version {{matrix.logstash-version.version}}"
-          wget -O logstash.tar.gz {{matrix.logstash-version.url}}
+          echo "Getting logstash version {{matrix.logstash.version}}"
+          wget -O logstash.tar.gz {{matrix.logstash.url}}
           tar -xf logstash.tar.gz
           mv logstash*/ logstash
         working-directory: /home/runner
@@ -46,13 +48,13 @@ jobs:
         working-directory: 'kusto'
       - run: mv *.gem logstash-kusto.gem
         working-directory: 'kusto'
-      - if: matrix.logstash-version.main == 'true'
+      - if: matrix.logstash.main == 'true'
         name: Upload gem
         uses: actions/upload-artifact@v2
         with:
           name: logstash-kusto.gem
           path: 'kusto/logstash-kusto.gem'
-      - if: matrix.logstash-version.main == 'true'
+      - if: matrix.logstash.main == 'true'
         name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v1.6
         with:
