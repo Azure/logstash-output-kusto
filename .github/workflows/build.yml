@@ -24,8 +24,8 @@ jobs:
     steps:
       - name: Build logstash
         run: |
-          echo "Getting logstash version {{matrix.logstash.version}}"
-          wget -O logstash.tar.gz {{matrix.logstash.url}}
+          echo "Getting logstash version ${{matrix.logstash.version}}"
+          wget -O logstash.tar.gz ${{matrix.logstash.url}}
           tar -xf logstash.tar.gz
           mv logstash*/ logstash
         working-directory: /home/runner
