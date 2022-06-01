@@ -12,53 +12,50 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        logstash-version: [ '7.0' ]
+        logstash-version: ['7.0']
     env:
       LOGSTASH_SOURCE: 1
-      LOGSTASH_PATH: /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash
-      JRUBY_HOME: /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash/vendor/jruby
+      LOGSTASH_PATH: ..//logstash
     steps:
-#      - uses: actions/setup-java@v3
-#        with:
-#          distribution: 'temurin' # See 'Supported distributions' for available options
-#          java-version: '11'
-      - name: Checkout logstash ${{ matrix.logstash-version }}
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin' # See 'Supported distributions' for available options
+          java-version: '8'
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: jruby
+          bundler-cache: true
+      - if: matrix.logstash-version != 'default'
+        name: Checkout logstash ${{ matrix.logstash-version }}
         uses: actions/checkout@v2
         with:
           repository: "elastic/logstash"
           ref: ${{ matrix.logstash-version }}
           path: logstash
-      - name: Build logstash
+      - if: matrix.logstash-version != 'default'
+        name: Build logstash
         run: ./gradlew assemble
-        working-directory: /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash
-      - name: Set Path
-        run: |
-          echo "/home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash/bin" >> $GITHUB_PATH
-          echo "/home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash/vendor/jruby/bin" >> $GITHUB_PATH
-          echo "JRUBY_HOME=/home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash/vendor/jruby" >> $GITHUB_ENV
-          ls -R /home/runner/work/logstash-output-kusto/logstash-output-kusto/logstash/
-      - name: Install bundler
-        run: jruby -S gem install bundler
+        working-directory: logstash
       - name: Checkout code
         uses: actions/checkout@v2
         with:
           path: 'kusto'
-      - run: ruby -S bundle install
+      - run: bundle install
         working-directory: 'kusto'
       - name: Test
-        run: ruby -S bundle exec rake spec_junit
+        run: bundle exec rake spec_junit
         working-directory: 'kusto'
-      - run: ruby -S gem build *.gemspec
+      - run: gem build *.gemspec
         working-directory: 'kusto'
       - run: mv *.gem logstash-kusto.gem
         working-directory: 'kusto'
-      - if: matrix.logstash-version == 'main'
+      - if: matrix.logstash-version == '7.0'
         name: Upload gem
         uses: actions/upload-artifact@v2
         with:
           name: logstash-kusto.gem
           path: 'kusto/logstash-kusto.gem'
-      - if: matrix.logstash-version == 'main'
+      - if: matrix.logstash-version == '7.0'
         name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v1.6
         with:
