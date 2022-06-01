@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        logstash-version: ['main']
+        logstash-version: [ 'main' ]
     env:
       LOGSTASH_SOURCE: 1
       LOGSTASH_PATH: ../logstash
@@ -26,8 +26,8 @@ jobs:
           path: logstash
       - name: find test
         run: ls -R ~/
-       - name: find test 2
-         run: ls -R ..
+      - name: find test 2
+        run: ls -R ..
       - name: Set Path
         run: echo "~/logstash/bin" >> $GITHUB_PATH
       - name: Set Path 2
