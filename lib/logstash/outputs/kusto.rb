@@ -106,11 +106,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # starts processing them in the main thread (not healthy)
   config :upload_queue_size, validate: :number, default: 30
 
-  # Port where the proxy is listening, by default 3128 (squid)
+  # Host of the proxy , is an optional field. Can connect directly
   config :proxy_host, validate: :string, required: false
 
+  # Port where the proxy runs , defaults to 80. Usually a value like 3128
   config :proxy_port, validate: :number, required: false , default: 80
 
+  # TODO check Proxy URL can be over http or https. Dowe need it this way or ignore this & remove this
   config :proxy_protocol, validate: :string, required: false , default: 'http'
 
   default :codec, 'json_lines'
