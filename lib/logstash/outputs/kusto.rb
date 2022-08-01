@@ -88,7 +88,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Note that this must be in JSON format, as this is the interface between Logstash and Kusto
   config :json_mapping, validate: :string, required: true
 
-  # Mappung name - deprecated, use json_mapping
+  # Mapping name - deprecated, use json_mapping
   config :mapping, validate: :string, deprecated: true
 
 
@@ -105,6 +105,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Specify how many files can be kept in the upload queue before the main process
   # starts processing them in the main thread (not healthy)
   config :upload_queue_size, validate: :number, default: 30
+
+  # Port where the proxy is listening, by default 3128 (squid)
+  config :proxy_host, validate: :string, required: false
+
+  config :proxy_port, validate: :number, required: false , default: 80
+
+  config :proxy_protocol, validate: :string, required: false , default: 'http'
 
   default :codec, 'json_lines'
 
@@ -141,7 +148,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                                                   max_queue: upload_queue_size,
                                                   fallback_policy: :caller_runs)
 
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, database, table, final_mapping, delete_temp_files, @logger, executor)
+    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port,proxy_protocol, @logger, executor)
 
     # send existing files
     recover_past_files if recovery
