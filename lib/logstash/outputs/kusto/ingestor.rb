@@ -37,7 +37,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       kusto_connection_string.setClientVersionForTracing(name_for_tracing)
       
       @kusto_client = begin
-        if proxy_host.empty?
+        if proxy_host.nil? || proxy_host.empty?
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
         else
           kusto_http_client_properties = kusto_java.data.HttpClientProperties.builder().proxy(apache_http.HttpHost.new(proxy_host,proxy_port,proxy_protocol)).build()
