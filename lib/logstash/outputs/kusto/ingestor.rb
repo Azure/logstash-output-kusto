@@ -23,7 +23,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     def initialize(ingest_url, app_id, app_key, app_tenant, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool
       @logger = logger
-      validate_config(database, table, json_mapping)
+      validate_config(database, table, json_mapping,proxy_protocol)
       @logger.info('Preparing Kusto resources.')
 
       kusto_java = Java::com.microsoft.azure.kusto
@@ -53,7 +53,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.debug('Kusto resources are ready.')
     end
 
-    def validate_config(database, table, json_mapping)
+    def validate_config(database, table, json_mapping,proxy_protocol)
       if database =~ FIELD_REF
         @logger.error('database config value should not be dynamic.', database)
         raise LogStash::ConfigurationError.new('database config value should not be dynamic.')
@@ -68,6 +68,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @logger.error('json_mapping config value should not be dynamic.', json_mapping)
         raise LogStash::ConfigurationError.new('json_mapping config value should not be dynamic.')
       end
+
+      if not(["https", "http"].include? proxy_protocol)
+        @logger.error('proxy_protocol has to be http or https.', proxy_protocol)
+        raise LogStash::ConfigurationError.new('proxy_protocol has to be http or https.')
+      end
+
     end
 
     def upload_async(path, delete_on_success)

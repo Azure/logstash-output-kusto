@@ -29,3 +29,9 @@
 
 - Use stable (2.1.2) version of the java sdk, and retrieve it from maven with bundler.
 - Renamed `mapping` to `json_mapping` in order to clarify usage. `mapping` still remains as a deprecated parameter.  
+
+
+# 1.0.5
+
+- Use (3.1.3) version of the java sdk, and retrieve it from maven with bundler.
+- Added support for `proxy_host` `proxy_port` `proxy_protocol` to support proxying ingestion to Kusto

@@ -11,6 +11,9 @@ describe LogStash::Outputs::Kusto::Ingestor do
   let(:app_tenant) { "mytenant" }
   let(:database) { "mydatabase" }
   let(:table) { "mytable" }
+  let(:proxy_host) { "localhost" }
+  let(:proxy_port) { 80 }
+  let(:proxy_protocol) { "http" }
   let(:json_mapping) { "mymapping" }
   let(:delete_local) { false }
   let(:logger) { spy('logger') }
@@ -21,7 +24,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
       # note that this will cause an internal error since connection is being tried.
       # however we still want to test that all the java stuff is working as expected
       expect { 
-        ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, database, table, json_mapping, delete_local, logger)
+        ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, database, table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol, logger)
         ingestor.stop
       }.not_to raise_error
     end
@@ -32,7 +35,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
       dynamic_name_array.each do |test_database|
         it "with database: #{test_database}" do
           expect {
-            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, test_database, table, json_mapping, delete_local, logger)
+            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, test_database, table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol,logger)
             ingestor.stop
           }.to raise_error(LogStash::ConfigurationError)          
         end
@@ -43,7 +46,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
       dynamic_name_array.each do |test_table|
         it "with database: #{test_table}" do
           expect {
-            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, database, test_table, json_mapping, delete_local, logger)
+            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, database, test_table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol,logger)
             ingestor.stop
           }.to raise_error(LogStash::ConfigurationError)          
         end
@@ -51,13 +54,22 @@ describe LogStash::Outputs::Kusto::Ingestor do
     end
 
     context 'doesnt allow mapping to have some dynamic part' do
-      dynamic_name_array.each do |test_json_mapping|
-        it "with database: #{test_json_mapping}" do
+      dynamic_name_array.each do |json_mapping|
+        it "with database: #{json_mapping}" do
           expect {
-            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, database, table, test_json_mapping, delete_local, logger)
+            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, database, table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol,logger)
             ingestor.stop
           }.to raise_error(LogStash::ConfigurationError)          
         end
+      end
+    end
+
+    context 'proxy protocol has to be http or https' do
+      it "with proxy protocol: socks" do
+        expect {
+          ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, database, table, json_mapping, delete_local, proxy_host, proxy_port,'socks',logger)
+          ingestor.stop
+        }.to raise_error(LogStash::ConfigurationError)          
       end
     end
 
