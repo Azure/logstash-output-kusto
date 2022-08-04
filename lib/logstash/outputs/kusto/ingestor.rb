@@ -20,23 +20,30 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     LOW_QUEUE_LENGTH = 3
     FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, database, table, json_mapping, delete_local, logger, threadpool = DEFAULT_THREADPOOL)
+    def initialize(ingest_url, app_id, app_key, app_tenant, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool
       @logger = logger
-
-      validate_config(database, table, json_mapping)
-
-      @logger.debug('Preparing Kusto resources.')
+      validate_config(database, table, json_mapping,proxy_protocol)
+      @logger.info('Preparing Kusto resources.')
 
       kusto_java = Java::com.microsoft.azure.kusto
+      apache_http = Java::org.apache.http
       kusto_connection_string = kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
+      #
       @logger.debug(Gem.loaded_specs.to_s)
       # Unfortunately there's no way to avoid using the gem/plugin name directly...
       name_for_tracing = "logstash-output-kusto:#{Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"}"
       @logger.debug("Client name for tracing: #{name_for_tracing}")
       kusto_connection_string.setClientVersionForTracing(name_for_tracing)
-
-      @kusto_client = kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
+      
+      @kusto_client = begin
+        if proxy_host.nil? || proxy_host.empty?
+          kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
+        else
+          kusto_http_client_properties = kusto_java.data.HttpClientProperties.builder().proxy(apache_http.HttpHost.new(proxy_host,proxy_port,proxy_protocol)).build()
+          kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string, kusto_http_client_properties)
+        end
+      end
 
       @ingestion_properties = kusto_java.ingest.IngestionProperties.new(database, table)
       @ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
@@ -46,7 +53,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.debug('Kusto resources are ready.')
     end
 
-    def validate_config(database, table, json_mapping)
+    def validate_config(database, table, json_mapping,proxy_protocol)
       if database =~ FIELD_REF
         @logger.error('database config value should not be dynamic.', database)
         raise LogStash::ConfigurationError.new('database config value should not be dynamic.')
@@ -61,6 +68,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @logger.error('json_mapping config value should not be dynamic.', json_mapping)
         raise LogStash::ConfigurationError.new('json_mapping config value should not be dynamic.')
       end
+
+      if not(["https", "http"].include? proxy_protocol)
+        @logger.error('proxy_protocol has to be http or https.', proxy_protocol)
+        raise LogStash::ConfigurationError.new('proxy_protocol has to be http or https.')
+      end
+
     end
 
     def upload_async(path, delete_on_success)
@@ -95,11 +108,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       #   local_ingestion_properties.addJsonMappingName(json_mapping)
       # end
 
-      file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, 0); # 0 - let the sdk figure out the size of the file
-      @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
-
+      if file_size > 0
+        file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, 0); # 0 - let the sdk figure out the size of the file
+        @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
+      else
+        @logger.warn("File #{path} is an empty file and is not ingested.")
+      end
       File.delete(path) if delete_on_success
-
       @logger.debug("File #{path} sent to kusto.")
     rescue Errno::ENOENT => e
       @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)

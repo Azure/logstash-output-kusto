@@ -39,6 +39,9 @@ output {
             database => "<database name>"
             table => "<target table>"
             json_mapping => "<mapping name>"
+            proxy_host => "<proxy host>"
+            proxy_port => <proxy port>
+            proxy_protocol => <"http"|"https">              
 	}
 }
 ```
@@ -57,6 +60,16 @@ More information about configuring Logstash can be found in the [logstash config
 | **recovery** | If set to true (default), plugin will attempt to resend pre-existing temp files found in the path upon startup | |
 | **delete_temp_files** | Determines if temp files will be deleted after a successful upload (true is default; set false for debug purposes only)| |
 | **flush_interval** | The time (in seconds) for flushing writes to temporary files. Default is 2 seconds, 0 will flush on every event. Increase this value to reduce IO calls but keep in mind that events in the buffer will be lost in case of abrupt failure.| |
+| **proxy_host** | The proxy hostname for redirecting traffic to Kusto.| |
+| **proxy_port** | The proxy port for the proxy. Defaults to 80.| |
+| **proxy_protocol** | The proxy server protocol , is one of http or https.| |
+
+> Note : LS_JAVA_OPTS can be used to set proxy parameters as well (using export or SET options)
+
+```bash
+export  LS_JAVA_OPTS="-Dhttp.proxyHost=1.2.34 -Dhttp.proxyPort=8989 -Dhttps.proxyHost=1.2.3.4 -Dhttps.proxyPort=8989"
+```
+
 
 ## Development Requirements
 

@@ -31,6 +31,15 @@ Gemfile.lock
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+.vscode-server/*
+.ssh/*
+#Devcontainer 
+*.devcontainer/*
+Jars.lock
+.mvn/*
+
+#logstash conf
+*.conf
 
 #IDEA
 .idea

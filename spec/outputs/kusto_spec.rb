@@ -12,7 +12,10 @@ describe LogStash::Outputs::Kusto do
     "app_tenant" => "mytenant",
     "database" => "mydatabase",
     "table" => "mytable",
-    "json_mapping" => "mymapping"
+    "json_mapping" => "mymapping",
+    "proxy_host" => "localhost",
+    "proxy_port" => 3128,
+    "proxy_protocol" => "https"
   } }
 
   describe '#register' do
