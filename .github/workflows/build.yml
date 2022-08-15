@@ -4,6 +4,43 @@ on:
   push:
 
 jobs:
+  e2e:
+    name: End-To-End Testing
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: jruby
+          bundler-cache: true
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Download gem
+        uses: actions/download-artifact@v2
+        with:
+          name: logstash-kusto.gem
+      - name: Install logstash # taken from logstash's website https://www.elastic.co/guide/en/logstash/7.10/installing-logstash.html#_apt
+        run: |
+          wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+          sudo apt-get install apt-transport-https
+          echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
+          sudo apt-get update && sudo apt-get install logstash
+      - run: sudo chown -R runner /usr/share/logstash
+      - run: sudo chmod -R u=rx,g=,o=  /usr/share/logstash/bin
+      - name: Install plugin
+        run: /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
+      - run: bundle install
+      - run: lock_jars
+      - name: Run e2e
+        run: jruby e2e.rb
+        working-directory: 'e2e'
+        env:
+          ENGINE_URL: ${{ secrets.ENGINE_URL }}
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          APP_ID: ${{ secrets.APP_ID }}
+          APP_KEY: ${{ secrets.APP_KEY }}
+          TENANT_ID: ${{ secrets.TENANT_ID }}
+          TEST_DATABASE: ${{ secrets.TEST_DATABASE }}
   build:
     name: Build gem
     runs-on: ubuntu-latest
@@ -57,39 +94,3 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           files: kusto/rspec.xml
-  e2e:
-    name: End-To-End Testing
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: jruby
-          bundler-cache: true
-      - name: Checkout code
-        uses: actions/checkout@v2
-      - name: Download gem
-        uses: actions/download-artifact@v2
-        with:
-          name: logstash-kusto.gem
-      - name: Install logstash # taken from logstash's website https://www.elastic.co/guide/en/logstash/7.10/installing-logstash.html#_apt
-        run: |
-          wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
-          sudo apt-get install apt-transport-https
-          echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
-          sudo apt-get update && sudo apt-get install logstash
-      - run: sudo chmod -R u=rx,g=,o=  /usr/share/logstash/bin
-      - name: Install plugin
-        run: /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
-      - run: bundle install
-      - run: lock_jars
-      - name: Run e2e
-        run: jruby e2e.rb
-        working-directory: 'e2e'
-        env:
-          ENGINE_URL: ${{ secrets.ENGINE_URL }}
-          INGEST_URL: ${{ secrets.INGEST_URL }}
-          APP_ID: ${{ secrets.APP_ID }}
-          APP_KEY: ${{ secrets.APP_KEY }}
-          TENANT_ID: ${{ secrets.TENANT_ID }}
-          TEST_DATABASE: ${{ secrets.TEST_DATABASE }}
