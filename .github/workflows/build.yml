@@ -78,10 +78,10 @@ jobs:
           sudo apt-get install apt-transport-https
           echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-7.x.list
           sudo apt-get update && sudo apt-get install logstash
+      - run: sudo chown -R runner /usr/share/logstash
+      - run: sudo chmod -R u=rx,g=,o=  /usr/share/logstash/bin
       - name: Install plugin
-        run: sudo /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
-      - run: sudo chmod -R 777 /usr/share/logstash
-      - run: sudo chmod -R 777 .
+        run: /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
       - run: bundle install
       - run: lock_jars
       - name: Run e2e
