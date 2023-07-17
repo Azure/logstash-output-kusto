@@ -73,11 +73,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   # The following are the credentails used to connect to the Kusto service
   # application id 
-  config :app_id, validate: :string, required: true
+  config :app_id, validate: :string, default: nil
   # application key (secret)
-  config :app_key, validate: :password, required: true
+  config :app_key, validate: :password, default: nil
   # aad tenant id
   config :app_tenant, validate: :string, default: nil
+  # managed identity id
+  config :managed_identity, validate: :string, default: nil
 
   # The following are the data settings that impact where events are written to
   # Database name
@@ -150,7 +152,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                                                   max_queue: upload_queue_size,
                                                   fallback_policy: :caller_runs)
 
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port,proxy_protocol, @logger, executor)
+    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port,proxy_protocol, @logger, executor)
 
     # send existing files
     recover_past_files if recovery

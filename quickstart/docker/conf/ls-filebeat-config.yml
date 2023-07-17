@@ -1,0 +1,8 @@
+filebeat.inputs:
+- type: filestream
+  id: internet-weblogs 
+  paths:
+    - /tmp/access/*
+# sends to logstash
+output.logstash:
+  hosts: ["ls-adx:5044"]

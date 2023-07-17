@@ -1,0 +1,3 @@
+FROM docker.elastic.co/beats/filebeat:7.17.9
+COPY samples/apache.log /tmp/access/apache.log
+COPY --chown=root:filebeat conf/ls-filebeat-config.yml /usr/share/filebeat/filebeat.yml
