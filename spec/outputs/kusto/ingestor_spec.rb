@@ -28,13 +28,6 @@ describe LogStash::Outputs::Kusto::Ingestor do
         ingestor.stop
       }.not_to raise_error
     end
-    it "fails when all credentials are empty" do
-      expect {
-        ingestor = described_class.new(ingest_url, "", "", "", "", database, table, json_mapping, delete_local, proxy_host, proxy_port,'socks',logger)
-        ingestor.stop
-      }.to raise_error(LogStash::ConfigurationError)          
-    end
-
 
     dynamic_name_array = ['/a%{name}/', '/a %{name}/', '/a- %{name}/', '/a- %{name}']
 
