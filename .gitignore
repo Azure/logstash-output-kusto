@@ -7,7 +7,7 @@
 # Ignore all logfiles and tempfiles.
 /log/*.log
 /tmp
-
+.vscode/*
 *.gem
 *.rbc
 .bundle
@@ -48,3 +48,5 @@ Jars.lock
 #Jar files and generated files
 **/*.jar
 **/*_jars.rb
+.vscode/tasks.json
+.vscode/settings.json

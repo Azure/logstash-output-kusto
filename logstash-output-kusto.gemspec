@@ -31,6 +31,6 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'rspec_junit_formatter'
 
   # Jar dependencies
-  s.requirements << "jar 'com.microsoft.azure.kusto, kusto-ingest, 5.0.0'"
+  s.requirements << "jar 'com.microsoft.azure.kusto, kusto-ingest, 5.0.2'"
   s.add_runtime_dependency 'jar-dependencies'
 end
