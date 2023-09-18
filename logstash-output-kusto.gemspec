@@ -27,7 +27,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'logstash-devutils'
   s.add_development_dependency 'flores'
   s.add_development_dependency 'logstash-input-generator'
-  s.add_development_dependency 'ruby-maven', '~> 3.3.11'
+  s.add_development_dependency 'ruby-maven', '~> 3.3.13'
   s.add_development_dependency 'rspec_junit_formatter'
 
   # Jar dependencies
