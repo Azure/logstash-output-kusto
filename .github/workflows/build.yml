@@ -31,7 +31,7 @@ jobs:
           echo "$LOGSTASH_PATH/bin" >> $GITHUB_PATH
           echo "$LOGSTASH_PATH/vendor/jruby/bin" >> $GITHUB_PATH
       - name: Install bundler
-        run: jruby -S gem install bundler -J "--add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED"
+        run: jruby -S gem install bundler
       - name: Checkout code
         uses: actions/checkout@v2
         with:
