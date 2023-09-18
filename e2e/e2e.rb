@@ -115,7 +115,7 @@ output {
   end
 
   def start
-    @query_client = $kusto_java.data.ClientImpl.new($kusto_java.data.auth.ConnectionStringBuilder::createWithAadApplicationCredentials(@engine_url, @app_id,
+    @query_client = $kusto_java.data.ClientFactory.createClient($kusto_java.data.auth.ConnectionStringBuilder::createWithAadApplicationCredentials(@engine_url, @app_id,
                                                                                                                                    @app_kay, @tenant_id))
     create_table_and_mapping
     run_logstash
