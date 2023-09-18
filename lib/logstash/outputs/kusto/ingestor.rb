@@ -34,7 +34,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # Unfortunately there's no way to avoid using the gem/plugin name directly...
       name_for_tracing = "logstash-output-kusto:#{Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"}"
       @logger.debug("Client name for tracing: #{name_for_tracing}")
-      kusto_connection_string.setClientVersionForTracing(name_for_tracing)
+
+      tuple_utils = Java::org.apache.commons.lang3.tuple
+      # kusto_connection_string.setClientVersionForTracing(name_for_tracing)
+      version_for_tracing=Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"
+      kusto_connection_string.setConnectorDetails("Logstash",version_for_tracing.to_s,"","",false,"", tuple_utils.Pair.emptyArray());
       
       @kusto_client = begin
         if proxy_host.nil? || proxy_host.empty?

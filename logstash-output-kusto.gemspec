@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name          = 'logstash-output-kusto' #WATCH OUT: we hardcoded usage of this name in one of the classes.
-  s.version       = '1.0.6'
+  s.version       = '2.0.0'
   s.licenses      = ['Apache-2.0']
   s.summary       = 'Writes events to Azure Data Explorer (Kusto)'
   s.description   = 'This is a logstash output plugin used to write events to an Azure Data Explorer (a.k.a Kusto)'
@@ -31,6 +31,6 @@ Gem::Specification.new do |s|
   s.add_development_dependency 'rspec_junit_formatter'
 
   # Jar dependencies
-  s.requirements << "jar 'com.microsoft.azure.kusto, kusto-ingest, 3.2.1'"
+  s.requirements << "jar 'com.microsoft.azure.kusto, kusto-ingest, 5.0.2'"
   s.add_runtime_dependency 'jar-dependencies'
 end
