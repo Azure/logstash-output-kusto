@@ -16,6 +16,7 @@ jobs:
       LOGSTASH_SOURCE: 1
       LOGSTASH_PATH: /home/runner/logstash
       JRUBY_HOME: /home/runner/logstash/vendor/jruby
+      JAVA_OPTS: "--add-opens java.base/sun.nio.ch=org.jruby.dist --add-opens java.base/java.io=org.jruby.dist"
     steps:
       - name: Build logstash
         run: |
