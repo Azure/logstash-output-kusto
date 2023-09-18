@@ -15,9 +15,9 @@ jobs:
     env:
       LOGSTASH_SOURCE: 1
       LOGSTASH_PATH: /home/runner/logstash
-      JRUBY_HOME: /home/runner/logstash/vendor/jruby
-      JAVA_OPTS: "--add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED"
-      LS_JAVA_OPTS: "--add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED"
+      #JRUBY_HOME: /home/runner/logstash/vendor/jruby
+      JRUBY_HOME: /opt/jruby
+      JRUBY_VERSION: 9.3.10.0      
     steps:
       - name: Build logstash
         run: |
@@ -25,6 +25,18 @@ jobs:
           wget -O logstash.tar.gz ${{matrix.logstash.url}}
           tar -xf logstash.tar.gz
           mv logstash*/ logstash
+        working-directory: /home/runner
+      - name: Download and install JRUBY
+        run: |
+          set -xeu; \
+          tarball="/tmp/jruby-dist-${JRUBY_VERSION}-bin.tar.gz"; \
+          ls -ld /tmp ; \
+          curl -s -o "${tarball}" \
+              https://repo1.maven.org/maven2/org/jruby/jruby-dist/${JRUBY_VERSION}/jruby-dist-${JRUBY_VERSION}-bin.tar.gz; \
+          cd /tmp; \
+          sha1sum --ignore-missing --check /tmp/CHECKSUMS-jruby; \
+          mkdir -p /opt/jruby; \
+          tar -C /opt/jruby -zxf /tmp/jruby-dist-${JRUBY_VERSION}-bin.tar.gz --strip-components=1 --no-same-owner
         working-directory: /home/runner
       - name: Set Path
         run: |
