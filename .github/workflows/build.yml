@@ -10,7 +10,7 @@ jobs:
     strategy:
       matrix:
         logstash: [
-          { version: '8.6.3', url: "https://artifacts.elastic.co/downloads/logstash/logstash-8.6.3-linux-x86_64.tar.gz" , main: 'true' }
+          { version: '8.10.0', url: "https://artifacts.elastic.co/downloads/logstash/logstash-8.10.0-linux-x86_64.tar.gz" , main: 'true' },
         ]
     env:
       LOGSTASH_SOURCE: 1
