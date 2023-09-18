@@ -15,9 +15,10 @@ jobs:
     env:
       LOGSTASH_SOURCE: 1
       LOGSTASH_PATH: /home/runner/logstash
-      JRUBY_HOME: /home/runner/logstash/vendor/jruby
+      # JRUBY_HOME: /home/runner/logstash/vendor/jruby
+      JRUBY_HOME: /opt/jruby
       JDK_JAVA_OPTIONS: "--add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED"
-      LS_JAVA_OPTS: "--add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED"
+      JRUBY_VERSION: 9.3.10.0
     steps:
       - name: Build logstash
         run: |
@@ -25,13 +26,22 @@ jobs:
           wget -O logstash.tar.gz ${{matrix.logstash.url}}
           tar -xf logstash.tar.gz
           mv logstash*/ logstash
+      - name: Download and install JRUBY version
+        run: |
+          tarball="/tmp/jruby-dist-${JRUBY_VERSION}-bin.tar.gz"; \
+          ls -ld /tmp ; \
+          curl -s -o "${tarball}" \
+              https://repo1.maven.org/maven2/org/jruby/jruby-dist/${JRUBY_VERSION}/jruby-dist-${JRUBY_VERSION}-bin.tar.gz; \
+          cd /tmp; \
+          mkdir -p /opt/jruby; \
+          tar -C /opt/jruby -zxf /tmp/jruby-dist-${JRUBY_VERSION}-bin.tar.gz --strip-components=1 --no-same-owner    
         working-directory: /home/runner
       - name: Set Path
         run: |
           echo "$LOGSTASH_PATH/bin" >> $GITHUB_PATH
-          echo "$LOGSTASH_PATH/vendor/jruby/bin" >> $GITHUB_PATH
+          echo "$JRUBY_HOME/bin" >> $GITHUB_PATH
       - name: Install bundler
-        run: jruby -S gem install bundler
+        run: jruby -S gem install bundler -v 2.3.18
       - name: Checkout code
         uses: actions/checkout@v2
         with:
