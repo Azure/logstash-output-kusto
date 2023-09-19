@@ -71,6 +71,14 @@ export  LS_JAVA_OPTS="-Dhttp.proxyHost=1.2.34 -Dhttp.proxyPort=8989 -Dhttps.prox
 ```
 
 
+### Release Notes and versions
+
+| Version | Release Date | Notes |
+| --- | --- | --- |
+| 2.0.0 | 2023-09-19 | - Upgrade to the latest Java SDK version [5.0.2](https://github.com/Azure/azure-kusto-java/releases/tag/v5.0.2). Tests have been performed on **__Logstash 8.6__**  and up - Fixes CVE's in common-text & outdated Jackson libraries  |
+| 1.0.6 | 2022-11-29 | - Upgrade to the latest Java SDK [3.2.1](https://github.com/Azure/azure-kusto-java/releases/tag/v3.2.1) version. Tests have been performed on Logstash 6.x and up.|
+
+
 ## Development Requirements
 
 - Openjdk **8 64bit** (https://www.openlogic.com/openjdk-downloads)
