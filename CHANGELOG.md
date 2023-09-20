@@ -35,3 +35,8 @@
 
 - Use (3.1.3) version of the java sdk, and retrieve it from maven with bundler.
 - Added support for `proxy_host` `proxy_port` `proxy_protocol` to support proxying ingestion to Kusto
+
+# 2.0.0
+
+- Use (5.0.2) version of the java sdk, and retrieve it from maven with bundler. Supports logstash 8.6 versions and up
+- Upgrade to latest Java SDK fixes [CVE](https://github.com/advisories/GHSA-599f-7c49-w659) and addresses Issue#48

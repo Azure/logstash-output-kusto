@@ -1,5 +1,4 @@
 #!/bin/bash
-chmod -R 777 /src/logstash-output-kusto/*
 echo "starting script run..."
 rm Jars.lock
 rm logstash-output-kusto-*-java.gem
