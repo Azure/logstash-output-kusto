@@ -38,11 +38,6 @@ jobs:
         run: |
           ruby -S bundle install || true
         working-directory: 'kusto'
-      - name: Remove lockfile
-        run: |
-          ls -al Gemfile.lock
-          rm -fr Gemfile.lock
-        working-directory: 'kusto'
       - name: Test
         run: ruby -S bundle exec rake spec_junit
         working-directory: 'kusto'
