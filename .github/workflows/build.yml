@@ -38,8 +38,8 @@ jobs:
         uses: actions/checkout@v2
         with:
           path: 'kusto'
-      # - run: jruby -S bundle install
-      #   working-directory: 'kusto'
+      - run: jruby -S bundle install || true
+        working-directory: 'kusto'
       - name: Test
         run: ruby -S bundle exec rake spec_junit
         working-directory: 'kusto'
