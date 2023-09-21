@@ -7,11 +7,6 @@ jobs:
   build:
     name: Build gem
     runs-on: ubuntu-latest
-    container:
-      image: sdktestsacr.azurecr.io/logstash-output-kusto:v5.0.2
-      credentials:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }} 
     strategy:
       matrix:
         logstash: [
@@ -19,23 +14,27 @@ jobs:
         ]
     env:
       LOGSTASH_SOURCE: 1
-      LOGSTASH_PATH: /src/logstash
-      JRUBY_HOME: /src/logstash/vendor/jruby
-      JDK_JAVA_OPTIONS: "--add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED"
+      LOGSTASH_PATH: /home/runner/logstash
+      JRUBY_HOME: /home/runner/logstash/vendor/jruby
     steps:
+      - name: Build logstash
+        run: |
+          echo "Getting logstash version ${{matrix.logstash.version}}"
+          wget -O logstash.tar.gz ${{matrix.logstash.url}}
+          tar -xf logstash.tar.gz
+          mv logstash*/ logstash
+        working-directory: /home/runner
+      - name: Set Path
+        run: |
+          echo "$LOGSTASH_PATH/bin" >> $GITHUB_PATH
+          echo "$LOGSTASH_PATH/vendor/jruby/bin" >> $GITHUB_PATH
       - name: Install bundler
-        run: jruby -S gem install bundler -v 2.3.26
+        run: jruby -S gem install bundler
       - name: Checkout code
         uses: actions/checkout@v2
         with:
           path: 'kusto'
-      - run: |
-          rm -f Jars.lock
-          rm -f logstash-output-kusto-*-java.gem
-          rm -f Gemfile.lock
-          bundle lock --add-platform java || true
-          bundle install || true
-          lock_jars || true
+      - run: ruby -S bundle install 2.3.26
         working-directory: 'kusto'
       - name: Test
         run: ruby -S bundle exec rake spec_junit
