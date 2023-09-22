@@ -48,3 +48,12 @@ Jars.lock
 #Jar files and generated files
 **/*.jar
 **/*_jars.rb
+# Ignore Gradle project-specific cache directory
+.gradle
+
+# Ignore Gradle build output directory
+build
+.vscode/settings.json
+gradle/wrapper/gradle-wrapper.properties
+.vscode/settings.json
+.vscode/settings.json
