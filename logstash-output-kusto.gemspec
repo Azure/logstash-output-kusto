@@ -32,5 +32,8 @@ Gem::Specification.new do |s|
 
   # Jar dependencies
   s.requirements << "jar 'com.microsoft.azure.kusto, kusto-ingest, 5.0.2'"
+  s.requirements << "jar 'com.fasterxml.jackson.core, jackson-core, 2.14.2'"
+  s.requirements << "jar 'com.fasterxml.jackson.core, jackson-databind, 2.14.2'"
+  s.requirements << "jar 'com.fasterxml.jackson.core, jackson-annotations, 2.14.2'"
   s.add_runtime_dependency 'jar-dependencies'
 end
