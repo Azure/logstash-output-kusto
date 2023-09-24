@@ -10,40 +10,35 @@ jobs:
     strategy:
       matrix:
         logstash: [
-          { version: '8.7.0', url: "https://artifacts.elastic.co/downloads/logstash/logstash-8.7.0-linux-x86_64.tar.gz" , main: 'true' }
+          { version: '8.2.2', url: "https://artifacts.elastic.co/downloads/logstash/logstash-8.2.2-linux-x86_64.tar.gz" , main: 'true' }
         ]
     env:
       LOGSTASH_SOURCE: 1
       LOGSTASH_PATH: /home/runner/logstash
-      JRUBY_HOME: /home/runner/jruby
-      JRUBY_TARBALL: /tmp/jruby-dist-9.3.11.0-bin.tar.gz
+      JRUBY_HOME: /home/runner/logstash/vendor/jruby
+      JAVA_HOME: /home/runner/logstash/jdk
     steps:
       - name: Build logstash
         run: |
           echo "Getting logstash version ${{matrix.logstash.version}}"
-          mkdir -p /home/runner/jruby
           wget -O logstash.tar.gz ${{matrix.logstash.url}}
           tar -xf logstash.tar.gz
           mv logstash*/ logstash
-          curl -s -o "${JRUBY_TARBALL}" https://repo1.maven.org/maven2/org/jruby/jruby-dist/9.3.11.0/jruby-dist-9.3.11.0-bin.tar.gz
-          tar -C /home/runner/jruby -zxf /tmp/jruby-dist-9.3.11.0-bin.tar.gz --strip-components=1 --no-same-owner
         working-directory: /home/runner
       - name: Set Path
         run: |
           echo "$LOGSTASH_PATH/bin" >> $GITHUB_PATH
-          echo "$JRUBY_HOME/bin" >> $GITHUB_PATH
-      - name: Install bundler
-        run: jruby -S gem install bundler -v 2.4.19
+          echo "$LOGSTASH_PATH/vendor/jruby/bin" >> $GITHUB_PATH
       - name: Checkout code
         uses: actions/checkout@v2
         with:
           path: 'kusto'
-      - run: jruby -S bundle install || true
+      - run: jruby -S bundle install
         working-directory: 'kusto'
-      - name: Test
-        run: ruby -S bundle exec rake spec_junit
+      - name: Run unit tests
+        run: jruby -S bundle exec rake test
         working-directory: 'kusto'
-      - run: ruby -S gem build *.gemspec
+      - run: jruby -S gem build *.gemspec
         working-directory: 'kusto'
       - run: mv *.gem logstash-kusto.gem
         working-directory: 'kusto'
@@ -53,12 +48,6 @@ jobs:
         with:
           name: logstash-kusto.gem
           path: 'kusto/logstash-kusto.gem'
-      - if: matrix.logstash.main == 'true'
-        name: Publish Unit Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v1.6
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          files: kusto/rspec.xml
   e2e:
     name: End-To-End Testing
     runs-on: ubuntu-latest
@@ -84,10 +73,9 @@ jobs:
       - run: sudo chmod -R u=rx,g=,o=  /usr/share/logstash/bin
       - name: Install plugin
         run: /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
-      - run: bundle install
-      - run: lock_jars
+      - run: jruby -S bundle install
       - name: Run e2e
-        run: jruby e2e.rb
+        run: jruby -J-cp ../lib/ e2e.rb
         working-directory: 'e2e'
         env:
           ENGINE_URL: ${{ secrets.ENGINE_URL }}

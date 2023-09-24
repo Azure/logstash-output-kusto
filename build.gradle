@@ -12,7 +12,6 @@ version Files.readAllLines(Paths.get("version")).first()
 
 repositories {
     mavenCentral()
-    jcenter()
 }
 dependencies {
     implementation 'com.azure:azure-core-http-netty:1.13.5'
@@ -23,13 +22,13 @@ dependencies {
     implementation 'com.azure:azure-storage-blob:12.23.0'
     implementation 'com.azure:azure-storage-common:12.22.0'
     implementation 'com.azure:azure-storage-internal-avro:12.8.0'
-    //implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml:2.13.5'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml:2.14.2'
     implementation 'com.azure:azure-storage-queue:12.18.0'
     implementation 'com.fasterxml.jackson.core:jackson-annotations:2.14.2'
     implementation 'com.fasterxml.jackson.core:jackson-core:2.14.2'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.14.2'
     implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.14.2'
-    //implementation 'com.fasterxml.woodstox:woodstox-core:6.4.0'
+    implementation 'com.fasterxml.woodstox:woodstox-core:6.5.0'
     implementation 'com.github.stephenc.jcip:jcip-annotations:1.0-1'
     implementation 'com.microsoft.azure.kusto:kusto-data:5.0.2'
     implementation 'com.microsoft.azure.kusto:kusto-ingest:5.0.2'
@@ -45,7 +44,7 @@ dependencies {
     implementation 'io.github.resilience4j:resilience4j-core:1.7.1'
     implementation 'io.github.resilience4j:resilience4j-retry:1.7.1'
     implementation 'io.netty:netty-buffer:4.1.94.Final'
-    implementation 'io.netty:netty-codec-dns:4.1.93.Final'
+    implementation 'io.netty:netty-codec-dns:4.1.94.Final'
     implementation 'io.netty:netty-codec-http2:4.1.94.Final'
     implementation 'io.netty:netty-codec-http:4.1.94.Final'
     implementation 'io.netty:netty-codec-socks:4.1.94.Final'
@@ -53,9 +52,9 @@ dependencies {
     implementation 'io.netty:netty-common:4.1.94.Final'
     implementation 'io.netty:netty-handler-proxy:4.1.94.Final'
     implementation 'io.netty:netty-handler:4.1.94.Final'
-    implementation 'io.netty:netty-resolver-dns-classes-macos:4.1.93.Final'
-    // implementation 'io.netty:netty-resolver-dns-native-macos:4.1.93.Final:osx-x86_64'
-    implementation 'io.netty:netty-resolver-dns:4.1.93.Final'
+    implementation 'io.netty:netty-resolver-dns-classes-macos:4.1.94.Final'
+    implementation 'io.netty:netty-resolver-dns-native-macos:4.1.94.Final:osx-x86_64'
+    implementation 'io.netty:netty-resolver-dns:4.1.94.Final'
     implementation 'io.netty:netty-resolver:4.1.94.Final'
     implementation 'io.netty:netty-tcnative-boringssl-static:2.0.61.Final'
     implementation 'io.netty:netty-tcnative-classes:2.0.61.Final'
@@ -102,7 +101,7 @@ task generateGemJarRequiresFile {
 
 task vendor {
     doLast {
-        String vendorPathPrefix = "vendor/jar-dependencies"
+        String vendorPathPrefix = "lib"
         configurations.runtimeClasspath.allDependencies.each { dep ->
             System.out.println("Copying ${dep.group}:${dep.name}:${dep.version}")
             File f = configurations.runtimeClasspath.filter { it.absolutePath.contains("${dep.group}/${dep.name}/${dep.version}") }.singleFile
