@@ -15,7 +15,12 @@ jobs:
           bundler-cache: true
       - name: Checkout code
         uses: actions/checkout@v2
-      - run: bundle install
+      - name: Install dependencies
+        run: jruby -S bundle install
+      - name: Run gradle vendor
+        run: ./gradlew vendor
+      - name: Build gem
+        run: jruby -S gem build *.gemspec
       - name: Get release
         id: get_release
         uses: bruceadams/get-release@v1.2.2
