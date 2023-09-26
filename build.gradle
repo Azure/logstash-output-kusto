@@ -7,12 +7,18 @@ apply plugin: 'java'
 apply plugin: 'idea'
 apply plugin: 'maven-publish'
 
+// The gemspec contains the gem metadata to build and package the gem. The gradle build serves as a mechanism of getting these "vendor" files required for the gem.
+// The alternative is to use ruby-maven gem to package, but this runs into classpath conflicts/issues with the logstash plugin.
 group "org.logstash.outputs"
 version Files.readAllLines(Paths.get("version")).first()
 
 repositories {
     mavenCentral()
 }
+
+// These dependencies are required by the gemspec to build the gem. The easiest to arrive at this list is to look at the effective pom of kusto-ingest and arrive at this list
+// even if we use the ruby-maven gem to package the gem, install and lock_jars will create the logstash_output_kusto_jars.rb file with the same list of dependencies.
+// In the gradle way, running ./gradlew vendor creates the jar file list and adds them to vendor/jar-dependencies folder from where it is referenced in the gemspec (require_paths and files)
 dependencies {
     implementation 'com.azure:azure-core-http-netty:1.13.5'
     implementation 'com.azure:azure-core:1.41.0'
@@ -85,6 +91,8 @@ dependencies {
     implementation 'org.slf4j:slf4j-simple:1.8.0-beta4'
 }
 
+// This task generates the ruby file with all the dependencies. Once this task runs, look at the lib/logstash-output-kusto_jars.rb file
+// that references all the dependent jar files. (the wrapper is the ./gradle vendor task)
 task generateGemJarRequiresFile {
     doLast {
         File jars_file = file('lib/logstash-output-kusto_jars.rb')
@@ -94,16 +102,19 @@ task generateGemJarRequiresFile {
             configurations.runtimeClasspath.allDependencies.each {
                 w << "require_jar(\'${it.group}\', \'${it.name}\', \'${it.version}\')\n"
             }
-            // w << "require_jar(\'${project.group}\', \'${project.name}\', \'${project.version}\')\n"
+            w << "require_jar(\'${project.group}\', \'${project.name}\', \'${project.version}\')\n"
         }
     }
 }
-
+// The vendor task copies the jars from the runtimeClasspath to the vendor/jar-dependencies folder. 
+// This is referenced in the gemspec as the require_paths and files. Once this vendor task runs, look at the lib/logstash-output-kusto_jars.rb file
+// that references all the dependent jar files.
 task vendor {
+    // take in all the dependencies from the runtimeClasspath and copy them to the vendor/jar-dependencies folder
     doLast {
-        String vendorPathPrefix = "lib"
+        String vendorPathPrefix = "vendor/jar-dependencies"
         configurations.runtimeClasspath.allDependencies.each { dep ->
-            System.out.println("Copying ${dep.group}:${dep.name}:${dep.version}")
+            println("Copying ${dep.group}:${dep.name}:${dep.version}")
             File f = configurations.runtimeClasspath.filter { it.absolutePath.contains("${dep.group}/${dep.name}/${dep.version}") }.singleFile
             String groupPath = dep.group.replaceAll('\\.', '/')
             File newJarFile = file("${vendorPathPrefix}/${groupPath}/${dep.name}/${dep.version}/${dep.name}-${dep.version}.jar")
@@ -116,5 +127,5 @@ task vendor {
         Files.copy(file("$buildDir/libs/${project.name}-${project.version}.jar").toPath(), projectJarFile.toPath(), REPLACE_EXISTING)
     }
 }
-
+// The jar task is the standard packaging task & the generateGemJarRequiresFile task generates the ruby file with all the dependencies.
 vendor.dependsOn(jar, generateGemJarRequiresFile)

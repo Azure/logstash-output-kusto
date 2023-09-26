@@ -1,13 +1,13 @@
 Gem::Specification.new do |s|
   s.name          = 'logstash-output-kusto' #WATCH OUT: we hardcoded usage of this name in one of the classes.
-  s.version       = '2.0.0'
+  s.version       = ::File.read('version').split("\n").first
   s.licenses      = ['Apache-2.0']
   s.summary       = 'Writes events to Azure Data Explorer (Kusto)'
   s.description   = 'This is a logstash output plugin used to write events to an Azure Data Explorer (a.k.a Kusto)'
   s.homepage      = 'https://github.com/Azure/logstash-output-kusto'
   s.authors       = ['Tamir Kamara', 'Asaf Mahlev']
   s.email         = 'nugetkusto@microsoft.com'
-  s.require_paths = ['lib']
+  s.require_paths = ["lib", "vendor/jar-dependencies"]
   s.platform = 'java'
 
   # Files

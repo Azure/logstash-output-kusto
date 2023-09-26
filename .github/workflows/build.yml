@@ -41,7 +41,7 @@ jobs:
       - run: jruby -S bundle install
         working-directory: 'kusto'
       - name: Run unit tests
-        run: jruby -S bundle exec rake test
+        run: jruby -S bundle exec rspec -r rspec_junit_formatter --format RspecJunitFormatter -o rspec.xml
         working-directory: 'kusto'
       - run: jruby -S gem build *.gemspec
         working-directory: 'kusto'
@@ -53,6 +53,12 @@ jobs:
         with:
           name: logstash-kusto.gem
           path: 'kusto/logstash-kusto.gem'
+      - if: matrix.logstash.main == 'true'
+        name: Publish Unit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v1.6
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          files: kusto/rspec.xml          
   e2e:
     name: End-To-End Testing
     runs-on: ubuntu-latest
@@ -81,7 +87,7 @@ jobs:
       - name: Install libraries
         run: ./gradlew vendor
       - name: Run e2e
-        run: jruby -J-cp ../lib/ e2e.rb
+        run: jruby -J-cp ../vendor/jar-dependencies e2e.rb
         working-directory: 'e2e'
         env:
           ENGINE_URL: ${{ secrets.ENGINE_URL }}
