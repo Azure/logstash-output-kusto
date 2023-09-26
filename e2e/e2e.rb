@@ -58,10 +58,12 @@ output {
 
   def run_logstash
     File.write("logstash.conf", @logstash_config)
-
+    logstashpath = File.absolute_path("logstash.conf")
     File.write(@output_file, "")
     File.write(@input_file, "")
-    spawn("/usr/share/logstash/bin/logstash -f logstash.conf")
+    lscommand = "/usr/share/logstash/bin/logstash -f #{logstashpath}"
+    puts "Running logstash from config path #{logstashpath} and final command #{lscommand}"
+    spawn(lscommand)
     sleep(60)
     data = File.read(@csv_file)
     f = File.open(@input_file, "a")
@@ -115,7 +117,7 @@ output {
   end
 
   def start
-    @query_client = $kusto_java.data.ClientImpl.new($kusto_java.data.auth.ConnectionStringBuilder::createWithAadApplicationCredentials(@engine_url, @app_id,
+    @query_client = $kusto_java.data.ClientFactory.createClient($kusto_java.data.auth.ConnectionStringBuilder::createWithAadApplicationCredentials(@engine_url, @app_id,
                                                                                                                                    @app_kay, @tenant_id))
     create_table_and_mapping
     run_logstash

@@ -1,17 +1,18 @@
-@files=[]
+# encoding: utf-8
+require "logstash/devutils/rake"
+require "jars/installer"
+require "fileutils"
 
 task :default do
-  system("rake -T")
+  system('rake -vT')
 end
 
-require "logstash/devutils/rake"
-
-begin
-  require 'rspec/core/rake_task'
-  RSpec::Core::RakeTask.new(:spec)
-rescue LoadError
+task :vendor do
+  exit(1) unless system './gradlew vendor'
 end
 
-RSpec::Core::RakeTask.new(:spec_junit) do |t|
-  t.rspec_opts = '--format RspecJunitFormatter --out rspec.xml'
+task :clean do
+  ["vendor/jar-dependencies", "Gemfile.lock"].each do |p|
+    FileUtils.rm_rf(p)
+  end
 end
