@@ -57,3 +57,5 @@ build
 gradle/wrapper/gradle-wrapper.properties
 .vscode/settings.json
 .vscode/settings.json
+rspec.xml
+e2e/output_file.txt
