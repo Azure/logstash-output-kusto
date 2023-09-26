@@ -40,6 +40,9 @@ jobs:
         working-directory: 'kusto' 
       - run: jruby -S bundle install
         working-directory: 'kusto'
+      - name: Run gradle vendor
+        run: ./gradlew vendor
+        working-directory: 'kusto'        
       - name: Run unit tests
         run: jruby -S bundle exec rspec -r rspec_junit_formatter --format RspecJunitFormatter -o rspec.xml
         working-directory: 'kusto'
