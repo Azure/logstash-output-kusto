@@ -1,4 +1,5 @@
 on:
+  workflow_dispatch:  
   release:
     types: [released]
 
@@ -15,8 +16,6 @@ jobs:
           bundler-cache: true
       - name: Checkout code
         uses: actions/checkout@v2
-      - name: Install dependencies
-        run: jruby -S bundle install
       - name: Run gradle vendor
         run: ./gradlew vendor
       - name: Build gem
