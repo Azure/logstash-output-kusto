@@ -36,8 +36,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # Is it direct connection
       is_direct_conn = (proxy_host.nil? || proxy_host.empty?)
       # Create a connection string
-      kusto_connection_string = begin
-        if is_managed_identity
+      kusto_connection_string = if is_managed_identity
           if is_system_assigned_managed_identity
             @logger.info('Using system managed identity.')
             kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(ingest_url)  
@@ -48,7 +47,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         else
           kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
         end
-      end      
+
       #
       @logger.debug(Gem.loaded_specs.to_s)
       # Unfortunately there's no way to avoid using the gem/plugin name directly...

@@ -54,7 +54,7 @@ More information about configuring Logstash can be found in the [logstash config
 | **path** | The plugin writes events to temporary files before sending them to ADX. This parameter includes a path where files should be written and a time expression for file rotation to trigger an upload to the ADX service. The example above shows how to rotate the files every minute and check the Logstash docs for more information on time expressions. | Required
 | **ingest_url** | The Kusto endpoint for ingestion-related communication. See it on the Azure Portal.| Required|
 | **app_id, app_key, app_tenant**| Credentials required to connect to the ADX service. Be sure to use an application with 'ingest' privileges. | Optional|
-| **managed_identity**| Managed identity id (ClientId GUID in case of User managed identity or system in case of system managed identity). The id needs to have 'ingest' privileges | Optional|
+| **managed_identity**| Managed Identity to authenticate. For user-based managed ID, use the Client ID GUID. For system-based, use the value `system`. The ID needs to have 'ingest' privileges on the cluster. | Optional|
 | **database**| Database name to place events | Required |
 | **table** | Target table name to place events | Required
 | **json_mapping** | Maps each attribute from incoming event JSON strings to the appropriate column in the table. Note that this must be in JSON format, as this is the interface between Logstash and Kusto | Required |
