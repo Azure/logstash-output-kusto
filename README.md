@@ -11,6 +11,11 @@ It is fully free and open source. The license is Apache 2.0.
 
 This Azure Data Explorer (ADX) Logstash plugin enables you to process events from Logstash into an **Azure Data Explorer** database for later analysis. 
 
+This connector forwards data to
+[Azure Data Explorer](https://docs.microsoft.com/en-us/azure/data-explorer),
+[Azure Synapse Data Explorer](https://docs.microsoft.com/en-us/azure/synapse-analytics/data-explorer/data-explorer-overview) and
+[Real time analytics in Fabric](https://learn.microsoft.com/en-us/fabric/real-time-analytics/overview)
+
 ## Requirements
 
 - Logstash version 6+. [Installation instructions](https://www.elastic.co/guide/en/logstash/current/installing-logstash.html) 
