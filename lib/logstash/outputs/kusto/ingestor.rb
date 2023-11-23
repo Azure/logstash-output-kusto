@@ -78,7 +78,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     def validate_config(database, table, json_mapping, proxy_protocol, app_id, app_key, managed_identity_id)
       # Add an additional validation and fail this upfront
-      if app_id.nil? && app_key.nil? && managed_identity_id.empty?
+      if app_id.nil? && app_key.nil? && managed_identity_id.nil?
         @logger.error('managed_identity_id is not provided and app_id/app_key is empty.')
         raise LogStash::ConfigurationError.new('managed_identity_id is not provided and app_id/app_key is empty.')
       end      
