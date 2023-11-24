@@ -30,7 +30,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       apache_http = Java::org.apache.http
       # kusto_connection_string = kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
       # If there is managed identity, use it. This means the AppId and AppKey are empty/nil
-      is_managed_identity = (app_id.nil? && app_key.empty?)
+      is_managed_identity = (app_id.nil? && app_key.nil?)
       # If it is system managed identity, propagate the system identity
       is_system_assigned_managed_identity = is_managed_identity && 0 == "system".casecmp(managed_identity_id)
       # Is it direct connection
@@ -78,7 +78,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     def validate_config(database, table, json_mapping, proxy_protocol, app_id, app_key, managed_identity_id)
       # Add an additional validation and fail this upfront
-      if app_id.nil? && app_key.empty? && managed_identity_id.empty?
+      if app_id.nil? && app_key.nil? && managed_identity_id.nil?
         @logger.error('managed_identity_id is not provided and app_id/app_key is empty.')
         raise LogStash::ConfigurationError.new('managed_identity_id is not provided and app_id/app_key is empty.')
       end      
