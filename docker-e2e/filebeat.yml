@@ -1,0 +1,14 @@
+filebeat.inputs:
+# sends to logstash
+- type: azure-blob-storage
+  id: sdke2eteststorage
+  enabled: true
+  account_name: sdke2eteststorage
+  auth.shared_credentials.account_key: xxxxx
+  containers:
+  - name: insights-logs-networksecuritygroupflowevent
+    max_workers: 3
+    poll: true
+    poll_interval: 2m
+output.logstash:
+  hosts: ["logstash:5044"]
