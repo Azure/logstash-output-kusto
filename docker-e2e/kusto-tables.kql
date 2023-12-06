@@ -1,0 +1,26 @@
+.create table flowLogs (
+    Time:datetime,
+    macAddress:string,
+    category:string,
+    flowLogVersion:int,
+    nsgResourceID:string,
+    rule:string,
+    macAddress2:string,
+    Timestamp:string,
+    srcIP:string,
+    dstIP:string,
+    srcPort:string,
+    dstPort:string,
+    Protocol:string,
+    Direction:string,
+    Decision:string,
+    State:string,
+    PacketsSrcToDst:int,
+    BytesSrcToDst:int,
+    PacketsDstToSrc:int,
+    BytesDstToSrc:int
+)
+
+.alter table flowLogs policy  ingestionbatching @'{"MaximumBatchingTimeSpan":"00:00:05", "MaximumNumberOfItems": 100, "MaximumRawDataSizeMB": 100}'
+
+.create table flowLogs ingestion json mapping "flowLogsMapping" '[{"column":"category","path":"$.category","datatype":"string","transform":""},{"column":"State","path":"$.State","datatype":"string","transform":""},    {"column":"Protocol","path":"$.Protocol","datatype":"string","transform":""},{"column":"dstIP","path":"$.dstIP","datatype":"string","transform":""},    {"column":"flowLogVersion","path":"$.flowLogVersion","datatype":"int","transform":""},    {"column":"srcIP","path":"$.srcIP","datatype":"string","transform":""},    {"column":"ResourceGroup","path":"$.ResourceGroup","datatype":"string","transform":""},    {"column":"macAddress2","path":"$.macAddress2","datatype":"string","transform":""},    {"column":"PacketsSrcToDst","path":"$.PacketsSrcToDst","datatype":"int","transform":""},    {"column":"Direction","path":"$.Direction","datatype":"string","transform":""},    {"column":"Decision","path":"$.Decision","datatype":"string","transform":""},    {"column":"BytesSrcToDst","path":"$.BytesSrcToDst","datatype":"int","transform":""},    {"column":"BytesDstToSrc","path":"$.BytesDstToSrc","datatype":"int","transform":""},    {"column":"macAddress","path":"$.macAddress","datatype":"string","transform":""},    {"column":"Time","path":"$.Time","datatype":"datetime","transform":""},    {"column":"rule","path":"$.rule","datatype":"string","transform":""},    {"column":"NetworkSecurityGroup","path":"$.NetworkSecurityGroup","datatype":"string","transform":""},    {"column":"Subscription","path":"$.Subscription","datatype":"string","transform":""},    {"column":"PacketsDstToSrc","path":"$.PacketsDstToSrc","datatype":"int","transform":""},    {"column":"Timestamp","path":"$.Timestamp","datatype":"string","transform":""},    {"column":"nsgResourceID","path":"$.nsgResourceID","datatype":"string","transform":""},    {"column":"dstPort","path":"$.dstPort","datatype":"string","transform":""}, {"column":"srcPort","path":"$.srcPort","datatype":"string","transform":""}]'
