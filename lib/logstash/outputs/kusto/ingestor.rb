@@ -52,7 +52,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
           ## TODO : this needs work!!!!! write one more if else when uploading and work on it if it is expired
           if use_access_token
             @logger.info('Using proxy for AAD only, switching to accessToken authentication')
-            kusto_java.data.auth.ConnectionStringBuilder.createWithAadAccessTokenAuthentication(ingest_url,)  
+            kusto_java.data.auth.ConnectionStringBuilder.createWithAadAccessTokenAuthentication(ingest_url,'')  
           else
             @logger.info('Using AAD authentication')
             kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
@@ -91,7 +91,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     def validate_config(database, table, json_mapping, proxy_protocol, app_id, app_key, managed_identity_id)
       # Add an additional validation and fail this upfront
-      if app_id.nil? && app_key.nil? && managed_identity_id.nil?
+      is_managed_identity = (app_id.nil? || app_id.empty?) && (app_key.nil? || app_key.empty?)
+      if is_managed_identity && (managed_identity_id.nil? || managed_identity_id.empty?)
         @logger.error('managed_identity_id is not provided and app_id/app_key is empty.')
         raise LogStash::ConfigurationError.new('managed_identity_id is not provided and app_id/app_key is empty.')
       end      

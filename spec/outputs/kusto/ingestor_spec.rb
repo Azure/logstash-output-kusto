@@ -15,6 +15,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
   let(:proxy_host) { "localhost" }
   let(:proxy_port) { 80 }
   let(:proxy_protocol) { "http" }
+  let(:proxy_aad_only) { false }
   let(:json_mapping) { "mymapping" }
   let(:delete_local) { false }
   let(:logger) { spy('logger') }
@@ -25,7 +26,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
       # note that this will cause an internal error since connection is being tried.
       # however we still want to test that all the java stuff is working as expected
       expect { 
-        ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol, logger)
+        ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol, proxy_aad_only, logger)
         ingestor.stop
       }.not_to raise_error
     end
@@ -36,7 +37,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
       dynamic_name_array.each do |test_database|
         it "with database: #{test_database}" do
           expect {
-            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, test_database, table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol,logger)
+            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, test_database, table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol, proxy_aad_only, logger)
             ingestor.stop
           }.to raise_error(LogStash::ConfigurationError)          
         end
@@ -47,7 +48,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
       dynamic_name_array.each do |test_table|
         it "with database: #{test_table}" do
           expect {
-            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity,database, test_table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol,logger)
+            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity,database, test_table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol, proxy_aad_only,logger)
             ingestor.stop
           }.to raise_error(LogStash::ConfigurationError)          
         end
@@ -58,7 +59,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
       dynamic_name_array.each do |json_mapping|
         it "with database: #{json_mapping}" do
           expect {
-            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity,database, table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol,logger)
+            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity,database, table, json_mapping, delete_local, proxy_host, proxy_port,proxy_protocol, proxy_aad_only,logger)
             ingestor.stop
           }.to raise_error(LogStash::ConfigurationError)          
         end
@@ -68,7 +69,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
     context 'proxy protocol has to be http or https' do
       it "with proxy protocol: socks" do
         expect {
-          ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity,database, table, json_mapping, delete_local, proxy_host, proxy_port,'socks',logger)
+          ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity,database, table, json_mapping, delete_local, proxy_host, proxy_port,'socks', proxy_aad_only,logger)
           ingestor.stop
         }.to raise_error(LogStash::ConfigurationError)          
       end
@@ -77,7 +78,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
     context 'one of appid or managedid has to be provided' do
       it "with empty managed identity and appid" do
         expect {
-          ingestor = described_class.new(ingest_url, "", app_key, app_tenant, "",database, table, json_mapping, delete_local, proxy_host, proxy_port,'socks',logger)
+          ingestor = described_class.new(ingest_url, "", "", app_tenant, "", database, table, json_mapping, delete_local, proxy_host, proxy_port,'https', proxy_aad_only,logger)
           ingestor.stop
         }.to raise_error(LogStash::ConfigurationError)          
       end

@@ -155,7 +155,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                                                   max_queue: upload_queue_size,
                                                   fallback_policy: :caller_runs)
 
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port,proxy_protocol, @logger, executor)
+    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port, proxy_protocol, proxy_aad_only, @logger, executor)
 
     # send existing files
     recover_past_files if recovery
