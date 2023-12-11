@@ -138,7 +138,7 @@ class E2E
 
   def start
     @query_client = $kusto_java.data.ClientFactory.createClient($kusto_java.data.auth.ConnectionStringBuilder::createWithAadApplicationCredentials(@engine_url, @app_id,
-                                                                                                                                   @app_kay, @tenant_id))
+                                                                                                                                   @app_key, @tenant_id))
     create_table_and_mapping
     run_logstash
     assert_data
