@@ -117,6 +117,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Check Proxy URL can be over http or https. Dowe need it this way or ignore this & remove this
   config :proxy_protocol, validate: :string, required: false , default: 'http'
 
+  # If proxy is applicable only for AAD
+  config :proxy_aad_only, validate: :boolean, required: false , default: false
+
   default :codec, 'json_lines'
 
   def register

@@ -20,7 +20,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     LOW_QUEUE_LENGTH = 3
     FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
+    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, database, table, json_mapping, delete_local, 
+      proxy_host , proxy_port , proxy_protocol, proxy_aad_only, logger, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool
       @logger = logger
       validate_config(database, table, json_mapping,proxy_protocol,app_id, app_key, managed_identity_id)
@@ -35,6 +36,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       is_system_assigned_managed_identity = is_managed_identity && 0 == "system".casecmp(managed_identity_id)
       # Is it direct connection
       is_direct_conn = (proxy_host.nil? || proxy_host.empty?)
+      # If we have to use proxy and that is only for AAD. Also note in this case the proxy host and port are not empty
+      use_access_token = proxy_aad_only && !is_direct_conn
+
       # Create a connection string
       kusto_connection_string = if is_managed_identity
           if is_system_assigned_managed_identity
@@ -45,7 +49,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
             kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(ingest_url, managed_identity_id)
           end
         else
-          kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
+          ## TODO : this needs work!!!!! write one more if else when uploading and work on it if it is expired
+          if use_access_token
+            @logger.info('Using proxy for AAD only, switching to accessToken authentication')
+            kusto_java.data.auth.ConnectionStringBuilder.createWithAadAccessTokenAuthentication(ingest_url,)  
+          else
+            @logger.info('Using AAD authentication')
+            kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
+          end
         end
 
       #
@@ -63,6 +74,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         if is_direct_conn
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
         else
+
+          ## TODO This needs work
           kusto_http_client_properties = kusto_java.data.HttpClientProperties.builder().proxy(apache_http.HttpHost.new(proxy_host,proxy_port,proxy_protocol)).build()
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string, kusto_http_client_properties)
         end
