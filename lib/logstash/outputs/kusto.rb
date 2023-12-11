@@ -89,7 +89,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Mapping name - Used by Kusto to map each attribute from incoming event JSON strings to the appropriate column in the table.
   # Note that this must be in JSON format, as this is the interface between Logstash and Kusto
   # Make this optional as name resolution in the JSON mapping can be done based on attribute names in the incoming event JSON strings
-  config :json_mapping, validate: :string, , default: nil
+  config :json_mapping, validate: :string, default: nil
 
   # Mapping name - deprecated, use json_mapping
   config :mapping, validate: :string, deprecated: true
@@ -127,11 +127,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @io_mutex = Mutex.new
 
     final_mapping = json_mapping
-    if final_mapping.empty?
+    if final_mapping.nil? || final_mapping.empty?
       final_mapping = mapping
     end
 
-    # TODO: add id to the tmp path to support multiple outputs of the same type
+    # TODO: add id to the tmp path to support multiple outputs of the same type. 
+    # TODO: Fix final_mapping when dynamic routing is supported
     # add fields from the meta that will note the destination of the events in the file
     @path = if dynamic_event_routing
               File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][final_mapping]}")
