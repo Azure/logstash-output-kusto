@@ -1,5 +1,17 @@
 # Changelog
 
+
+# 2.0.3
+
+- Make JSON mapping optional
+
+
+# 2.0.2
+
+- Bugfix for the scenario where the plugin uses managed identity. Instead of providing the managed identity name as empty in the config,
+it can completely be skipped
+
+
 # 2.0.0
 
 - Use (5.0.2) version of the java sdk, and retrieve it from maven with bundler. Supports logstash 8.6 versions and up
