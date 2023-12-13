@@ -118,6 +118,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Check Proxy URL can be over http or https. Dowe need it this way or ignore this & remove this
   config :proxy_protocol, validate: :string, required: false , default: 'http'
 
+  # Use proxy for AAD only. If true, the plugin will use the proxy only for AAD authentication and will not use it for the actual data transfer.
+  config :proxy_aad_only, validate: :boolean, required: false , default: false
+
   default :codec, 'json_lines'
 
   def register
@@ -154,7 +157,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                                                   max_queue: upload_queue_size,
                                                   fallback_policy: :caller_runs)
 
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port,proxy_protocol, @logger, executor)
+    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, 
+    final_mapping, delete_temp_files, proxy_host, proxy_port, proxy_protocol, proxy_aad_only, @logger, executor)
 
     # send existing files
     recover_past_files if recovery
