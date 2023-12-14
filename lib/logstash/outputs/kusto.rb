@@ -6,6 +6,7 @@ require 'logstash/errors'
 
 require 'logstash/outputs/kusto/ingestor'
 require 'logstash/outputs/kusto/interval'
+require 'logstash/outputs/kusto/kustoLogstashConfiguration'
 
 ##
 # This plugin sends messages to Azure Kusto in batches.
@@ -152,17 +153,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                  end
     @failure_path = File.join(@file_root, @filename_failure)
 
-    executor = Concurrent::ThreadPoolExecutor.new(min_threads: 1,
-                                                  max_threads: upload_concurrent_count,
-                                                  max_queue: upload_queue_size,
-                                                  fallback_policy: :caller_runs)
-
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, 
-    final_mapping, delete_temp_files, proxy_host, proxy_port, proxy_protocol, proxy_aad_only, @logger, executor)
+    kustoLogstashConfiguration = LogStash::Outputs::KustoInternal::KustoLogstashConfiguration.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, json_mapping, delete_temp_files, proxy_host, proxy_port, proxy_protocol, proxy_aad_only, @logger)
+    kustoLogstashConfiguration.validate_config()
+    executor = Concurrent::ThreadPoolExecutor.new(min_threads: 1, max_threads: upload_concurrent_count, max_queue: upload_queue_size, fallback_policy: :caller_runs)
+    @ingestor = Ingestor.new(kustoLogstashConfiguration, @logger, executor)
 
     # send existing files
     recover_past_files if recovery
-
     @last_stale_cleanup_cycle = Time.now
 
     @flush_interval = @flush_interval.to_i

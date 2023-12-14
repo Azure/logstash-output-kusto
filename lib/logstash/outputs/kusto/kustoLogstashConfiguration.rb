@@ -1,6 +1,5 @@
 # encoding: utf-8
 # A class just having all the configurations wrapped into a seperate object
-
 module LogStash
     module Outputs
         module KustoInternal
@@ -46,24 +45,30 @@ module LogStash
                     end
 
                     if @database =~ FIELD_REF
-                    @logger.error('database config value should not be dynamic.', database)
-                    raise LogStash::ConfigurationError.new('database config value should not be dynamic.')
-                    end
+                        @logger.error('database config value should not be dynamic.', database)
+                        raise LogStash::ConfigurationError.new('database config value should not be dynamic.')
+                        end
             
                     if @table =~ FIELD_REF
-                    @logger.error('table config value should not be dynamic.', table)
-                    raise LogStash::ConfigurationError.new('table config value should not be dynamic.')
+                        @logger.error('table config value should not be dynamic.', table)
+                        raise LogStash::ConfigurationError.new('table config value should not be dynamic.')
                     end
             
                     if @json_mapping =~ FIELD_REF
-                    @logger.error('json_mapping config value should not be dynamic.', json_mapping)
-                    raise LogStash::ConfigurationError.new('json_mapping config value should not be dynamic.')
+                        @logger.error('json_mapping config value should not be dynamic.', json_mapping)
+                        raise LogStash::ConfigurationError.new('json_mapping config value should not be dynamic.')
                     end
             
                     if not(["https", "http"].include? @proxy_protocol)
-                    @logger.error('proxy_protocol has to be http or https.', proxy_protocol)
-                    raise LogStash::ConfigurationError.new('proxy_protocol has to be http or https.')
+                        @logger.error('proxy_protocol has to be http or https.', proxy_protocol)
+                        raise LogStash::ConfigurationError.new('proxy_protocol has to be http or https.')
                     end
+
+                    if @proxy_aad_only && @is_direct_conn
+                        @logger.error('proxy_aad_only is true, but proxy parameters (Host,Port,Protocol) are missing.',proxy_host,proxy_port,proxy_protocol)
+                        raise LogStash::ConfigurationError.new('proxy_aad_only is true, but proxy parameters (Host,Port,Protocol) are missing.')
+                    end
+
                     # If all validation pass then configuration is valid 
                     return  true
                 end #validate_config()

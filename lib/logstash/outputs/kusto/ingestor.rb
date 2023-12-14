@@ -1,8 +1,9 @@
 # encoding: utf-8
-
 require 'logstash/outputs/base'
 require 'logstash/namespace'
 require 'logstash/errors'
+require 'logstash/outputs/kusto/kustoLogstashConfiguration'
+require 'logstash/outputs/kusto/kustoAadProvider'
 
 class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   ##
@@ -18,27 +19,24 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       fallback_policy: :caller_runs
     )
     LOW_QUEUE_LENGTH = 3
-    FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,proxy_aad_only, logger, threadpool = DEFAULT_THREADPOOL)
-      @workers_pool = threadpool
+    def initialize(kustoLogstashConfiguration, logger, threadpool = DEFAULT_THREADPOOL)
       @logger = logger
-      @kustoLogstashConfiguration = LogStash::Outputs::KustoInternal::KustoLogstashConfiguration.new(ingest_url, app_id, app_key, app_tenant, managed_identity_id, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,proxy_aad_only, logger)
-      @kustoLogstashConfiguration.validate_config()
+      @workers_pool = threadpool
+      @kustoLogstashConfiguration = kustoLogstashConfiguration
       @logger.info('Preparing Kusto resources.')
       @ingestion_properties = get_ingestion_properties()
       if @kustoLogstashConfiguration.proxy_aad_only
         @kustoAadTokenProvider = LogStash::Outputs::KustoInternal::KustoAadTokenProvider.new(@kustoLogstashConfiguration)
       end
-      @delete_local = delete_local
       @logger.debug('Kusto resources are ready.')
     end
 
     def get_kusto_client()
-      if @kusto_client.nil?
+      if @kusto_client.nil? || (@kustoLogstashConfiguration.proxy_aad_only && @kustoAadTokenProvider.is_saved_token_need_refresh())
         kusto_client = create_kusto_client()
       end
-      return kusto_client
+      return @kusto_client
     end
 
     def create_kusto_client()
@@ -48,15 +46,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       kusto_connection_string = if @kustoLogstashConfiguration.is_managed_identity
           if @kustoLogstashConfiguration.is_system_assigned_managed_identity
             @logger.info('Using system managed identity.')
-            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(ingest_url)  
+            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(@kustoLogstashConfiguration.ingest_url)  
           else
             @logger.info('Using user managed identity.')
-            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(ingest_url, managed_identity_id)
+            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(@kustoLogstashConfiguration.ingest_url, @kustoLogstashConfiguration.managed_identity_id)
           end
         elsif @kustoLogstashConfiguration.proxy_aad_only
-          kusto_java.data.auth.ConnectionStringBuilder.createWithAccessToken(ingest_url, )
+          kusto_java.data.auth.ConnectionStringBuilder.createWithAccessToken(@kustoLogstashConfiguration.ingest_url,@kustoLogstashConfiguration.get_aad_token_bearer())
         else
-          kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
+          kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(@kustoLogstashConfiguration.ingest_url, @kustoLogstashConfiguration.app_id, @kustoLogstashConfiguration.app_key.value, @kustoLogstashConfiguration.app_tenant)
         end
       #
       @logger.debug(Gem.loaded_specs.to_s)
@@ -70,25 +68,21 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       kusto_connection_string.setConnectorDetails("Logstash",version_for_tracing.to_s,"","",false,"", tuple_utils.Pair.emptyArray());
       
       @kusto_client = begin
-        if is_direct_conn
+        if @kustoLogstashConfiguration.is_direct_conn || @kustoLogstashConfiguration.proxy_aad_only
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
         else
-          kusto_http_client_properties = kusto_java.data.HttpClientProperties.builder().proxy(apache_http.HttpHost.new(proxy_host,proxy_port,proxy_protocol)).build()
+          kusto_http_client_properties = kusto_java.data.HttpClientProperties.builder().proxy(apache_http.HttpHost.new(@kustoLogstashConfiguration.proxy_host,@kustoLogstashConfiguration.proxy_port,@kustoLogstashConfiguration.proxy_protocol)).build()
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string, kusto_http_client_properties)
         end
       end
-
-
-
-
-
     end
 
     def get_ingestion_properties()
+      kusto_java = Java::com.microsoft.azure.kusto
       ingestion_properties = kusto_java.ingest.IngestionProperties.new(@kustoLogstashConfiguration.database, @kustoLogstashConfiguration.table)
       if @kustoLogstashConfiguration.is_mapping_ref_provided
-        @logger.debug('Using mapping reference.', json_mapping)
-        ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
+        @logger.debug('Using mapping reference.', @kustoLogstashConfiguration.json_mapping)
+        ingestion_properties.setIngestionMapping(@kustoLogstashConfiguration.json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
         ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
       else
         @logger.debug('No mapping reference provided. Columns will be mapped by names in the logstash output')
@@ -115,7 +109,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.debug("Sending file to kusto: #{path}. size: #{file_size}")
       if file_size > 0
         file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, 0); # 0 - let the sdk figure out the size of the file
-        @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
+        get_kusto_client().ingestFromFile(file_source_info, @ingestion_properties)
       else
         @logger.warn("File #{path} is an empty file and is not ingested.")
       end
