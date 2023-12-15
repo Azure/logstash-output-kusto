@@ -60,3 +60,4 @@ gradle/wrapper/gradle-wrapper.properties
 rspec.xml
 e2e/output_file.txt
 logs.txt
+local-run.sh

@@ -1,0 +1,120 @@
+input {
+  # Have both Paloalto and NSG logs coming in 
+  beats {
+    port => 5044
+  }
+  udp {
+    port => "30001"
+    type => "paloalto"
+  }
+}
+ 
+
+
+filter {
+  # NSG Data comes through Filebeat use this conditionally
+  if [agent][type] == 'filebeat' {
+    json {
+      source => "message"
+    }
+    split { field => "[records]" }
+    split { field => "[records][properties][flows]"}
+    split { field => "[records][properties][flows][flows]"}
+    split { field => "[records][properties][flows][flows][flowTuples]"}
+ 
+ 
+    mutate {
+      split => { "[records][resourceId]" => "/"}
+      add_field => {
+        "Subscription" => "%{[records][resourceId][2]}"
+        "ResourceGroup" => "%{[records][resourceId][4]}"
+        "NetworkSecurityGroup" => "%{[records][resourceId][8]}"
+        "macAddress" => "%{[records][macAddress]}"
+        "Time" => "%{[records][time]}"
+        "category" => "%{[records][category]}"
+        "flowLogVersion" => "%{[records][properties][Version]}"
+        "nsgResourceID" =>"%{[records][resourceId]}"
+      }
+      convert => {"Subscription" => "string"}
+      convert => {"Time" => "string"}
+      convert => {"macAddress" => "string"}
+      convert => {"flowLogVersion" => "integer"}
+      convert => {"nsgResourceID" => "string"}
+      convert => {"rule" => "string"}
+      convert => {"ResourceGroup" => "string"}
+      convert => {"NetworkSecurityGroup" => "string"}
+  
+      add_field => {
+        "rule" => "%{[records][properties][flows][rule]}"
+      }
+      convert => {"rule" => "string"}
+      split => { "[records][properties][flows][flows][flowTuples]" => ","}
+      add_field => {
+        "Timestamp" => "%{[records][properties][flows][flows][flowTuples][0]}"
+        "srcIP" => "%{[records][properties][flows][flows][flowTuples][1]}"
+        "dstIP" => "%{[records][properties][flows][flows][flowTuples][2]}"
+        "srcPort" => "%{[records][properties][flows][flows][flowTuples][3]}"
+        "dstPort" => "%{[records][properties][flows][flows][flowTuples][4]}"
+        "Protocol" => "%{[records][properties][flows][flows][flowTuples][5]}"
+        "Direction" => "%{[records][properties][flows][flows][flowTuples][6]}"
+        "Decision" => "%{[records][properties][flows][flows][flowTuples][7]}"
+        "State" => "%{[records][properties][flows][flows][flowTuples][8]}"
+        "PacketsSrcToDst" => "%{[records][properties][flows][flows][flowTuples][9]}"
+        "BytesSrcToDst" => "%{[records][properties][flows][flows][flowTuples][10]}"
+        "PacketsDstToSrc" => "%{[records][properties][flows][flows][flowTuples][11]}"
+        "BytesDstToSrc" => "%{[records][properties][flows][flows][flowTuples][12]}"
+        "macAddress2" => "%{[records][properties][flows][flows][mac]}"
+      }
+    }
+    ## replace records with -1 , these are optional fields
+    if [PacketsSrcToDst] =~ "records" {
+        mutate { replace => { "PacketsSrcToDst" => "-1" } }
+    }
+    if [PacketsDstToSrc] =~ "records" {
+        mutate { replace => { "PacketsDstToSrc" => "-1" } }
+    }
+    if [BytesSrcToDst] =~ "records" {
+        mutate { replace => { "BytesSrcToDst" => "-1" } }
+    }
+    if [BytesDstToSrc] =~ "records" {
+        mutate { replace => { "BytesDstToSrc" => "-1" } }
+    }
+    mutate {
+      remove_field => ["message", "records","log","event","tags","host","input","agent","cloud","azure","@timestamp","ecs","@version"]
+      # Change types
+      convert => {"PacketsSrcToDst" => "integer"}
+      convert => {"PacketsDstToSrc" => "integer"}
+      convert => {"BytesSrcToDst" => "integer"}
+      convert => {"BytesDstToSrc" => "integer"}
+    }
+    date{
+      match => ["Timestamp" , "UNIX"]
+    }  
+  } 
+}
+ 
+output {
+  if [agent][type] == 'filebeat' {
+    kusto {
+          path => "/tmp/kusto/nsg1/%{+YYYY-MM-dd-HH-mm}.txt"
+          ingest_url => "https://ingest-adx-d-nss.koreacentral.kusto.windows.net"
+          app_id => ""
+          app_key => ""
+          app_tenant => ""
+          database => "nss-db"
+          table => "flowLogs" # fw as defined above
+          json_mapping => "flowLogsMapping" # fw as defined above
+    }
+  } else {
+    kusto {
+        path => "/tmp/kusto/paloaltofw1/%{+YYYY-MM-dd-HH-mm}.txt"
+        ingest_url => "https://ingest-adx-d-nss.koreacentral.kusto.windows.net"
+        app_id => ""
+        app_key => ""
+        app_tenant => ""
+        database => "nss-db"
+        table => "MySourceTable" # fw as defined above
+        json_mapping => "fwmaps" # fw as defined above
+    }
+  }
+}
