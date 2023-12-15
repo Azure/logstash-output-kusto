@@ -10,6 +10,7 @@ services:
     ports:
       - "9600:9600"
       - "5044:5044"
+      - "30001:30001"
     deploy:
       restart_policy:
         condition: on-failure

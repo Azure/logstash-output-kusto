@@ -1,19 +1,26 @@
 input {
   # Have both Paloalto and NSG logs coming in 
   beats {
+    add_field => { "[@metadata][source_type]" => "nsg-beats" }
     port => 5044
   }
   udp {
+    # This is the actual case in your environment where you have PaloAlto sending data on UDP. We dont have PA so we are using a file (provided earlier as sample)
+    add_field => { "[@metadata][source_type]" => "udp" }
     port => "30001"
     type => "paloalto"
   }
+  file { 
+    # Took the file that you provided as the sample and sent that data into ADX     
+    add_field => { "[@metadata][source_type]" => "file" }
+    path => "/tmp/fw-d-hub01.log" 
+    start_position => "beginning" 
+  }
 }
  
-
-
 filter {
   # NSG Data comes through Filebeat use this conditionally
-  if [agent][type] == 'filebeat' {
+  if [@metadata][source_type] == "nsg-beats" {
     json {
       source => "message"
     }
@@ -94,26 +101,26 @@ filter {
 }
  
 output {
-  if [agent][type] == 'filebeat' {
+  if [@metadata][source_type] == "nsg-beats" {
     kusto {
-          path => "/tmp/kusto/nsg1/%{+YYYY-MM-dd-HH-mm}.txt"
-          ingest_url => "https://ingest-adx-d-nss.koreacentral.kusto.windows.net"
+          path => "/tmp/kusto/nsg/%{+YYYY-MM-dd-HH-mm}.txt"
+          ingest_url => ""
           app_id => ""
           app_key => ""
           app_tenant => ""
-          database => "nss-db"
+          database => ""
           table => "flowLogs" # fw as defined above
           json_mapping => "flowLogsMapping" # fw as defined above
     }
   } else {
     kusto {
-        path => "/tmp/kusto/paloaltofw1/%{+YYYY-MM-dd-HH-mm}.txt"
-        ingest_url => "https://ingest-adx-d-nss.koreacentral.kusto.windows.net"
+        path => "/tmp/kusto/paloalto/%{+YYYY-MM-dd-HH-mm}.txt"
+        ingest_url => ""
         app_id => ""
         app_key => ""
         app_tenant => ""
-        database => "nss-db"
-        table => "MySourceTable" # fw as defined above
+        database => ""
+        table => "PaloAltoRaw" # fw as defined above
         json_mapping => "fwmaps" # fw as defined above
     }
   }

@@ -1,3 +1,54 @@
+.create-merge table PaloAltoRaw([timestamp]:datetime , OriginalRecord:string)
+
+.create table PaloAltoRaw ingestion json mapping 'fwmaps' '[{"column":"timestamp","path":"$.@timestamp"},{"column":"OriginalRecord","path":"$.message"}]'
+
+.create table PaloAltoProcessed (CEFDateTime:datetime, Event:string, MessageType:string, SourceIP:string, DestIP:string,Action:string)
+
+// the function that parses this
+.create-or-alter  function
+ with (docstring = 'Parses raw PaloAlto CEF into some specific columns', folder = 'UpdatePolicyFunctions')
+     ExtractPaloAltoLogs()  
+    {
+        PaloAltoRaw  
+        | extend logs = split(OriginalRecord, "|")
+        | extend cefdtversion=tostring(logs[0])
+        | extend VersionTimePart = split(cefdtversion, " ")
+        | extend CEFDateTime = todatetime(VersionTimePart[0])
+        | extend Source = VersionTimePart[1]
+        | extend CEFVersion = VersionTimePart[3]
+        | extend Vendor = replace_string(tostring(logs[1]), "#012"," ")
+        | extend App = logs[2]
+        | extend Version = logs[3]
+        | extend Event = tostring(logs[4])
+        | extend MessageType = tostring(logs[5]) 
+        | extend Type = logs[6]
+        | extend kv= tostring(logs[7])
+        | extend Extension = replace_string(kv, "#012"," ")
+        | parse-kv Extension as (src:string, dst:string, proto:string, spt:long, dpt:long, act:string,msg:string,rt:string,PanDynamicUsrgrp:string) with(kv_delimiter="=", pair_delimiter=" ", quote='"',greedy=true)
+        | extend rtdttm=todatetime(rt) 
+        | project CEFDateTime,Event,MessageType,SourceIP=src,DestIP=dst,Action=act
+}
+
+
+// Now that the function is created, mark this as an update policy
+
+.alter table PaloAltoProcessed policy update @'[{ "IsEnabled": true, "Source": "PaloAltoRaw", "Query": "ExtractPaloAltoLogs()", "IsTransactional": true, "PropagateIngestionProperties": false}]'
+
+flowLogs
+| count 
+
+PaloAltoRaw
+| count 
+
+
+PaloAltoProcessed
+| count
+
+
+.show commands-and-queries  | where LastUpdatedOn >= ago(5m) | where Text has ".ingest" | where Database == "e2e" | take 20
+
+.show ingestion failures | where FailedOn >= ago(15m) | where Database == "e2e" | take 20
+
 .create table flowLogs (
     Time:datetime,
     macAddress:string,
