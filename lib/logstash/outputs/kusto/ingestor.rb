@@ -20,20 +20,20 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     )
     LOW_QUEUE_LENGTH = 3
 
-    def initialize(kustoLogstashConfiguration, logger, threadpool = DEFAULT_THREADPOOL)
+    def initialize(kustoLsConfig, logger, threadpool = DEFAULT_THREADPOOL)
       @logger = logger
       @workers_pool = threadpool
-      @kustoLogstashConfiguration = kustoLogstashConfiguration
+      @kusto_ls_config = kustoLsConfig
       @logger.info('Preparing Kusto resources.')
       @ingestion_properties = get_ingestion_properties()
-      if @kustoLogstashConfiguration.proxy_aad_only
-        @kustoAadTokenProvider = LogStash::Outputs::KustoInternal::KustoAadTokenProvider.new(@kustoLogstashConfiguration)
+      if @kusto_ls_config.proxy_aad_only
+        @kustoAadTokenProvider = LogStash::Outputs::KustoInternal::KustoAadTokenProvider.new(@kusto_ls_config,@logger)
       end
       @logger.debug('Kusto resources are ready.')
     end
 
     def get_kusto_client()
-      if @kusto_client.nil? || (@kustoLogstashConfiguration.proxy_aad_only && @kustoAadTokenProvider.is_saved_token_need_refresh())
+      if @kusto_client.nil? || (@kusto_ls_config.proxy_aad_only && @kustoAadTokenProvider.is_saved_token_need_refresh())
         kusto_client = create_kusto_client()
       end
       return @kusto_client
@@ -43,18 +43,18 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       kusto_java = Java::com.microsoft.azure.kusto
       apache_http = Java::org.apache.http
       # Create a connection string
-      kusto_connection_string = if @kustoLogstashConfiguration.is_managed_identity
-          if @kustoLogstashConfiguration.is_system_assigned_managed_identity
+      kusto_connection_string = if @kusto_ls_config.is_managed_identity
+          if @kusto_ls_config.is_system_assigned_managed_identity
             @logger.info('Using system managed identity.')
-            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(@kustoLogstashConfiguration.ingest_url)  
+            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(@kusto_ls_config.ingest_url)  
           else
             @logger.info('Using user managed identity.')
-            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(@kustoLogstashConfiguration.ingest_url, @kustoLogstashConfiguration.managed_identity_id)
+            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(@kusto_ls_config.ingest_url, @kusto_ls_config.managed_identity_id)
           end
-        elsif @kustoLogstashConfiguration.proxy_aad_only
-          kusto_java.data.auth.ConnectionStringBuilder.createWithAccessToken(@kustoLogstashConfiguration.ingest_url,@kustoLogstashConfiguration.get_aad_token_bearer())
+        elsif @kusto_ls_config.proxy_aad_only
+          kusto_java.data.auth.ConnectionStringBuilder.createWithAccessToken(@kusto_ls_config.ingest_url,@kusto_ls_config.get_aad_token_bearer())
         else
-          kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(@kustoLogstashConfiguration.ingest_url, @kustoLogstashConfiguration.app_id, @kustoLogstashConfiguration.app_key.value, @kustoLogstashConfiguration.app_tenant)
+          kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(@kusto_ls_config.ingest_url, @kusto_ls_config.app_id, @kusto_ls_config.app_key.value, @kusto_ls_config.app_tenant)
         end
       #
       @logger.debug(Gem.loaded_specs.to_s)
@@ -68,10 +68,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       kusto_connection_string.setConnectorDetails("Logstash",version_for_tracing.to_s,"","",false,"", tuple_utils.Pair.emptyArray());
       
       @kusto_client = begin
-        if @kustoLogstashConfiguration.is_direct_conn || @kustoLogstashConfiguration.proxy_aad_only
+        if @kusto_ls_config.is_direct_conn || @kusto_ls_config.proxy_aad_only
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
         else
-          kusto_http_client_properties = kusto_java.data.HttpClientProperties.builder().proxy(apache_http.HttpHost.new(@kustoLogstashConfiguration.proxy_host,@kustoLogstashConfiguration.proxy_port,@kustoLogstashConfiguration.proxy_protocol)).build()
+          kusto_http_client_properties = kusto_java.data.HttpClientProperties.builder().proxy(apache_http.HttpHost.new(@kusto_ls_config.proxy_host,@kusto_ls_config.proxy_port,@kusto_ls_config.proxy_protocol)).build()
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string, kusto_http_client_properties)
         end
       end
@@ -79,10 +79,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     def get_ingestion_properties()
       kusto_java = Java::com.microsoft.azure.kusto
-      ingestion_properties = kusto_java.ingest.IngestionProperties.new(@kustoLogstashConfiguration.database, @kustoLogstashConfiguration.table)
-      if @kustoLogstashConfiguration.is_mapping_ref_provided
-        @logger.debug('Using mapping reference.', @kustoLogstashConfiguration.json_mapping)
-        ingestion_properties.setIngestionMapping(@kustoLogstashConfiguration.json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
+      ingestion_properties = kusto_java.ingest.IngestionProperties.new(@kusto_ls_config.database, @kusto_ls_config.table)
+      if @kusto_ls_config.is_mapping_ref_provided
+        @logger.debug('Using mapping reference.', @kusto_ls_config.json_mapping)
+        ingestion_properties.setIngestionMapping(@kusto_ls_config.json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
         ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
       else
         @logger.debug('No mapping reference provided. Columns will be mapped by names in the logstash output')

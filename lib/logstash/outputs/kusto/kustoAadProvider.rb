@@ -11,14 +11,14 @@ module LogStash
     module Outputs
         module KustoInternal
             class KustoAadTokenProvider
-                def initialize(kustoLogstashConfiguration)
+                def initialize(kustoLogstashConfiguration, logger)
                     @kustoLogstashConfiguration = kustoLogstashConfiguration
                     # Perform the auth initialization
                     scope = CGI.escape(sprintf("%s/.default",kustoLogstashConfiguration.ingest_url))
                     @logger = logger
                     @aad_uri = "https://login.microsoftonline.com"
-                    @token_request_body = sprintf("client_id=%s&scope=%s&client_secret=%s&grant_type=client_credentials", kustoLogstashConfiguration.app_id, scope, kustoLogstashConfiguration.app_key)
-                    @token_request_uri = sprintf("%s/%s/oauth2/v2.0/token", aad_uri, kustoLogstashConfiguration.app_tenant)
+                    @token_request_body = sprintf("client_id=%s&scope=%s&client_secret=%s&grant_type=client_credentials", @kustoLogstashConfiguration.app_id, scope, @kustoLogstashConfiguration.app_key)
+                    @token_request_uri = sprintf("%s/%s/oauth2/v2.0/token", @aad_uri, @kustoLogstashConfiguration.app_tenant)
                     @token_state = {
                         :access_token => nil,
                         :expiry_time => nil,
