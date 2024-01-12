@@ -51,6 +51,7 @@ module LogStash
                     token_response = post_token_request()
                     @token_state[:access_token] = token_response["access_token"]
                     @token_state[:expiry_time] = get_token_expiry_time(token_response["expires_in"])
+                    @logger.info("Token refreshed will expire at  : #{@token_state[:expiry_time]}")
                 end # def refresh_saved_token
 
                 def get_token_expiry_time(expires_in_seconds)
@@ -82,7 +83,7 @@ module LogStash
                                 when 400
                                     @logger.trace("Bad request while requesting token : #{@token_request_body}")
                                 when 200 , 201
-                                    return JSON.parse(response.body)
+                                    return JSON.parse(response.to_str)
                                 else
                                     @logger.error("Unexpected error refreshing token details : #{logdetails}")
                                     @logger.trace("Unexpected error payload : #{@token_request_body}")

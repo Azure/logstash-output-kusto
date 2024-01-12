@@ -52,7 +52,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
             kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(@kusto_ls_config.ingest_url, @kusto_ls_config.managed_identity_id)
           end
         elsif @kusto_ls_config.proxy_aad_only
-          kusto_java.data.auth.ConnectionStringBuilder.createWithAccessToken(@kusto_ls_config.ingest_url,@kustoAadTokenProvider.get_aad_token_bearer())
+          kusto_java.data.auth.ConnectionStringBuilder.createWithAadAccessTokenAuthentication(@kusto_ls_config.ingest_url,@kustoAadTokenProvider.get_aad_token_bearer())
         else
           kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(@kusto_ls_config.ingest_url, @kusto_ls_config.app_id, @kusto_ls_config.app_key.value, @kusto_ls_config.app_tenant)
         end
