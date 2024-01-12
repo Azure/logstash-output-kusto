@@ -82,7 +82,7 @@ class E2E
     logstashpath = File.absolute_path("logstash.conf")
     File.write(@output_file, "")
     File.write(@input_file, "")
-    lscommand = "/softwares/logstash/bin/logstash -f #{logstashpath}"
+    lscommand = "/usr/share/logstash/bin/logstash -f #{logstashpath}"
     puts "Running logstash from config path #{logstashpath} and final command #{lscommand}"
     spawn(lscommand)
     sleep(60)
