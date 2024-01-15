@@ -59,7 +59,7 @@ module LogStash
                         return Time.now + (60 * 60 * 24) # Refresh anyway in 24 hours
                     else
                         return Time.now + expires_in_seconds - 30 * 60;
-                    # Decrease by 30 seconds to be on the safe side
+                    # Decrease by 30 min to be on the safe side
                     end
                 end # def get_token_expiry_time
 
