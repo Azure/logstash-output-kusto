@@ -6,6 +6,7 @@ require 'logstash/errors'
 
 require 'logstash/outputs/kusto/ingestor'
 require 'logstash/outputs/kusto/interval'
+require 'logstash/outputs/kusto/kustoLogstashConfiguration'
 
 ##
 # This plugin sends messages to Azure Kusto in batches.
@@ -116,7 +117,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :proxy_port, validate: :number, required: false , default: 80
 
   # Check Proxy URL can be over http or https. Dowe need it this way or ignore this & remove this
-  config :proxy_protocol, validate: :string, required: false , default: 'http'
+  config :proxy_protocol, validate: :string, required: false , default: 'https'
+
+  # Use proxy for AAD only. If true, the plugin will use the proxy only for AAD authentication and will not use it for the actual data transfer.
+  config :proxy_aad_only, validate: :boolean, required: false , default: false
 
   default :codec, 'json_lines'
 
@@ -148,17 +152,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                    File.dirname(path)
                  end
     @failure_path = File.join(@file_root, @filename_failure)
-
-    executor = Concurrent::ThreadPoolExecutor.new(min_threads: 1,
-                                                  max_threads: upload_concurrent_count,
-                                                  max_queue: upload_queue_size,
-                                                  fallback_policy: :caller_runs)
-
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port,proxy_protocol, @logger, executor)
-
+    kusto_ls_config = LogStash::Outputs::KustoInternal::KustoLogstashConfiguration.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, json_mapping, delete_temp_files, proxy_host, proxy_port, proxy_protocol, proxy_aad_only, @logger)
+    kusto_ls_config.validate_config()
+    executor = Concurrent::ThreadPoolExecutor.new(min_threads: 1, max_threads: upload_concurrent_count, max_queue: upload_queue_size, fallback_policy: :caller_runs)
+    @ingestor = Ingestor.new(kusto_ls_config, @logger, executor)
     # send existing files
     recover_past_files if recovery
-
     @last_stale_cleanup_cycle = Time.now
 
     @flush_interval = @flush_interval.to_i

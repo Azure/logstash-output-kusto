@@ -1,0 +1,7 @@
+FROM docker.elastic.co/logstash/logstash-oss:8.10.0
+COPY logstash-output-kusto-2.0.5-java.gem /tmp/logstash-output-kusto-2.0.5-java.gem
+RUN rm -f /usr/share/logstash/pipeline/logstash.conf && \
+  bin/logstash-plugin install /tmp/logstash-output-kusto-2.0.5-java.gem
+COPY logstash-output-kusto-apache.conf /usr/share/logstash/pipeline/logstash.conf
+COPY logstash.yml /usr/share/logstash/config/logstash.yml
+COPY --chown=logstash:logstash access-1.log /tmp/access_log/
