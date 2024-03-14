@@ -7,6 +7,9 @@ jobs:
   build:
     name: Build gem
     runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      pull-requests: write    
     strategy:
       matrix:
         logstash: [
