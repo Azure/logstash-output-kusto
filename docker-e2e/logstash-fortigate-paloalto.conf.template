@@ -1,70 +1,104 @@
 input {  
     stdin {}
-    file { 
+    #file { 
         # Took the file that you provided as the sample and sent that data into ADX     
-        add_field => { "[@metadata][source_type]" => "file" }
-        path => "/tmp/palo-alto-2.log" 
+    #    add_field => { "[@metadata][source_type]" => "file" }
+    #    path => "/tmp/palo-alto-2.log" 
+    #    start_position => "beginning" 
+    #    tags => "paloalto"
+    #} 
+    file { 
+        #Took the file that you provided as the sample and sent that data into ADX     
+        add_field => { "[@metadata][source_type]" => "cef-data" }
+        path => "/tmp/2023-12-15-12-fw-d-hub01.log" 
         start_position => "beginning" 
-    } 
+        codec => cef {
+          ecs_compatibility => v1
+        }
+        tags => "cef-data"
+    }
 }
 
 filter {
-  csv {
-        source => "message"
-        columns => [
-            "FUTURE_USE_1","RECEIVE_TIME","SERIAL_NUMBER","TYPE","THREAT_CONTENT_TYPE","FUTURE_USE_2","GENERATED_TIME","SOURCE_ADDRESS","DESTINATION_ADDRESS","NAT_SOURCE_IP","NAT_DESTINATION_IP","RULE_NAME","
-            SOURCE_USER","DESTINATION_USER","APPLICATION","VIRTUAL_SYSTEM","SOURCE_ZONE","DESTINATION_ZONE","INBOUND_INTERFACE","OUTBOUND_INTERFACE","LOG_ACTION","FUTURE_USE_3","SESSION_ID","REPEAT_COUNT","
-            SOURCE_PORT","DESTINATION_PORT","NAT_SOURCE_PORT","NAT_DESTINATION_PORT","FLAGS","PROTOCOL","ACTION","BYTES","BYTES_SENT","BYTES_RECEIVED","PACKETS","START_TIME","ELAPSED_TIME","CATEGORY","FUTURE_USE_4",
-            "SEQUENCE_NUMBER","ACTION_FLAGS","SOURCE_COUNTRY","DESTINATION_COUNTRY","FUTURE_USE_5","PACKETS_SENT","PACKETS_RECEIVED","SESSION_END_REASON","DEVICE_GROUP_HIERARCHY_LEVEL_1","
-            DEVICE_GROUP_HIERARCHY_LEVEL_2","DEVICE_GROUP_HIERARCHY_LEVEL_3","DEVICE_GROUP_HIERARCHY_LEVEL_4","VIRTUAL_SYSTEM_NAME","DEVICE_NAME","ACTION_SOURCE","SOURCE_VM_UUID","
-            DESTINATION_VM_UUID","TUNNEL_ID_IMSI","MONITOR_TAG_IMEI","PARENT_SESSION_ID","PARENT_START_TIME","TUNNEL_TYPE","SCTP_ASSOCIATION_ID","SCTP_CHUNKS","SCTP_CHUNKS_SENT","
-            SCTP_CHUNKS_RECEIVED","RULE_UUID","HTTP_2_CONNECTION","APP_FLAP_COUNT","POLICY_ID","LINK_SWITCHES","SD_WAN_CLUSTER","SD_WAN_DEVICE_TYPE","SD_WAN_CLUSTER_TYPE","SD_WAN_SITE","
-            DYNAMIC_USER_GROUP_NAME","XFF_ADDRESS","SOURCE_DEVICE_CATEGORY","SOURCE_DEVICE_PROFILE","SOURCE_DEVICE_MODEL","SOURCE_DEVICE_VENDOR","SOURCE_DEVICE_OS_FAMILY","
-            SOURCE_DEVICE_OS_VERSION","SOURCE_HOSTNAME","SOURCE_MAC_ADDRESS","DESTINATION_DEVICE_CATEGORY","DESTINATION_DEVICE_PROFILE","DESTINATION_DEVICE_MODEL","
-            DESTINATION_DEVICE_VENDOR","DESTINATION_DEVICE_OS_FAMILY","DESTINATION_DEVICE_OS_VERSION","DESTINATION_HOSTNAME","DESTINATION_MAC_ADDRESS","CONTAINER_ID","
-            POD_NAMESPACE","POD_NAME","SOURCE_EXTERNAL_DYNAMIC_LIST","DESTINATION_EXTERNAL_DYNAMIC_LIST","HOST_ID","USER_SERIAL_NUMBER","SOURCE_DYNAMIC_ADDRESS_GROUP","
-            DESTINATION_DYNAMIC_ADDRESS_GROUP","SESSION_OWNER","HIGH_RESOLUTION_TIMESTAMP","A_SLICE_SERVICE_TYPE","A_SLICE_DIFFERENTIATOR","APPLICATION_SUBCATEGORY","APPLICATION_CATEGORY","
-            APPLICATION_TECHNOLOGY","APPLICATION_RISK","APPLICATION_CHARACTERISTIC","APPLICATION_CONTAINER","TUNNELED_APPLICATION","APPLICATION_SAAS","APPLICATION_SANCTIONED_STATE","OFFLOADED"
-        ]  
-    }
+    if "paloalto" in [tags] {
+        csv {
+            source => "message"
+            columns => [
+                "FUTURE_USE_1","RECEIVE_TIME","SERIAL_NUMBER","TYPE","THREAT_CONTENT_TYPE","FUTURE_USE_2","GENERATED_TIME","SOURCE_ADDRESS","DESTINATION_ADDRESS","NAT_SOURCE_IP","NAT_DESTINATION_IP","RULE_NAME",
+                "SOURCE_USER","DESTINATION_USER","APPLICATION","VIRTUAL_SYSTEM","SOURCE_ZONE","DESTINATION_ZONE","INBOUND_INTERFACE","OUTBOUND_INTERFACE","LOG_ACTION","FUTURE_USE_3","SESSION_ID","REPEAT_COUNT",
+                "SOURCE_PORT","DESTINATION_PORT","NAT_SOURCE_PORT","NAT_DESTINATION_PORT","FLAGS","PROTOCOL","ACTION","BYTES","BYTES_SENT","BYTES_RECEIVED","PACKETS","START_TIME","ELAPSED_TIME","CATEGORY","FUTURE_USE_4",
+                "SEQUENCE_NUMBER","ACTION_FLAGS","SOURCE_COUNTRY","DESTINATION_COUNTRY","FUTURE_USE_5","PACKETS_SENT","PACKETS_RECEIVED","SESSION_END_REASON","DEVICE_GROUP_HIERARCHY_LEVEL_1",
+                "DEVICE_GROUP_HIERARCHY_LEVEL_2","DEVICE_GROUP_HIERARCHY_LEVEL_3","DEVICE_GROUP_HIERARCHY_LEVEL_4","VIRTUAL_SYSTEM_NAME","DEVICE_NAME","ACTION_SOURCE","SOURCE_VM_UUID",
+                "DESTINATION_VM_UUID","TUNNEL_ID_IMSI","MONITOR_TAG_IMEI","PARENT_SESSION_ID","PARENT_START_TIME","TUNNEL_TYPE","SCTP_ASSOCIATION_ID","SCTP_CHUNKS","SCTP_CHUNKS_SENT",
+                "SCTP_CHUNKS_RECEIVED","RULE_UUID","HTTP_2_CONNECTION","APP_FLAP_COUNT","POLICY_ID","LINK_SWITCHES","SD_WAN_CLUSTER","SD_WAN_DEVICE_TYPE","SD_WAN_CLUSTER_TYPE","SD_WAN_SITE",
+                "DYNAMIC_USER_GROUP_NAME","XFF_ADDRESS","SOURCE_DEVICE_CATEGORY","SOURCE_DEVICE_PROFILE","SOURCE_DEVICE_MODEL","SOURCE_DEVICE_VENDOR","SOURCE_DEVICE_OS_FAMILY",
+                "SOURCE_DEVICE_OS_VERSION","SOURCE_HOSTNAME","SOURCE_MAC_ADDRESS","DESTINATION_DEVICE_CATEGORY","DESTINATION_DEVICE_PROFILE","DESTINATION_DEVICE_MODEL",
+                "DESTINATION_DEVICE_VENDOR","DESTINATION_DEVICE_OS_FAMILY","DESTINATION_DEVICE_OS_VERSION","DESTINATION_HOSTNAME","DESTINATION_MAC_ADDRESS","CONTAINER_ID",
+                "POD_NAMESPACE","POD_NAME","SOURCE_EXTERNAL_DYNAMIC_LIST","DESTINATION_EXTERNAL_DYNAMIC_LIST","HOST_ID","USER_SERIAL_NUMBER","SOURCE_DYNAMIC_ADDRESS_GROUP",
+                "DESTINATION_DYNAMIC_ADDRESS_GROUP","SESSION_OWNER","HIGH_RESOLUTION_TIMESTAMP","A_SLICE_SERVICE_TYPE","A_SLICE_DIFFERENTIATOR","APPLICATION_SUBCATEGORY","APPLICATION_CATEGORY",
+                "APPLICATION_TECHNOLOGY","APPLICATION_RISK","APPLICATION_CHARACTERISTIC","APPLICATION_CONTAINER","TUNNELED_APPLICATION","APPLICATION_SAAS","APPLICATION_SANCTIONED_STATE","OFFLOADED"
+            ]  
+        }
 
 
-    date {
-        timezone => "GMT"
-        match => [ "ReceiveTime", "YYYY_MM_dd HH:mm:ss" ]
-    }
+        date {
+            timezone => "GMT"
+            match => [ "ReceiveTime", "YYYY_MM_dd HH:mm:ss" ]
+        }
 
-    mutate {
-        convert => [ "NAT_DESTINATION_PORT", "integer" ]
-        convert => [ "NAT_SOURCE_PORT", "integer" ]
-        convert => [ "DESTINATION_PORT", "integer" ]
-        convert => [ "SOURCE_PORT", "integer" ]
-        convert => [ "SEQUENCE_NUMBER", "integer" ]
-        remove_field => [ "message", "host", "path", "original","event"]
-
-   }
-
-    ruby {
-        code => "
-        hash = event.to_hash
-        hash.each do |field,value|
-            if value == nil
-                event.remove(field)
+        mutate {
+            convert => [ "NAT_DESTINATION_PORT", "integer" ]
+            convert => [ "NAT_SOURCE_PORT", "integer" ]
+            convert => [ "DESTINATION_PORT", "integer" ]
+            convert => [ "SOURCE_PORT", "integer" ]
+            convert => [ "SEQUENCE_NUMBER", "integer" ]
+            remove_field => [ "message", "host", "path", "original","event"]
+       }
+        ruby {
+            code => "
+            hash = event.to_hash
+            hash.each do |field,value|
+                if value == nil
+                    event.remove(field)
+                end
             end
-        end
-        "
+            "
+        }
+    }
+
+    if "cef-data" in [tags] {
+        json {
+            source => "message"
+        }
     }
 }
 
 output {  
-    #stdout {}
-    kusto {
-        path => "/tmp/kusto/paloalto-traffic/%{+YYYY-MM-dd-HH-mm}.txt"
-        ingest_url => "${INGEST_CLUSTER_URL}"
-        app_id => "${APP_ID}"
-        app_key => "${APP_KEY}"
-        app_tenant => "${APP_TENANT}"
-        database => "${DATABASE}"
-        table => "PaloAltoTrafficLogs" # fw as defined above
-    } 
+    if "cef-data" in [tags] {
+        stdout {codec => json_lines}
+    }
+    if "cef-data" in [tags] {
+        kusto {
+            codec => json_lines
+            path => "/tmp/kusto/paloalto-traffic/%{+YYYY-MM-dd-HH-mm}.txt"
+            ingest_url => "${INGEST_CLUSTER_URL}"
+            app_id => "${APP_ID}"
+            app_key => "${APP_KEY}"
+            app_tenant => "${APP_TENANT}"
+            database => "${DATABASE}"
+            table => "RawPaloAltoTrafficLogs" # fw as defined above
+        }
+    }
+    if "paloalto" in [tags] {
+        kusto {
+            codec => json_lines
+            path => "/tmp/kusto/paloalto-traffic/%{+YYYY-MM-dd-HH-mm}.txt"
+            ingest_url => "${INGEST_CLUSTER_URL}"
+            app_id => "${APP_ID}"
+            app_key => "${APP_KEY}"
+            app_tenant => "${APP_TENANT}"
+            database => "${DATABASE}"
+            table => "PaloAltoTrafficLogs" # fw as defined above
+        }
+    }
 }

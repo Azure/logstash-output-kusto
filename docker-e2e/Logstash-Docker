@@ -4,5 +4,6 @@ RUN rm -f /usr/share/logstash/pipeline/logstash.conf && \
   bin/logstash-plugin install /tmp/logstash-output-kusto-2.0.5-java.gem
 #-e2eCOPY logstash-nsg-logs.conf /usr/share/logstash/pipeline/logstash.conf
 COPY logstash-fortigate-paloalto.conf.template /usr/share/logstash/pipeline/logstash.conf
+COPY fortigate.pattern /etc/logstash/patterns.d/fortigate.pattern
 COPY *.log /tmp/
 COPY logstash.yml /usr/share/logstash/config/logstash.yml

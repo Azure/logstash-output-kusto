@@ -74,6 +74,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
         @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
       else
+        @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
         @logger.debug('No mapping reference provided. Columns will be mapped by names in the logstash output')
       end
       @delete_local = delete_local
