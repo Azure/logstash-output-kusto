@@ -1,7 +1,8 @@
 FROM docker.elastic.co/logstash/logstash-oss:8.10.0
-COPY logstash-output-kusto-2.0.2-java.gem /tmp/logstash-output-kusto-2.0.2-java.gem
+COPY logstash-output-kusto-2.0.5-java.gem /tmp/logstash-output-kusto-2.0.5-java.gem
 RUN rm -f /usr/share/logstash/pipeline/logstash.conf && \
-  bin/logstash-plugin install /tmp/logstash-output-kusto-2.0.2-java.gem
-COPY logstash-nsg-logs.conf /usr/share/logstash/pipeline/logstash.conf
-COPY 2023-12-15-12-fw-d-hub01.log /tmp/fw-d-hub01.log
+  bin/logstash-plugin install /tmp/logstash-output-kusto-2.0.5-java.gem
+#-e2eCOPY logstash-nsg-logs.conf /usr/share/logstash/pipeline/logstash.conf
+COPY logstash-fortigate-paloalto.conf.template /usr/share/logstash/pipeline/logstash.conf
+COPY *.log /tmp/
 COPY logstash.yml /usr/share/logstash/config/logstash.yml

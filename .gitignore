@@ -61,3 +61,4 @@ rspec.xml
 e2e/output_file.txt
 logs.txt
 local-run.sh
+docker-e2e/.env
