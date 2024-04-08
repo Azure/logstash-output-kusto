@@ -1,8 +1,9 @@
 # encoding: utf-8
-
 require 'logstash/outputs/base'
 require 'logstash/namespace'
 require 'logstash/errors'
+require 'logstash/outputs/kusto/kustoLogstashConfiguration'
+require 'logstash/outputs/kusto/kustoAadProvider'
 
 class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   ##
@@ -18,34 +19,42 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       fallback_policy: :caller_runs
     )
     LOW_QUEUE_LENGTH = 3
-    FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
-      @workers_pool = threadpool
+    def initialize(kustoLsConfig, logger, threadpool = DEFAULT_THREADPOOL)
       @logger = logger
-      validate_config(database, table, json_mapping,proxy_protocol,app_id, app_key, managed_identity_id)
+      @workers_pool = threadpool
+      @kusto_ls_config = kustoLsConfig
       @logger.info('Preparing Kusto resources.')
+      @ingestion_properties = get_ingestion_properties()
+      if @kusto_ls_config.proxy_aad_only
+        @kustoAadTokenProvider = LogStash::Outputs::KustoInternal::KustoAadTokenProvider.new(@kusto_ls_config,@logger)
+      end
+      @logger.debug('Kusto resources are ready.')
+    end
 
+    def get_kusto_client()
+      if @kusto_client.nil? || (@kusto_ls_config.proxy_aad_only && @kustoAadTokenProvider.is_saved_token_need_refresh())
+        kusto_client = create_kusto_client()
+      end
+      return @kusto_client
+    end
+
+    def create_kusto_client()
       kusto_java = Java::com.microsoft.azure.kusto
       apache_http = Java::org.apache.http
-      # kusto_connection_string = kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
-      # If there is managed identity, use it. This means the AppId and AppKey are empty/nil
-      is_managed_identity = (app_id.nil? && app_key.nil?)
-      # If it is system managed identity, propagate the system identity
-      is_system_assigned_managed_identity = is_managed_identity && 0 == "system".casecmp(managed_identity_id)
-      # Is it direct connection
-      is_direct_conn = (proxy_host.nil? || proxy_host.empty?)
       # Create a connection string
-      kusto_connection_string = if is_managed_identity
-          if is_system_assigned_managed_identity
+      kusto_connection_string = if @kusto_ls_config.is_managed_identity
+          if @kusto_ls_config.is_system_assigned_managed_identity
             @logger.info('Using system managed identity.')
-            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(ingest_url)  
+            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(@kusto_ls_config.ingest_url)  
           else
             @logger.info('Using user managed identity.')
-            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(ingest_url, managed_identity_id)
+            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(@kusto_ls_config.ingest_url, @kusto_ls_config.managed_identity_id)
           end
+        elsif @kusto_ls_config.proxy_aad_only
+          kusto_java.data.auth.ConnectionStringBuilder.createWithAadAccessTokenAuthentication(@kusto_ls_config.ingest_url,@kustoAadTokenProvider.get_aad_token_bearer())
         else
-          kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
+          kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(@kusto_ls_config.ingest_url, @kusto_ls_config.app_id, @kusto_ls_config.app_key.value, @kusto_ls_config.app_tenant)
         end
       #
       @logger.debug(Gem.loaded_specs.to_s)
@@ -59,53 +68,26 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       kusto_connection_string.setConnectorDetails("Logstash",version_for_tracing.to_s,"","",false,"", tuple_utils.Pair.emptyArray());
       
       @kusto_client = begin
-        if is_direct_conn
+        if @kusto_ls_config.is_direct_conn || @kusto_ls_config.proxy_aad_only
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
         else
-          kusto_http_client_properties = kusto_java.data.HttpClientProperties.builder().proxy(apache_http.HttpHost.new(proxy_host,proxy_port,proxy_protocol)).build()
+          kusto_http_client_properties = kusto_java.data.HttpClientProperties.builder().proxy(apache_http.HttpHost.new(@kusto_ls_config.proxy_host,@kusto_ls_config.proxy_port,@kusto_ls_config.proxy_protocol)).build()
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string, kusto_http_client_properties)
         end
       end
+    end
 
-      @ingestion_properties = kusto_java.ingest.IngestionProperties.new(database, table)
-      is_mapping_ref_provided = !(json_mapping.nil? || json_mapping.empty?)
-      if is_mapping_ref_provided
-        @logger.debug('Using mapping reference.', json_mapping)
-        @ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
-        @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
+    def get_ingestion_properties()
+      kusto_java = Java::com.microsoft.azure.kusto
+      ingestion_properties = kusto_java.ingest.IngestionProperties.new(@kusto_ls_config.database, @kusto_ls_config.table)
+      if @kusto_ls_config.is_mapping_ref_provided
+        @logger.debug('Using mapping reference.', @kusto_ls_config.json_mapping)
+        ingestion_properties.setIngestionMapping(@kusto_ls_config.json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
+        ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
       else
         @logger.debug('No mapping reference provided. Columns will be mapped by names in the logstash output')
       end
-      @delete_local = delete_local
-      @logger.debug('Kusto resources are ready.')
-    end
-
-    def validate_config(database, table, json_mapping, proxy_protocol, app_id, app_key, managed_identity_id)
-      # Add an additional validation and fail this upfront
-      if app_id.nil? && app_key.nil? && managed_identity_id.nil?
-        @logger.error('managed_identity_id is not provided and app_id/app_key is empty.')
-        raise LogStash::ConfigurationError.new('managed_identity_id is not provided and app_id/app_key is empty.')
-      end      
-      if database =~ FIELD_REF
-        @logger.error('database config value should not be dynamic.', database)
-        raise LogStash::ConfigurationError.new('database config value should not be dynamic.')
-      end
-
-      if table =~ FIELD_REF
-        @logger.error('table config value should not be dynamic.', table)
-        raise LogStash::ConfigurationError.new('table config value should not be dynamic.')
-      end
-
-      if json_mapping =~ FIELD_REF
-        @logger.error('json_mapping config value should not be dynamic.', json_mapping)
-        raise LogStash::ConfigurationError.new('json_mapping config value should not be dynamic.')
-      end
-
-      if not(["https", "http"].include? proxy_protocol)
-        @logger.error('proxy_protocol has to be http or https.', proxy_protocol)
-        raise LogStash::ConfigurationError.new('proxy_protocol has to be http or https.')
-      end
-
+      return ingestion_properties
     end
 
     def upload_async(path, delete_on_success)
@@ -125,24 +107,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     def upload(path, delete_on_success)
       file_size = File.size(path)
       @logger.debug("Sending file to kusto: #{path}. size: #{file_size}")
-
-      # TODO: dynamic routing
-      # file_metadata = path.partition('.kusto.').last
-      # file_metadata_parts = file_metadata.split('.')
-
-      # if file_metadata_parts.length == 3
-      #   # this is the number we expect - database, table, json_mapping
-      #   database = file_metadata_parts[0]
-      #   table = file_metadata_parts[1]
-      #   json_mapping = file_metadata_parts[2]
-
-      #   local_ingestion_properties = Java::KustoIngestionProperties.new(database, table)
-      #   local_ingestion_properties.addJsonMappingName(json_mapping)
-      # end
-
       if file_size > 0
         file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, 0); # 0 - let the sdk figure out the size of the file
-        @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
+        get_kusto_client().ingestFromFile(file_source_info, @ingestion_properties)
       else
         @logger.warn("File #{path} is an empty file and is not ingested.")
       end

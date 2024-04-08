@@ -1,0 +1,30 @@
+version: '3.8'
+services:
+  logstash:
+    build: # "context" and "dockerfile" fields have to be under "build"
+      context: .
+      dockerfile: Logstash-Docker
+    hostname: logstash
+    environment:
+      - "LS_JAVA_OPTS=-Xms1024m -Xmx8192m"
+    ports:
+      - "9600:9600"
+      - "5044:5044"
+    deploy:
+      restart_policy:
+        condition: on-failure
+  squid-proxy:
+    hostname: squid-proxy
+    image: ubuntu/squid:latest
+    ports:
+      - "3128:3128"
+    environment:
+      - TZ=UTC
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf
+    # configs:
+    #   - source: squid
+    #     target: /etc/squid/squid.conf  
+    deploy:
+      restart_policy:
+        condition: on-failure

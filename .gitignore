@@ -60,3 +60,7 @@ gradle/wrapper/gradle-wrapper.properties
 rspec.xml
 e2e/output_file.txt
 logs.txt
+local-run.sh
+docker-e2e/email-agents.txt
+docker-e2e/access-1.log
+docker-e2e/2023-12-15-12-fw-d-hub01.log
