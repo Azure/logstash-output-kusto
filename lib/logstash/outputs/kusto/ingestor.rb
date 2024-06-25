@@ -20,7 +20,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     LOW_QUEUE_LENGTH = 3
     FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
+    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool
       @logger = logger
       validate_config(database, table, json_mapping,proxy_protocol,app_id, app_key, managed_identity_id)
@@ -45,7 +45,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
             kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(ingest_url, managed_identity_id)
           end
         else
-          kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
+          if cli_auth
+            @logger.warn('*Use of CLI Auth is only for dev-test scenarios. This is ***NOT RECOMMENDED*** for production*')
+            kusto_java.data.auth.ConnectionStringBuilder.createWithAzureCli(ingest_url)
+          else 
+            @logger.info('Using app id and app key.')
+            kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
+          end
         end
       #
       @logger.debug(Gem.loaded_specs.to_s)

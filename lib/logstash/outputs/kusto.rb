@@ -80,7 +80,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :app_tenant, validate: :string, default: nil
   # managed identity id
   config :managed_identity, validate: :string, default: nil
-
+  # CLI credentials for dev-test
+  config :cli_auth, validate: :boolean, default: false
   # The following are the data settings that impact where events are written to
   # Database name
   config :database, validate: :string, required: true
@@ -154,7 +155,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                                                   max_queue: upload_queue_size,
                                                   fallback_policy: :caller_runs)
 
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port,proxy_protocol, @logger, executor)
+    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cli_auth, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port,proxy_protocol, @logger, executor)
 
     # send existing files
     recover_past_files if recovery

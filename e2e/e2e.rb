@@ -14,9 +14,6 @@ class E2E
     @column_count = 19
     @engine_url = ENV["ENGINE_URL"]
     @ingest_url = ENV["INGEST_URL"]
-    @app_id = ENV["APP_ID"]
-    @app_key = ENV['APP_KEY']
-    @tenant_id = ENV['TENANT_ID']
     @database = ENV['TEST_DATABASE']
     @table_with_mapping = "RubyE2E#{Time.now.getutc.to_i}"
     @table_without_mapping = "RubyE2ENoMapping#{Time.now.getutc.to_i}"    
@@ -36,19 +33,15 @@ class E2E
     kusto {
       path => "tmp%{+YYYY-MM-dd-HH-mm}.txt"
       ingest_url => "#{@ingest_url}"
-      app_id => "#{@app_id}"
-      app_key => "#{@app_key}"
-      app_tenant => "#{@tenant_id}"
+      cli_auth => true
       database => "#{@database}"
       table => "#{@table_with_mapping}"
       json_mapping => "#{@mapping_name}"
     }
     kusto {
       path => "nomaptmp%{+YYYY-MM-dd-HH-mm}.txt"
+      cli_auth => true
       ingest_url => "#{@ingest_url}"
-      app_id => "#{@app_id}"
-      app_key => "#{@app_key}"
-      app_tenant => "#{@tenant_id}"
       database => "#{@database}"
       table => "#{@table_without_mapping}"
     }
@@ -137,8 +130,7 @@ class E2E
   end
 
   def start
-    @query_client = $kusto_java.data.ClientFactory.createClient($kusto_java.data.auth.ConnectionStringBuilder::createWithAadApplicationCredentials(@engine_url, @app_id,
-                                                                                                                                   @app_key, @tenant_id))
+    @query_client = $kusto_java.data.ClientFactory.createClient($kusto_java.data.auth.ConnectionStringBuilder::createWithAzureCli(@engine_url))
     create_table_and_mapping
     run_logstash
     assert_data
