@@ -15,6 +15,10 @@ class E2E
     @engine_url = ENV["ENGINE_URL"]
     @ingest_url = ENV["INGEST_URL"]
     @database = ENV['TEST_DATABASE']
+    @lslocalpath = ENV['LS_LOCAL_PATH']
+    if @lslocalpath.nil?
+      @lslocalpath = "/usr/share/logstash/bin/logstash"
+    end
     @table_with_mapping = "RubyE2E#{Time.now.getutc.to_i}"
     @table_without_mapping = "RubyE2ENoMapping#{Time.now.getutc.to_i}"    
     @mapping_name = "test_mapping"
@@ -75,7 +79,7 @@ class E2E
     logstashpath = File.absolute_path("logstash.conf")
     File.write(@output_file, "")
     File.write(@input_file, "")
-    lscommand = "/usr/share/logstash/bin/logstash -f #{logstashpath}"
+    lscommand = "#{@lslocalpath} -f #{logstashpath}"
     puts "Running logstash from config path #{logstashpath} and final command #{lscommand}"
     spawn(lscommand)
     sleep(60)

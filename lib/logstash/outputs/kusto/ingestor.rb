@@ -23,14 +23,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool
       @logger = logger
-      validate_config(database, table, json_mapping,proxy_protocol,app_id, app_key, managed_identity_id)
+      validate_config(database, table, json_mapping,proxy_protocol,app_id, app_key, managed_identity_id,cli_auth)
       @logger.info('Preparing Kusto resources.')
 
       kusto_java = Java::com.microsoft.azure.kusto
       apache_http = Java::org.apache.http
       # kusto_connection_string = kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
       # If there is managed identity, use it. This means the AppId and AppKey are empty/nil
-      is_managed_identity = (app_id.nil? && app_key.nil?)
+      # If there is CLI Auth, use that instead of managed identity
+      is_managed_identity = (app_id.nil? && app_key.nil? && !cli_auth)
       # If it is system managed identity, propagate the system identity
       is_system_assigned_managed_identity = is_managed_identity && 0 == "system".casecmp(managed_identity_id)
       # Is it direct connection
@@ -81,16 +82,21 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
       else
         @logger.debug('No mapping reference provided. Columns will be mapped by names in the logstash output')
+        @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
       end
       @delete_local = delete_local
       @logger.debug('Kusto resources are ready.')
     end
 
-    def validate_config(database, table, json_mapping, proxy_protocol, app_id, app_key, managed_identity_id)
+    def validate_config(database, table, json_mapping, proxy_protocol, app_id, app_key, managed_identity_id,cli_auth)
       # Add an additional validation and fail this upfront
       if app_id.nil? && app_key.nil? && managed_identity_id.nil?
-        @logger.error('managed_identity_id is not provided and app_id/app_key is empty.')
-        raise LogStash::ConfigurationError.new('managed_identity_id is not provided and app_id/app_key is empty.')
+        if cli_auth
+          @logger.info('Using CLI Auth, this is only for dev-test scenarios. This is ***NOT RECOMMENDED*** for production')
+        else
+          @logger.error('managed_identity_id is not provided and app_id/app_key is empty.')
+          raise LogStash::ConfigurationError.new('managed_identity_id is not provided and app_id/app_key is empty.')
+        end
       end      
       if database =~ FIELD_REF
         @logger.error('database config value should not be dynamic.', database)
@@ -130,7 +136,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     def upload(path, delete_on_success)
       file_size = File.size(path)
-      @logger.debug("Sending file to kusto: #{path}. size: #{file_size}")
+      @logger.info("Sending file to kusto: #{path}. size: #{file_size}")
 
       # TODO: dynamic routing
       # file_metadata = path.partition('.kusto.').last
@@ -153,7 +159,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @logger.warn("File #{path} is an empty file and is not ingested.")
       end
       File.delete(path) if delete_on_success
-      @logger.debug("File #{path} sent to kusto.")
+      @logger.info("File #{path} sent to kusto.")
     rescue Errno::ENOENT => e
       @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
     rescue Java::JavaNioFile::NoSuchFileException => e
