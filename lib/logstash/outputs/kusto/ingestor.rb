@@ -136,7 +136,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     def upload(path, delete_on_success)
       file_size = File.size(path)
-      @logger.info("Sending file to kusto: #{path}. size: #{file_size}")
+      @logger.debug("Sending file to kusto: #{path}. size: #{file_size}")
 
       # TODO: dynamic routing
       # file_metadata = path.partition('.kusto.').last
@@ -159,7 +159,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @logger.warn("File #{path} is an empty file and is not ingested.")
       end
       File.delete(path) if delete_on_success
-      @logger.info("File #{path} sent to kusto.")
+      @logger.debug("File #{path} sent to kusto.")
     rescue Errno::ENOENT => e
       @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
     rescue Java::JavaNioFile::NoSuchFileException => e
