@@ -77,8 +77,15 @@ jobs:
   e2e:
     name: End-To-End Testing
     runs-on: ubuntu-latest
+    environment: build
     needs: build
     steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          tenant-id: ${{ secrets.AUTH_ID }}
+          subscription-id: ${{ secrets.SUBSCRIPTION_ID }}          
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: jruby
