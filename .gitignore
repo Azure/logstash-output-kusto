@@ -60,3 +60,8 @@ gradle/wrapper/gradle-wrapper.properties
 rspec.xml
 e2e/output_file.txt
 logs.txt
+docker-e2e/.env
+local-run.sh
+logs2.txt
+**/.vscode/*.*
+**/settings.json

@@ -7,13 +7,16 @@ jobs:
   build:
     name: Build gem
     runs-on: ubuntu-latest
+    environment: build
     permissions:
       checks: write
-      pull-requests: write    
+      pull-requests: write
+      id-token: write
+      contents: read
     strategy:
       matrix:
         logstash: [
-          { version: '8.5.0', url: "https://artifacts.elastic.co/downloads/logstash/logstash-8.5.0-linux-x86_64.tar.gz" , main: 'true' }
+          { version: '8.7.0', url: "https://artifacts.elastic.co/downloads/logstash/logstash-8.7.0-linux-x86_64.tar.gz" , main: 'true' }
         ]
     env:
       LOGSTASH_SOURCE: 1
@@ -21,6 +24,12 @@ jobs:
       JRUBY_HOME: /home/runner/logstash/vendor/jruby
       JAVA_HOME: /home/runner/logstash/jdk
     steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          tenant-id: ${{ secrets.AUTH_ID }}
+          subscription-id: ${{ secrets.SUBSCRIPTION_ID }}      
       - name: Build logstash
         run: |
           echo "Getting logstash version ${{matrix.logstash.version}}"
@@ -68,8 +77,20 @@ jobs:
   e2e:
     name: End-To-End Testing
     runs-on: ubuntu-latest
+    environment: build
+    permissions:
+      checks: write
+      pull-requests: write
+      id-token: write
+      contents: read
     needs: build
     steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          tenant-id: ${{ secrets.AUTH_ID }}
+          subscription-id: ${{ secrets.SUBSCRIPTION_ID }}          
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: jruby
@@ -98,7 +119,4 @@ jobs:
         env:
           ENGINE_URL: ${{ secrets.ENGINE_URL }}
           INGEST_URL: ${{ secrets.INGEST_URL }}
-          APP_ID: ${{ secrets.APP_ID }}
-          APP_KEY: ${{ secrets.APP_KEY }}
-          TENANT_ID: ${{ secrets.TENANT_ID }}
           TEST_DATABASE: ${{ secrets.TEST_DATABASE }}
