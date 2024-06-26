@@ -78,6 +78,11 @@ jobs:
     name: End-To-End Testing
     runs-on: ubuntu-latest
     environment: build
+    permissions:
+      checks: write
+      pull-requests: write
+      id-token: write
+      contents: read
     needs: build
     steps:
       - name: Azure login
