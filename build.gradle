@@ -23,8 +23,8 @@ repositories {
 // update dependencies to bom azure-sdk-bom/1.2.24 
 
 dependencies {
-    implementation 'com.microsoft.azure.kusto:kusto-data:5.1.0'
-    implementation 'com.microsoft.azure.kusto:kusto-ingest:5.1.0'
+    implementation 'com.microsoft.azure.kusto:kusto-data:5.1.1'
+    implementation 'com.microsoft.azure.kusto:kusto-ingest:5.1.1'
     implementation 'com.azure:azure-core-http-netty:1.15.0'
     implementation 'com.azure:azure-core:1.49.0'
     implementation 'com.azure:azure-data-tables:12.4.1'
