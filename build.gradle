@@ -10,7 +10,13 @@ apply plugin: 'maven-publish'
 // The gemspec contains the gem metadata to build and package the gem. The gradle build serves as a mechanism of getting these "vendor" files required for the gem.
 // The alternative is to use ruby-maven gem to package, but this runs into classpath conflicts/issues with the logstash plugin.
 group "org.logstash.outputs"
-version Files.readAllLines(Paths.get("version")).first()
+
+def versionFile = Paths.get("version")
+if (Files.exists(versionFile)) {
+    version = Files.readAllLines(versionFile).first()
+} else {
+    version = "2.0.7" 
+}
 
 repositories {
     mavenCentral()
@@ -116,7 +122,14 @@ task vendor {
         String vendorPathPrefix = "vendor/jar-dependencies"
         configurations.runtimeClasspath.allDependencies.each { dep ->
             println("Copying ${dep.group}:${dep.name}:${dep.version}")
-            File f = configurations.runtimeClasspath.filter { it.absolutePath.contains("${dep.group}/${dep.name}/${dep.version}") }.singleFile
+            def files = configurations.runtimeClasspath.filter { file ->
+                file.name.matches("${dep.name}-${dep.version}.*\\.jar")
+            }
+            if (files.isEmpty()) {
+                println("Warning: No files found for ${dep.group}:${dep.name}:${dep.version}")
+                return
+            }
+            File f = files.singleFile
             String groupPath = dep.group.replaceAll('\\.', '/')
             File newJarFile = file("${vendorPathPrefix}/${groupPath}/${dep.name}/${dep.version}/${dep.name}-${dep.version}.jar")
             newJarFile.mkdirs()

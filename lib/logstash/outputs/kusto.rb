@@ -6,6 +6,7 @@ require 'logstash/errors'
 
 require 'logstash/outputs/kusto/ingestor'
 require 'logstash/outputs/kusto/interval'
+require "logstash/outputs/kusto/custom_size_based_buffer"
 
 ##
 # This plugin sends messages to Azure Kusto in batches.
@@ -95,6 +96,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Mapping name - deprecated, use json_mapping
   config :mapping, validate: :string, deprecated: true
 
+  config :max_size, validate => :number, default => 1000
+
+  config :max_interval, validate => :number, default => 60
 
   # Determines if local files used for temporary storage will be deleted
   # after upload is successful
@@ -123,6 +127,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   def register
     require 'fileutils' # For mkdir_p
+    @buffer = LogStash::Outputs::CustomSizeBasedBuffer.new(@max_size, @max_interval) do |events|
+      flush(events)
+    end
 
     @files = {}
     @io_mutex = Mutex.new
@@ -198,9 +205,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   public
   def multi_receive_encoded(events_and_encoded)
-    encoded_by_path = Hash.new { |h, k| h[k] = [] }
-
     events_and_encoded.each do |event, encoded|
+      @buffer << { event: event, encoded: encoded }
+    end
+  end  
+
+  def flush(events)
+    encoded_by_path = Hash.new { |h, k| h[k] = [] }
+  
+    events.each do |event_data|
+      event = event_data[:event]
+      encoded = event_data[:encoded]
       file_output_path = event_path(event)
       encoded_by_path[file_output_path] << encoded
     end
