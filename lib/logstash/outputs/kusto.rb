@@ -234,6 +234,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
   end
 
+  public
+  def shutdown
+    @buffer.shutdown
+    @ingestor.stop unless @ingestor.nil?
+  end
+
   def close
     @flusher.stop unless @flusher.nil?
     @cleaner.stop unless @cleaner.nil?
@@ -252,7 +258,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       end
     end
 
-    @ingestor.stop unless @ingestor.nil?
+    shutdown
   end
 
   private
