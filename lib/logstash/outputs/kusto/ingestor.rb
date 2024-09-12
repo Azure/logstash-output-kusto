@@ -20,7 +20,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     LOW_QUEUE_LENGTH = 3
     FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
+    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool
       @logger = logger
       validate_config(database, table, json_mapping,proxy_protocol,app_id, app_key, managed_identity_id,cli_auth)
@@ -84,7 +84,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @logger.debug('No mapping reference provided. Columns will be mapped by names in the logstash output')
         @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
       end
-      @delete_local = delete_local
       @logger.debug('Kusto resources are ready.')
     end
 
@@ -120,23 +119,22 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     end
 
-    def upload_async(path, delete_on_success)
+    def upload_async(data)
       if @workers_pool.remaining_capacity <= LOW_QUEUE_LENGTH
         @logger.warn("Ingestor queue capacity is running low with #{@workers_pool.remaining_capacity} free slots.")
       end
 
       @workers_pool.post do
-        LogStash::Util.set_thread_name("Kusto to ingest file: #{path}")
-        upload(path, delete_on_success)
+        LogStash::Util.set_thread_name("Kusto to ingest data")
+        upload(data)
       end
     rescue Exception => e
-      @logger.error('StandardError.', exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+      @logger.error('StandardError.', exception: e.class, message: e.message, backtrace: e.backtrace)
       raise e
     end
 
-    def upload(path, delete_on_success)
-      file_size = File.size(path)
-      @logger.debug("Sending file to kusto: #{path}. size: #{file_size}")
+    def upload(data)
+      @logger.debug("Sending data to Kusto")
 
       # TODO: dynamic routing
       # file_metadata = path.partition('.kusto.').last
@@ -152,24 +150,19 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       #   local_ingestion_properties.addJsonMappingName(json_mapping)
       # end
 
-      if file_size > 0
-        file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, 0); # 0 - let the sdk figure out the size of the file
-        @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
-      else
-        @logger.warn("File #{path} is an empty file and is not ingested.")
-      end
-      File.delete(path) if delete_on_success
-      @logger.debug("File #{path} sent to kusto.")
-    rescue Errno::ENOENT => e
-      @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
-    rescue Java::JavaNioFile::NoSuchFileException => e
-      @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
-    rescue => e
+      if data.size > 0
+      data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(java.io.ByteArrayInputStream.new(data.to_java_bytes))
+      @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
+    else
+      @logger.warn("Data is empty and is not ingested.")
+    end
+    @logger.debug("Data sent to Kusto.")
+  rescue => e
       # When the retry limit is reached or another error happen we will wait and retry.
       #
       # Thread might be stuck here, but I think its better than losing anything
       # its either a transient errors or something bad really happened.
-      @logger.error('Uploading failed, retrying.', exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+      @logger.error('Uploading failed, retrying.', exception: e.class, message: e.message, backtrace: e.backtrace)
       sleep RETRY_DELAY_SECONDS
       retry
     end
