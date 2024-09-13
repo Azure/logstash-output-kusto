@@ -96,10 +96,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Mapping name - deprecated, use json_mapping
   config :mapping, validate: :string, deprecated: true
 
-  config :max_size, validate => :number, default => 1000
-
-  config :max_interval, validate => :number, default => 60
-
   # Determines if local files used for temporary storage will be deleted
   # after upload is successful
   config :delete_temp_files, validate: :boolean, default: true
@@ -122,6 +118,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   # Check Proxy URL can be over http or https. Dowe need it this way or ignore this & remove this
   config :proxy_protocol, validate: :string, required: false , default: 'http'
+
+  
+  config :max_size, validate: :number, default: 1000
+
+  config :max_interval, validate: :number, default: 60
 
   default :codec, 'json_lines'
 
