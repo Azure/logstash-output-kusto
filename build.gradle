@@ -15,7 +15,7 @@ def versionFile = Paths.get("version")
 if (Files.exists(versionFile)) {
     version = Files.readAllLines(versionFile).first()
 } else {
-    version = "2.0.7" 
+    version = "2.0.7"
 }
 
 repositories {
