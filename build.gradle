@@ -123,12 +123,12 @@ task vendor {
         configurations.runtimeClasspath.allDependencies.each { dep ->
             println("Copying ${dep.group}:${dep.name}:${dep.version}")
             File f = configurations.runtimeClasspath.filter { it.absolutePath.contains("${dep.group}${File.separator}${dep.name}${File.separator}${dep.version}") }.singleFile
-            String groupPath = dep.group.replaceAll('\\.', ${File.separator})
+            String groupPath = dep.group.replaceAll('\\.', '/')
             File newJarFile = file("${vendorPathPrefix}${File.separator}${groupPath}${File.separator}${dep.name}${File.separator}${dep.version}${File.separator}${dep.name}-${dep.version}.jar")
             newJarFile.mkdirs()
             Files.copy(f.toPath(), newJarFile.toPath(), REPLACE_EXISTING)
         }
-        String projectGroupPath = project.group.replaceAll('\\.', ${File.separator})
+        String projectGroupPath = project.group.replaceAll('\\.', '/')
         File projectJarFile = file("${vendorPathPrefix}${File.separator}${projectGroupPath}${File.separator}${project.name}${File.separator}${project.version}${File.separator}${project.name}-${project.version}.jar")
         projectJarFile.mkdirs()
         Files.copy(file("$buildDir${File.separator}libs${File.separator}${project.name}-${project.version}.jar").toPath(), projectJarFile.toPath(), REPLACE_EXISTING)
