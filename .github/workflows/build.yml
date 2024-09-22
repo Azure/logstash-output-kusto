@@ -64,7 +64,7 @@ jobs:
         working-directory: 'kusto'
       - if: matrix.logstash.main == 'true'
         name: Upload gem
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: logstash-kusto.gem
           path: 'kusto/logstash-kusto.gem'
