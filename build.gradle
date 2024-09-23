@@ -124,14 +124,14 @@ task vendor {
             println("Copying ${dep.group}:${dep.name}:${dep.version}")
             File f = configurations.runtimeClasspath.filter { it.absolutePath.contains("${dep.group}${File.separator}${dep.name}${File.separator}${dep.version}") }.singleFile
             String groupPath = dep.group.replaceAll('\\.', '/')
-            File newJarFile = file("${vendorPathPrefix}/${groupPath}/${dep.name}/${dep.version}/${dep.name}-${dep.version}.jar")
+            File newJarFile = file("${vendorPathPrefix}${File.separator}${groupPath}${File.separator}${dep.name}${File.separator}${dep.version}${File.separator}${dep.name}-${dep.version}.jar")
             newJarFile.mkdirs()
             Files.copy(f.toPath(), newJarFile.toPath(), REPLACE_EXISTING)
         }
         String projectGroupPath = project.group.replaceAll('\\.', '/')
-        File projectJarFile = file("${vendorPathPrefix}/${projectGroupPath}/${project.name}/${project.version}/${project.name}-${project.version}.jar")
+        File projectJarFile = file("${vendorPathPrefix}${File.separator}${projectGroupPath}${File.separator}${project.name}${File.separator}${project.version}${File.separator}${project.name}-${project.version}.jar")
         projectJarFile.mkdirs()
-        Files.copy(file("$buildDir/libs/${project.name}-${project.version}.jar").toPath(), projectJarFile.toPath(), REPLACE_EXISTING)
+        Files.copy(file("$buildDir${File.separator}libs${File.separator}${project.name}-${project.version}.jar").toPath(), projectJarFile.toPath(), REPLACE_EXISTING)
     }
 }
 // The jar task is the standard packaging task & the generateGemJarRequiresFile task generates the ruby file with all the dependencies.

@@ -114,7 +114,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     return if events.empty?
 
     begin
-      # Logic to send buffer to Kusto
       @ingestor.upload_async(events.join)
     rescue => e
       # Log the error and continue
