@@ -46,6 +46,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Mapping name - deprecated, use json_mapping
   config :mapping, validate: :string, deprecated: true
 
+  # Path - deprecated
+  config :path, validate: :string, deprecated: true
 
   # TODO: will be used to route events to many tables according to event properties
   config :dynamic_event_routing, validate: :boolean, default: false
@@ -92,6 +94,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   
     @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cli_auth, database, table, final_mapping, proxy_host, proxy_port, proxy_protocol, @logger, executor)
     
+    # Deprecation warning for path
+    if @path
+      @logger.warn("The 'path' configuration option is deprecated and will be removed in a future release.")
+    end
   end
 
 
