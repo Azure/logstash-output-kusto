@@ -19,7 +19,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
   let(:json_mapping) { "mymapping" }
   let(:logger) { spy('logger') }
 
-  RSpec.describe 'Ingestor' do
+  describe 'Ingestor' do
 
     it 'does not throw an error when initializing' do
       RSpec.configuration.reporter.message("Running test: does not throw an error when initializing")
