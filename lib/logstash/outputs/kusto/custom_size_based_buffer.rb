@@ -1,3 +1,5 @@
+require 'logger'
+
 module LogStash
   module Outputs
     class CustomSizeBasedBuffer
@@ -11,13 +13,20 @@ module LogStash
         @shutdown = false
         @flusher_condition = ConditionVariable.new
 
+        # Initialize logger
+        @logger = Logger.new(STDOUT)
+        @logger.level = Logger::DEBUG
+
         start_flusher_thread
       end
 
       def <<(event)
         @mutex.synchronize do
           @buffer << event
-          flush if @buffer.size >= @max_size
+          if @buffer.size >= @max_size
+            @logger.debug("Size-based flush triggered")
+            flush
+          end
         end
       end
 
@@ -38,6 +47,7 @@ module LogStash
             @mutex.synchronize do
               break if @shutdown
               if Time.now - @last_flush_time >= @max_interval
+                @logger.debug("Time-based flush triggered")
                 flush
               end
               @flusher_condition.wait(@mutex, @max_interval) # Wait for either the interval or shutdown signal
@@ -50,6 +60,7 @@ module LogStash
       def flush_if_needed
         @mutex.synchronize do
           if Time.now - @last_flush_time >= @max_interval
+            @logger.debug("Time-based flush triggered in flush_if_needed")
             flush
           end
         end
@@ -59,11 +70,12 @@ module LogStash
         return if @buffer.empty?
 
         begin
+          @logger.debug("Flushing buffer with #{@buffer.size} events")
           @flush_callback.call(@buffer)
         rescue => e
           # Log the error and continue,
-          puts "Error during flush: #{e.message}"
-          puts e.backtrace.join("\n")
+          @logger.error("Error during flush: #{e.message}")
+          @logger.error(e.backtrace.join("\n"))
         ensure
           @buffer.clear
           @last_flush_time = Time.now
