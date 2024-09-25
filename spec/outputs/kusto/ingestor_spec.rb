@@ -19,31 +19,28 @@ describe LogStash::Outputs::Kusto::Ingestor do
   let(:json_mapping) { "mymapping" }
   let(:logger) { spy('logger') }
 
-  describe '#initialize' do
-  
+  RSpec.describe 'Ingestor' do
 
     it 'does not throw an error when initializing' do
-      puts "Running test: does not throw an error when initializing"
-      # note that this will cause an internal error since connection is being tried.
-      # however we still want to test that all the java stuff is working as expected
+      RSpec.configuration.reporter.message("Running test: does not throw an error when initializing")
       expect { 
-        ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, database, table, json_mapping, proxy_host, proxy_port,proxy_protocol, logger)
+        ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, database, table, json_mapping, proxy_host, proxy_port, proxy_protocol, logger)
         ingestor.stop
       }.not_to raise_error
-      puts "Completed test: does not throw an error when initializing"
+      RSpec.configuration.reporter.message("Completed test: does not throw an error when initializing")
     end
-    
+  
     dynamic_name_array = ['/a%{name}/', '/a %{name}/', '/a- %{name}/', '/a- %{name}']
 
     context 'doesnt allow database to have some dynamic part' do
       dynamic_name_array.each do |test_database|
         it "with database: #{test_database}" do
-          puts "Running test: doesnt allow database to have some dynamic part with database: #{test_database}"
+          RSpec.configuration.reporter.message("Running test: doesnt allow database to have some dynamic part with database: #{test_database}")
           expect {
-            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, test_database, table, json_mapping, proxy_host, proxy_port,proxy_protocol,logger)
+            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, test_database, table, json_mapping, proxy_host, proxy_port, proxy_protocol, logger)
             ingestor.stop
           }.to raise_error(LogStash::ConfigurationError)
-          puts "Completed test: doesnt allow database to have some dynamic part with database: #{test_database}"          
+          RSpec.configuration.reporter.message("Completed test: doesnt allow database to have some dynamic part with database: #{test_database}")
         end
       end
     end
@@ -51,12 +48,12 @@ describe LogStash::Outputs::Kusto::Ingestor do
     context 'doesnt allow table to have some dynamic part' do
       dynamic_name_array.each do |test_table|
         it "with table: #{test_table}" do
-          puts "Running test: doesnt allow table to have some dynamic part with table: #{test_table}"
+          RSpec.configuration.reporter.message("Running test: doesnt allow table to have some dynamic part with table: #{test_table}")
           expect {
-            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, database, test_table, json_mapping, proxy_host, proxy_port,proxy_protocol,logger)
+            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, database, test_table, json_mapping, proxy_host, proxy_port, proxy_protocol, logger)
             ingestor.stop
-          }.to raise_error(LogStash::ConfigurationError)   
-          puts "Completed test: doesnt allow table to have some dynamic part with table: #{test_table}"       
+          }.to raise_error(LogStash::ConfigurationError)
+          RSpec.configuration.reporter.message("Completed test: doesnt allow table to have some dynamic part with table: #{test_table}")
         end
       end
     end
@@ -64,35 +61,35 @@ describe LogStash::Outputs::Kusto::Ingestor do
     context 'doesnt allow mapping to have some dynamic part' do
       dynamic_name_array.each do |json_mapping|
         it "with mapping: #{json_mapping}" do
-        puts "Running test: doesnt allow mapping to have some dynamic part with mapping: #{json_mapping}"
+          RSpec.configuration.reporter.message("Running test: doesnt allow mapping to have some dynamic part with mapping: #{json_mapping}")
           expect {
-            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, database, table, json_mapping, proxy_host, proxy_port,proxy_protocol,logger)
+            ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, database, table, json_mapping, proxy_host, proxy_port, proxy_protocol, logger)
             ingestor.stop
-          }.to raise_error(LogStash::ConfigurationError)   
-          puts "Completed test: doesnt allow mapping to have some dynamic part with mapping: #{json_mapping}"       
+          }.to raise_error(LogStash::ConfigurationError)
+          RSpec.configuration.reporter.message("Completed test: doesnt allow mapping to have some dynamic part with mapping: #{json_mapping}")
         end
       end
     end
 
     context 'proxy protocol has to be http or https' do
       it "with proxy protocol: socks" do
-        puts "Running test: proxy protocol has to be http or https with proxy protocol: socks"
+        RSpec.configuration.reporter.message("Running test: proxy protocol has to be http or https with proxy protocol: socks")
         expect {
-          ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, database, table, json_mapping, proxy_host, proxy_port,'socks',logger)
+          ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, database, table, json_mapping, proxy_host, proxy_port, 'socks', logger)
           ingestor.stop
-        }.to raise_error(LogStash::ConfigurationError)         
-        puts "Completed test: proxy protocol has to be http or https with proxy protocol: socks" 
+        }.to raise_error(LogStash::ConfigurationError)
+        RSpec.configuration.reporter.message("Completed test: proxy protocol has to be http or https with proxy protocol: socks")
       end
     end
 
     context 'one of appid or managedid has to be provided' do
       it "with empty managed identity and appid" do
-        puts "Running test: one of appid or managedid has to be provided with empty managed identity and appid"
+        RSpec.configuration.reporter.message("Running test: one of appid or managedid has to be provided with empty managed identity and appid")
         expect {
           ingestor = described_class.new(ingest_url, "", app_key, app_tenant, "", cliauth, database, table, json_mapping, proxy_host, proxy_port,'socks',logger)
           ingestor.stop
-        }.to raise_error(LogStash::ConfigurationError)  
-        puts "Completed test: one of appid or managedid has to be provided with empty managed identity and appid"        
+        }.to raise_error(LogStash::ConfigurationError)
+        RSpec.configuration.reporter.message("Completed test: one of appid or managedid has to be provided with empty managed identity and appid")
       end
     end
 
