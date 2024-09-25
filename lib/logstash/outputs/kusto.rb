@@ -109,16 +109,18 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   def close
+    @logger.info("Closing Kusto output plugin")
     @flusher.stop unless @flusher.nil?
     @cleaner.stop unless @cleaner.nil?
     @buffer.shutdown
     @ingestor.stop unless @ingestor.nil?
+    @logger.info("Kusto output plugin closed")
   end
 
   private
   def flush_buffer(events)
     return if events.empty?
-
+    @logger.info("flush_buffer with #{events.size} events")
     begin
       # Logic to send buffer to Kusto
       @ingestor.upload_async(events.join)
