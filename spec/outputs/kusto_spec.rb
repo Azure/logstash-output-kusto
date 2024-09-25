@@ -15,42 +15,61 @@ describe LogStash::Outputs::Kusto do
     "json_mapping" => "mymapping",
     "proxy_host" => "localhost",
     "proxy_port" => 3128,
-    "proxy_protocol" => "https"
+    "proxy_protocol" => "https",
+    "max_size" => 2000,
+    "max_interval" => 10
   } }
-
+  
   describe '#register' do
-
-    it 'doesnt allow the path to start with a dynamic string' do
-      kusto = described_class.new(options.merge( {'path' => '/%{name}'} ))
-      expect { kusto.register }.to raise_error(LogStash::ConfigurationError)
-      kusto.close
-    end
-
-    it 'path must include a dynamic string to allow file rotation' do
-      kusto = described_class.new(options.merge( {'path' => '/{name}'} ))
-      expect { kusto.register }.to raise_error(LogStash::ConfigurationError)
-      kusto.close
-    end
-
-
-    dynamic_name_array = ['/a%{name}/', '/a %{name}/', '/a- %{name}/', '/a- %{name}']
-
-    context 'doesnt allow the root directory to have some dynamic part' do
-      dynamic_name_array.each do |test_path|
-         it "with path: #{test_path}" do
-           kusto = described_class.new(options.merge( {'path' => test_path} ))
-           expect { kusto.register }.to raise_error(LogStash::ConfigurationError)
-           kusto.close
-         end
-       end
-    end
-
-    it 'allow to have dynamic part after the file root' do
-      kusto = described_class.new(options.merge({'path' => '/tmp/%{name}'}))
+    it 'allows valid configuration' do
+      kusto = described_class.new(options)
       expect { kusto.register }.not_to raise_error
       kusto.close
     end
-
   end
 
+  describe '#multi_receive_encoded' do
+    it 'buffers events and flushes based on max_size' do
+      kusto = described_class.new(options.merge( {'max_size' => 2} ))
+      kusto.register
+
+      event1 = LogStash::Event.new("message" => "event1")
+      event2 = LogStash::Event.new("message" => "event2")
+      event3 = LogStash::Event.new("message" => "event3")
+
+      expect(kusto.instance_variable_get(:@buffer)).to receive(:flush).twice.and_call_original
+
+      kusto.multi_receive_encoded([[event1, event1.to_json], [event2, event2.to_json]])
+      kusto.multi_receive_encoded([[event3, event3.to_json]])
+
+      kusto.close
+    end
+
+    it 'flushes events based on max_interval' do
+      kusto = described_class.new(options.merge( {'max_interval' => 1} ))
+      kusto.register
+
+      event1 = LogStash::Event.new("message" => "event1")
+
+      expect(kusto.instance_variable_get(:@buffer)).to receive(:flush).at_least(:once).and_call_original
+
+      kusto.multi_receive_encoded([[event1, event1.to_json]])
+
+      sleep 2
+
+      kusto.close
+    end
+  end
+
+  describe '#close' do
+    it 'shuts down the buffer and ingestor' do
+      kusto = described_class.new(options)
+      kusto.register
+
+      expect(kusto.instance_variable_get(:@buffer)).to receive(:shutdown)
+      expect(kusto.instance_variable_get(:@ingestor)).to receive(:stop)
+
+      kusto.close
+    end
+  end
 end
