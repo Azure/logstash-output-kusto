@@ -41,6 +41,7 @@ class E2E
       database => "#{@database}"
       table => "#{@table_with_mapping}"
       json_mapping => "#{@mapping_name}"
+      max_size => 2
     }
     kusto {
       path => "nomaptmp%{+YYYY-MM-dd-HH-mm}.txt"
@@ -48,6 +49,7 @@ class E2E
       ingest_url => "#{@ingest_url}"
       database => "#{@database}"
       table => "#{@table_without_mapping}"
+      max_size => 3
     }
   }
 }
