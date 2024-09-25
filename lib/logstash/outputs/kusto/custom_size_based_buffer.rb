@@ -24,7 +24,7 @@ module LogStash
         @mutex.synchronize do
           @buffer << event
           if @buffer.size >= @max_size
-            @logger.debug("Size-based flush triggered")
+            @logger.debug("Size-based flush triggered after #{@max_size} was reached")
             flush
           end
         end
@@ -47,7 +47,7 @@ module LogStash
             @mutex.synchronize do
               break if @shutdown
               if Time.now - @last_flush_time >= @max_interval
-                @logger.debug("Time-based flush triggered")
+                @logger.debug("Time-based flush triggered after #{@max_interval} seconds")
                 flush
               end
               @flusher_condition.wait(@mutex, @max_interval) # Wait for either the interval or shutdown signal
