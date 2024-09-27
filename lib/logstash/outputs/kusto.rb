@@ -68,8 +68,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Check Proxy URL can be over http or https. Dowe need it this way or ignore this & remove this
   config :proxy_protocol, validate: :string, required: false , default: 'http'
 
-  # Maximum size of the buffer before it gets flushed, defaults to 1000
-  config :max_size, validate: :number, default: 1000
+  # Maximum size of the buffer before it gets flushed, defaults to 10MB
+  config :max_size, validate: :number, default: 10
 
   # Maximum interval (in seconds) before the buffer gets flushed, defaults to 10
   config :max_interval, validate: :number, default: 10
