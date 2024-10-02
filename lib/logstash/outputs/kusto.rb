@@ -22,7 +22,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # The Kusto endpoint for ingestion related communication. You can see it on the Azure Portal.
   config :ingest_url, validate: :string, required: true
 
-  # The following are the credentails used to connect to the Kusto service
+  # The following are the credentials used to connect to the Kusto service
   # application id 
   config :app_id, validate: :string, required: false
   # application key (secret)
@@ -65,7 +65,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Port where the proxy runs , defaults to 80. Usually a value like 3128
   config :proxy_port, validate: :number, required: false , default: 80
 
-  # Check Proxy URL can be over http or https. Dowe need it this way or ignore this & remove this
+  # Check Proxy URL can be over http or https. Do we need it this way or ignore this & remove this
   config :proxy_protocol, validate: :string, required: false , default: 'http'
 
   # Maximum size of the buffer before it gets flushed, defaults to 10MB
@@ -109,15 +109,33 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       rescue => e
         @logger.error("Error processing event: #{e.message}")
       end
+      begin
+        @buffer << encoded
+      rescue => e
+        @logger.error("Error processing event: #{e.message}")
+      end
     end
   end
 
   def close
     @logger.info("Closing Kusto output plugin")
-    @flusher.stop unless @flusher.nil?
-    @cleaner.stop unless @cleaner.nil?
-    @buffer.shutdown
-    @ingestor.stop unless @ingestor.nil?
+  
+    begin
+      @buffer.shutdown unless @buffer.nil?
+      @logger.info("Buffer shutdown") unless @buffer.nil?
+    rescue => e
+      @logger.error("Error shutting down buffer: #{e.message}")
+      @logger.error(e.backtrace.join("\n"))
+    end
+  
+    begin
+      @ingestor.stop unless @ingestor.nil?
+      @logger.info("Ingestor stopped") unless @ingestor.nil?
+    rescue => e
+      @logger.error("Error stopping ingestor: #{e.message}")
+      @logger.error(e.backtrace.join("\n"))
+    end
+  
     @logger.info("Kusto output plugin Closed")
   end
 

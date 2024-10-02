@@ -34,12 +34,15 @@ module LogStash
       end
 
       def shutdown
+        @logger.info("Shutting down CustomSizeBasedBuffer")
         @mutex.synchronize do
           @shutdown = true
           @flusher_condition.signal # Wake up the flusher thread
         end
         @flusher_thread.join
+        @logger.info("Flusher thread joined")
         flush # Ensure final flush after shutdown
+        @logger.info("CustomSizeBasedBuffer shutdown complete")
       end
 
       private
@@ -48,7 +51,10 @@ module LogStash
         @flusher_thread = Thread.new do
           loop do
             @mutex.synchronize do
-              break if @shutdown
+              if @shutdown
+                @logger.debug("Flusher thread exiting due to shutdown signal")
+                break
+              end
               if Time.now - @last_flush_time >= @max_interval
                 @logger.debug("Time-based flush triggered after #{@max_interval} seconds")
                 flush
