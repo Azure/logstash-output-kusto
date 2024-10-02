@@ -92,50 +92,6 @@ describe LogStash::Outputs::Kusto::Ingestor do
         RSpec.configuration.reporter.message("Completed test: one of appid or managedid has to be provided with empty managed identity and appid")
       end
     end
-
   end
 
-  # describe 'receiving events' do
-
-  #   context 'with non-zero flush interval' do
-  #     let(:temporary_output_file) { Stud::Temporary.pathname }
-
-  #     let(:event_count) { 100 }
-  #     let(:flush_interval) { 5 }
-
-  #     let(:events) do
-  #       event_count.times.map do |idx|
-  #         LogStash::Event.new('subject' => idx)
-  #       end
-  #     end
-
-  #     let(:output) { described_class.new(options.merge( {'path' => temporary_output_file, 'flush_interval' => flush_interval, 'delete_temp_files' => false } )) }
-
-  #     before(:each) { output.register }
-      
-  #     after(:each) do
-  #       output.close
-  #       File.exist?(temporary_output_file) && File.unlink(temporary_output_file)
-  #       File.exist?(temporary_output_file + '.kusto') && File.unlink(temporary_output_file + '.kusto')
-  #     end
-
-  #     it 'eventually flushes without receiving additional events' do
-  #       output.multi_receive_encoded(events)
-
-  #       # events should not all be flushed just yet...
-  #       expect(File.read(temporary_output_file)).to satisfy("have less than #{event_count} lines") do |contents|
-  #         contents && contents.lines.count < event_count
-  #       end
-
-  #       # wait for the flusher to run...
-  #       sleep(flush_interval + 1)
-
-  #       # events should all be flushed
-  #       expect(File.read(temporary_output_file)).to satisfy("have exactly #{event_count} lines") do |contents|
-  #         contents && contents.lines.count == event_count
-  #       end
-  #     end
-  #   end
-
-  # end
 end

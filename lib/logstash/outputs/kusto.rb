@@ -104,7 +104,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   public
   def multi_receive_encoded(events_and_encoded)
     events_and_encoded.each do |event, encoded|
-      @buffer << encoded
+      begin
+        @buffer << encoded
+      rescue => e
+        @logger.error("Error processing event: #{e.message}")
+      end
     end
   end
 
@@ -114,10 +118,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @cleaner.stop unless @cleaner.nil?
     @buffer.shutdown
     @ingestor.stop unless @ingestor.nil?
-    @logger.info("Kusto output plugin closed")
+    @logger.info("Kusto output plugin Closed")
   end
 
-  private
+  public
   def flush_buffer(events)
     return if events.empty?
     @logger.info("flush_buffer with #{events.size} events")
