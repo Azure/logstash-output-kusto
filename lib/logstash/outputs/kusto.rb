@@ -109,11 +109,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       rescue => e
         @logger.error("Error processing event: #{e.message}")
       end
-      begin
-        @buffer << encoded
-      rescue => e
-        @logger.error("Error processing event: #{e.message}")
-      end
     end
   end
 
