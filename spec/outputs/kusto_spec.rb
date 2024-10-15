@@ -53,7 +53,7 @@ describe LogStash::Outputs::Kusto do
       kusto.multi_receive_encoded(encoded_events)
 
       buffer = kusto.instance_variable_get(:@buffer)
-      expect(buffer.instance_variable_get(:@buffer).size).to eq(2)
+      expect(buffer.instance_variable_get(:@buffer_state)[:pending_items].size).to eq(2)
       RSpec.configuration.reporter.message("Completed test: processes events and adds them to the buffer")
     end
   
