@@ -39,10 +39,10 @@ module LogStash
         end
       end
 
-      def <<(event)
-        while buffer_full? do
-          sleep 0.1
-        end
+				def <<(event)
+					while buffer_full? do
+						sleep 0.1
+					end
 
         @pending_mutex.synchronize do
           @buffer_state[:pending_items] << event
@@ -58,23 +58,23 @@ module LogStash
         clear_buffer_files
       end
 
-      private
+				private
 
-      def buffer_full?
-        @pending_mutex.synchronize do
-          @buffer_state[:pending_size] >= @buffer_config[:max_size]
-        end
-      end
+				def buffer_full?
+					@pending_mutex.synchronize do
+						@buffer_state[:pending_size] >= @buffer_config[:max_size]
+					end
+				end
 
-      def buffer_flush(options = {})
-        force = options[:force] || options[:final]
-        final = options[:final]
+				def buffer_flush(options = {})
+					force = options[:force] || options[:final]
+					final = options[:final]
 
-        if final
-          @flush_mutex.lock
-        elsif !@flush_mutex.try_lock
-          return 0
-        end
+					if final
+						@flush_mutex.lock
+					elsif !@flush_mutex.try_lock
+						return 0
+					end
 
         items_flushed = 0
 
@@ -85,7 +85,7 @@ module LogStash
           @pending_mutex.synchronize do
             return 0 if @buffer_state[:pending_size] == 0
 
-            time_since_last_flush = Time.now.to_i - @buffer_state[:last_flush]
+							time_since_last_flush = Time.now.to_i - @buffer_state[:last_flush]
 
             if !force && @buffer_state[:pending_size] < @buffer_config[:max_size] && time_since_last_flush < @buffer_config[:max_interval]
               return 0
@@ -123,8 +123,8 @@ module LogStash
           @flush_mutex.unlock
         end
 
-        items_flushed
-      end
+					items_flushed
+				end
 
       def save_buffer_to_file(events)
         buffer_state_copy = {
