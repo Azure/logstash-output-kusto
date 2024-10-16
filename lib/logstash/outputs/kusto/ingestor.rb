@@ -78,12 +78,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       is_mapping_ref_provided = !(json_mapping.nil? || json_mapping.empty?)
       if is_mapping_ref_provided
         @logger.debug('Using mapping reference.', json_mapping)
-        @ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
         @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
       else
         @logger.debug('No mapping reference provided. Columns will be mapped by names in the logstash output')
         @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
       end
+      # default mapping is JSON
+      @ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
       @delete_local = delete_local
       @logger.debug('Kusto resources are ready.')
     end
