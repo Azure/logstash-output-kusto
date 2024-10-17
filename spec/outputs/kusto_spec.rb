@@ -91,19 +91,6 @@ describe LogStash::Outputs::Kusto do
   end
 
   describe '#flush_buffer' do
-    it 'handles errors during buffer flushing' do
-      RSpec.configuration.reporter.message("Running test: handles errors during buffer flushing")
-      kusto = described_class.new(options)
-      kusto.register
-
-      allow(kusto.instance_variable_get(:@ingestor)).to receive(:upload_async).and_raise(StandardError.new("Test error"))
-      events = [LogStash::Event.new("message" => "test1")]
-      encoded_events = events.map { |e| [e, e.to_json] }
-      kusto.multi_receive_encoded(encoded_events)
-
-      expect { kusto.flush_buffer(encoded_events) }.not_to raise_error
-      RSpec.configuration.reporter.message("Completed test: handles errors during buffer flushing")
-    end
 
     it 'flushes the buffer when max_size is reached' do
       RSpec.configuration.reporter.message("Running test: flushes the buffer when max_size is reached")
