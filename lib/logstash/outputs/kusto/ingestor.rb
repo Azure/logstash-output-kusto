@@ -126,10 +126,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
       @workers_pool.post do
         LogStash::Util.set_thread_name("Kusto to ingest data")
-        upload(data)
+        begin
+          upload(data)
+        rescue => e
+          @logger.error('Error during async upload.', exception: e.class, message: e.message, backtrace: e.backtrace)
+          raise e
+        end
       end
     rescue Exception => e
-      @logger.error('StandardError.', exception: e.class, message: e.message, backtrace: e.backtrace)
+      @logger.error('StandardError in upload_async.', exception: e.class, message: e.message, backtrace: e.backtrace)
       raise e
     end
 
@@ -150,21 +155,30 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       #   local_ingestion_properties.addJsonMappingName(json_mapping)
       # end
 
+
       if data.size > 0
-      data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(java.io.ByteArrayInputStream.new(data.to_java_bytes))
-      @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
-    else
-      @logger.warn("Data is empty and is not ingested.")
-    end
-    @logger.debug("Data sent to Kusto.")
-  rescue => e
-      # When the retry limit is reached or another error happen we will wait and retry.
+        data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(java.io.ByteArrayInputStream.new(data.to_java_bytes))
+        @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
+      else
+        @logger.warn("Data is empty and is not ingested.")
+      end
+      @logger.debug("Data sent to Kusto.")
+    rescue => e
+      # When the retry limit is reached or another error happens we will wait and retry.
       #
-      # Thread might be stuck here, but I think its better than losing anything
-      # its either a transient errors or something bad really happened.
+      # Thread might be stuck here, but I think it's better than losing anything
+      # it's either a transient error or something bad really happened.
       @logger.error('Uploading failed, retrying.', exception: e.class, message: e.message, backtrace: e.backtrace)
-      sleep RETRY_DELAY_SECONDS
-      retry
+      retry_count = 0
+      max_retries = 5
+      begin
+        sleep (2 ** retry_count) * RETRY_DELAY_SECONDS
+        retry_count += 1
+        retry if retry_count <= max_retries
+      rescue => retry_error
+        @logger.error('Retrying failed.', exception: retry_error.class, message: retry_error.message, backtrace: retry_error.backtrace)
+        raise retry_error
+      end
     end
 
     def stop
