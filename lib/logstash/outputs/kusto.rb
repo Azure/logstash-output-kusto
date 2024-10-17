@@ -77,13 +77,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   default :codec, 'json_lines'
 
   def register
-    # Set buffer_file to a valid file path
-    buffer_file = File.join(Dir.pwd, 'buffer', 'kusto_buffer.dat')
-  
-    # Ensure the buffer directory exists
-    FileUtils.mkdir_p(File.dirname(buffer_file))
     # Initialize the custom buffer with size, interval, and buffer file
-    @buffer = LogStash::Outputs::CustomSizeBasedBuffer.new(@max_size, @max_interval, buffer_file) do |events|
+    @buffer = LogStash::Outputs::CustomSizeBasedBuffer.new(@max_size, @max_interval) do |events|
       flush_buffer(events)
     end
   
@@ -146,9 +141,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     begin
       @ingestor.upload_async(events.join)
     rescue => e
-      # Log the error and continue
       @logger.error("Error during flush: #{e.message}")
       @logger.error(e.backtrace.join("\n"))
+      raise e # Exception is raised to trigger the rescue block in buffer_flush
     end
   end
 
