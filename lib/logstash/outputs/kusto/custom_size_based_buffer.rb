@@ -67,8 +67,7 @@ module LogStash
         end
 
         items_flushed = 0
-        max_retries = 5
-        retries = 0
+        backoff_interval = 1
 
         begin
           outgoing_items = []
@@ -103,14 +102,9 @@ module LogStash
           rescue => e
             @buffer_config[:logger].error("Flush failed: #{e.message}")
             @buffer_config[:logger].error(e.backtrace.join("\n"))
-            retries += 1
-            if retries <= max_retries
-              sleep 1
-              retry
-            else
-              @buffer_config[:logger].error("Max retries reached. Data loss may occur.")
-              raise e
-            end
+            sleep backoff_interval
+            backoff_interval = [backoff_interval * 2, 60].min # Exponential backoff with a max interval of 60 seconds
+            retry
           end
 
           @buffer_state[:last_flush] = Time.now.to_i
