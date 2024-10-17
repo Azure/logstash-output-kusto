@@ -50,13 +50,23 @@ describe LogStash::Outputs::Kusto do
 
       events = [LogStash::Event.new("message" => "test1"), LogStash::Event.new("message" => "test2")]
       encoded_events = events.map { |e| [e, e.to_json] }
+
+      # Temporarily disable automatic flushing for the test
+      buffer = kusto.instance_variable_get(:@buffer)
+      allow(buffer).to receive(:buffer_flush)
+
+      # Clear the buffer before the test
+      buffer.instance_variable_set(:@buffer_state, { pending_items: [], pending_size: 0, last_flush: Time.now.to_i })
+
       kusto.multi_receive_encoded(encoded_events)
 
-      buffer = kusto.instance_variable_get(:@buffer)
-      expect(buffer.instance_variable_get(:@buffer_state)[:pending_items].size).to eq(2)
+      pending_items = buffer.instance_variable_get(:@buffer_state)[:pending_items]
+      RSpec.configuration.reporter.message("Pending items in buffer: #{pending_items.inspect}")
+
+      expect(pending_items.size).to eq(2)
       RSpec.configuration.reporter.message("Completed test: processes events and adds them to the buffer")
     end
-  
+
     it 'handles errors during event processing' do
       RSpec.configuration.reporter.message("Running test: handles errors during event processing")
       kusto = described_class.new(options)
@@ -102,9 +112,14 @@ describe LogStash::Outputs::Kusto do
 
       events = [LogStash::Event.new("message" => "test1")]
       encoded_events = events.map { |e| [e, e.to_json] }
-      expect(kusto.instance_variable_get(:@ingestor)).to receive(:upload_async).with(anything)
+      # Ensure upload_async is called only once
+      expect(kusto.instance_variable_get(:@ingestor)).to receive(:upload_async).with(anything).once
       kusto.multi_receive_encoded(encoded_events)
-      kusto.flush_buffer(encoded_events) # Pass the encoded events
+      
+      # Trigger the buffer flush manually
+      buffer = kusto.instance_variable_get(:@buffer)
+      buffer.send(:buffer_flush, force: true)
+
       RSpec.configuration.reporter.message("Completed test: flushes the buffer when max_size is reached")
     end
 
@@ -119,7 +134,7 @@ describe LogStash::Outputs::Kusto do
       sleep(2) # Wait for the interval to pass
 
       expect(kusto.instance_variable_get(:@ingestor)).to receive(:upload_async).with(anything)
-      kusto.flush_buffer(encoded_events) # Pass the encoded events
+      kusto.flush_buffer(encoded_events) # Pass the encoded events here
       RSpec.configuration.reporter.message("Completed test: flushes the buffer when max_interval is reached")
     end
 
@@ -136,7 +151,7 @@ describe LogStash::Outputs::Kusto do
       sleep(2)
     
       expect(kusto.instance_variable_get(:@ingestor)).to receive(:upload_async).with(anything)
-      kusto.flush_buffer(encoded_events) # Pass the encoded events
+      kusto.flush_buffer(encoded_events) # Pass the encoded events here
       RSpec.configuration.reporter.message("Completed test: eventually flushes without receiving additional events based on max_interval")
     end
   end
