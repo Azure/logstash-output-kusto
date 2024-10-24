@@ -77,7 +77,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   default :codec, 'json_lines'
 
   def register
-    # Initialize the custom buffer with size, interval, and buffer file
+    # Initialize the custom buffer with size and interval
     @buffer = LogStash::Outputs::CustomSizeBasedBuffer.new(@max_size, @max_interval) do |events|
       flush_buffer(events)
     end
