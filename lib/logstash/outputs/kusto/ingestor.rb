@@ -54,7 +54,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
             kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
           end
         end
-      #
       @logger.debug(Gem.loaded_specs.to_s)
       # Unfortunately there's no way to avoid using the gem/plugin name directly...
       name_for_tracing = "logstash-output-kusto:#{Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"}"
@@ -123,15 +122,24 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       if @workers_pool.remaining_capacity <= LOW_QUEUE_LENGTH
         @logger.warn("Ingestor queue capacity is running low with #{@workers_pool.remaining_capacity} free slots.")
       end
-
+      exception = nil
       @workers_pool.post do
         LogStash::Util.set_thread_name("Kusto to ingest data")
         begin
           upload(data)
         rescue => e
           @logger.error('Error during async upload.', exception: e.class, message: e.message, backtrace: e.backtrace)
-          raise e
+          exception = e
         end
+      end
+    
+      # Wait for the task to complete and check for exceptions
+      @workers_pool.shutdown
+      @workers_pool.wait_for_termination
+    
+      if exception
+        @logger.error('StandardError in upload_async.', exception: exception.class, message: exception.message, backtrace: exception.backtrace)
+        raise exception
       end
     rescue Exception => e
       @logger.error('StandardError in upload_async.', exception: e.class, message: e.message, backtrace: e.backtrace)
@@ -139,46 +147,44 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
 
     def upload(data)
-      @logger.debug("Sending data to Kusto")
-
-      # TODO: dynamic routing
-      # file_metadata = path.partition('.kusto.').last
-      # file_metadata_parts = file_metadata.split('.')
-
-      # if file_metadata_parts.length == 3
-      #   # this is the number we expect - database, table, json_mapping
-      #   database = file_metadata_parts[0]
-      #   table = file_metadata_parts[1]
-      #   json_mapping = file_metadata_parts[2]
-
-      #   local_ingestion_properties = Java::KustoIngestionProperties.new(database, table)
-      #   local_ingestion_properties.addJsonMappingName(json_mapping)
-      # end
-
+      @logger.info("Sending data to Kusto")
 
       if data.size > 0
-        data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(java.io.ByteArrayInputStream.new(data.to_java_bytes))
-        @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
+        ingestionLatch = java.util.concurrent.CountDownLatch.new(1)
+    
+        Thread.new do
+          begin
+            data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(java.io.ByteArrayInputStream.new(data.to_java_bytes))
+            ingestion_result = @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
+    
+            # Check the ingestion status
+            status = ingestion_result.getIngestionStatusCollection.get(0)
+            if status.status != Java::com.microsoft.azure.kusto.ingest.result.OperationStatus::Queued
+              raise "Failed upload: #{status.errorCodeString}"
+            end
+            @logger.info("Final ingestion status: #{status.status}")
+          rescue => e
+            @logger.error('Error during ingestFromStream.', exception: e.class, message: e.message, backtrace: e.backtrace)
+            if e.message.include?("network")
+              raise e 
+            end
+          ensure
+            ingestionLatch.countDown()
+          end
+        end
+    
+        # Wait for the ingestion to complete with a timeout
+        if !ingestionLatch.await(30, java.util.concurrent.TimeUnit::SECONDS)
+          @logger.error('Ingestion timed out, possible network issue.')
+          raise 'Ingestion timed out, possible network issue.'
+        end
       else
         @logger.warn("Data is empty and is not ingested.")
       end
-      @logger.debug("Data sent to Kusto.")
+      @logger.info("Data sent to Kusto.")
     rescue => e
-      # When the retry limit is reached or another error happens we will wait and retry.
-      #
-      # Thread might be stuck here, but I think it's better than losing anything
-      # it's either a transient error or something bad really happened.
-      @logger.error('Uploading failed, retrying.', exception: e.class, message: e.message, backtrace: e.backtrace)
-      retry_count = 0
-      max_retries = 5
-      begin
-        sleep (2 ** retry_count) * RETRY_DELAY_SECONDS
-        retry_count += 1
-        retry if retry_count <= max_retries
-      rescue => retry_error
-        @logger.error('Retrying failed.', exception: retry_error.class, message: retry_error.message, backtrace: retry_error.backtrace)
-        raise retry_error
-      end
+      @logger.error('Uploading failed.', exception: e.class, message: e.message, backtrace: e.backtrace)
+      raise e # Raise the original error if ingestion fails
     end
 
     def stop
