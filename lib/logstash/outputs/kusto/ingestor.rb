@@ -75,7 +75,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       end
 
       @ingestion_properties = kusto_java.ingest.IngestionProperties.new(@kusto_logstash_configuration.kusto_ingest.database, @kusto_logstash_configuration.kusto_ingest.table)
-      
+      @ingestion_properties.setReportLevel(Java::ComMicrosoftAzureKustoIngest::IngestionProperties::IngestionReportLevel::FAILURES_AND_SUCCESSES)
+      @ingestion_properties.setReportMethod(Java::ComMicrosoftAzureKustoIngest::IngestionProperties::IngestionReportMethod::TABLE)
       if @kusto_logstash_configuration.kusto_ingest.is_mapping_ref_provided
         @logger.debug('Using mapping reference.', @kusto_logstash_configuration.kusto_ingest.json_mapping)
         @ingestion_properties.setIngestionMapping(@kusto_logstash_configuration.kusto_ingest.json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
@@ -101,59 +102,34 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
           exception = e
         end
       end
-    
       # Wait for the task to complete and check for exceptions
       @workers_pool.shutdown
       @workers_pool.wait_for_termination
-    
-      if exception
-        @logger.error('StandardError in upload_async.', exception: exception.class, message: exception.message, backtrace: exception.backtrace)
-        raise exception
-      end
+      
+      raise exception if exception
     rescue Exception => e
       @logger.error('StandardError in upload_async.', exception: e.class, message: e.message, backtrace: e.backtrace)
       raise e
     end
 
     def upload(data)
-      @logger.info("Sending data to Kusto")
-
+      @logger.debug("Sending data to Kusto")
       if data.size > 0
-        ingestionLatch = java.util.concurrent.CountDownLatch.new(1)
-    
-        Thread.new do
-          begin
-            data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(java.io.ByteArrayInputStream.new(data.to_java_bytes))
-            ingestion_result = @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
-    
-            # Check the ingestion status
-            status = ingestion_result.getIngestionStatusCollection.get(0)
-            if status.status != Java::com.microsoft.azure.kusto.ingest.result.OperationStatus::Queued
-              raise "Failed upload: #{status.errorCodeString}"
-            end
-            @logger.info("Final ingestion status: #{status.status}")
-          rescue => e
-            @logger.error('Error during ingestFromStream.', exception: e.class, message: e.message, backtrace: e.backtrace)
-            if e.message.include?("network")
-              raise e 
-            end
-          ensure
-            ingestionLatch.countDown()
-          end
-        end
-    
-        # Wait for the ingestion to complete with a timeout
-        if !ingestionLatch.await(30, java.util.concurrent.TimeUnit::SECONDS)
-          @logger.error('Ingestion timed out, possible network issue.')
-          raise 'Ingestion timed out, possible network issue.'
+        begin
+          data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(java.io.ByteArrayInputStream.new(data.to_java_bytes))
+          result = @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
+        rescue => e
+          @logger.error('Uploading failed.', exception: e.class, message: e.message, backtrace: e.backtrace)
+          raise e
         end
       else
         @logger.warn("Data is empty and is not ingested.")
       end
-      @logger.info("Data sent to Kusto.")
+    
+      @logger.debug("Data sent to Kusto.")
     rescue => e
       @logger.error('Uploading failed.', exception: e.class, message: e.message, backtrace: e.backtrace)
-      raise e # Raise the original error if ingestion fails
+      raise e
     end
 
     def stop

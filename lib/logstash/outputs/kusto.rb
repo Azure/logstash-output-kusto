@@ -75,11 +75,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Maximum interval (in seconds) before the buffer gets flushed, defaults to 10
   config :max_interval, validate: :number, default: 10
 
+  # Maximum number of retries before the flush fails, defaults to 3
+  config :max_retries, validate: :number, default: 3
+
+  # Path to store failed items, defaults to nil
+  config :failed_items_path, validate: :string, default: nil
+
   default :codec, 'json_lines'
 
   def register
     # Initialize the custom buffer with size and interval
-    @buffer = LogStash::Outputs::CustomSizeBasedBuffer.new(@max_size, @max_interval) do |events|
+    @buffer = LogStash::Outputs::CustomSizeBasedBuffer.new(@max_size, @max_interval, @max_retries, @failed_items_path) do |events|
       flush_buffer(events)
     end
   
