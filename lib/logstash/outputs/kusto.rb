@@ -39,6 +39,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :database, validate: :string, required: true
   # Target table name
   config :table, validate: :string, required: true
+  # Path to store failed items when max_retries is reached, set to "nil" to disable persistence to file
+  config :failed_items_path, validate: :string, required: true 
+
   # Mapping name - Used by Kusto to map each attribute from incoming event JSON strings to the appropriate column in the table.
   # Note that this must be in JSON format, as this is the interface between Logstash and Kusto
   # Make this optional as name resolution in the JSON mapping can be done based on attribute names in the incoming event JSON strings
@@ -70,16 +73,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :proxy_protocol, validate: :string, required: false , default: 'http'
 
   # Maximum size of the buffer before it gets flushed, defaults to 10MB
-  config :max_size, validate: :number, default: 10
+  config :max_size, validate: :number, required: false , default: 10
 
   # Maximum interval (in seconds) before the buffer gets flushed, defaults to 10
-  config :max_interval, validate: :number, default: 10
+  config :max_interval, validate: :number, required: false , default: 10
 
   # Maximum number of retries before the flush fails, defaults to 3
-  config :max_retries, validate: :number, default: 3
-
-  # Path to store failed items, defaults to nil
-  config :failed_items_path, validate: :string, default: nil
+  config :max_retries, validate: :number, required: false , default: 3
 
   default :codec, 'json_lines'
 
