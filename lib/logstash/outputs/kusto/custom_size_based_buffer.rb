@@ -109,7 +109,7 @@ module LogStash
               retry
             else
               @buffer_config[:logger].error("Max retries reached. Failed to flush #{outgoing_items.size} items and #{outgoing_size} bytes")
-              handle_failed_flush(outgoing_items, e.message)
+              handle_failed_flush(outgoing_items)
             end
           end
 
@@ -118,8 +118,10 @@ module LogStash
         end
       end
 
-      def handle_failed_flush(items, error_message)
-        if @buffer_config[:failed_items_path]
+      def handle_failed_flush(items)
+        if @buffer_config[:failed_items_path].nil? || @buffer_config[:failed_items_path] == "nil"
+          @buffer_config[:logger].warn("No failed_items_path configured. The failed items are not persisted. Data loss may occur.")
+        else
           begin
             ::File.open(@buffer_config[:failed_items_path], 'a') do |file|
               items.each do |item|
@@ -130,8 +132,6 @@ module LogStash
           rescue => e
             @buffer_config[:logger].error("Failed to store items: #{e.message}")
           end
-        else
-          @buffer_config[:logger].warn("No failed_items_path configured. Data loss may occur.")
         end
       end
 
