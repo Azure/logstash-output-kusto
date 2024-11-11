@@ -77,11 +77,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   default :codec, 'json_lines'
 
   def register
-    # Initialize the custom buffer with size and interval
-    @buffer = LogStash::Outputs::CustomSizeBasedBuffer.new(@max_size, @max_interval) do |events|
-      flush_buffer(events)
-    end
-  
     @io_mutex = Mutex.new
   
     final_mapping = json_mapping
@@ -97,6 +92,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     # Deprecation warning for path
     if @path
       @logger.warn("The 'path' configuration option is deprecated and will be removed in a future release.")
+    end
+    sleep(30)
+    # Initialize the custom buffer with size and interval
+    @buffer = LogStash::Outputs::CustomSizeBasedBuffer.new(@max_size, @max_interval) do |events|
+      flush_buffer(events)
     end
   end
 

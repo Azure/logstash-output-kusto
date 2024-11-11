@@ -156,18 +156,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
           begin
             data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(java.io.ByteArrayInputStream.new(data.to_java_bytes))
             ingestion_result = @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
-    
-            # Check the ingestion status
-            status = ingestion_result.getIngestionStatusCollection.get(0)
-            if status.status != Java::com.microsoft.azure.kusto.ingest.result.OperationStatus::Queued
-              raise "Failed upload: #{status.errorCodeString}"
-            end
-            @logger.info("Final ingestion status: #{status.status}")
+  
           rescue => e
             @logger.error('Error during ingestFromStream.', exception: e.class, message: e.message, backtrace: e.backtrace)
-            if e.message.include?("network")
-              raise e 
-            end
+            raise e 
           ensure
             ingestionLatch.countDown()
           end
