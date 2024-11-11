@@ -136,7 +136,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.error("Error stopping ingestor: #{e.message}")
       @logger.error(e.backtrace.join("\n"))
     end
-  
     @logger.info("Kusto output plugin Closed")
   end
 
