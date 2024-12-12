@@ -20,15 +20,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     LOW_QUEUE_LENGTH = 3
     FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(kusto_logstash_configuration, logger, threadpool = DEFAULT_THREADPOOL)
-      @retry_count = 3
-      @retry_delay = 10
+    def initialize(kusto_logstash_configuration, logger, latch_timeout = 60, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool
+      @latch_timeout = latch_timeout
       @logger = logger
       #Validate and assign
       kusto_logstash_configuration.validate_config()
       @kusto_logstash_configuration = kusto_logstash_configuration
-     
       @logger.info('Preparing Kusto resources.')
 
       kusto_java = Java::com.microsoft.azure.kusto
@@ -77,8 +75,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       end
 
       @ingestion_properties = kusto_java.ingest.IngestionProperties.new(@kusto_logstash_configuration.kusto_ingest.database, @kusto_logstash_configuration.kusto_ingest.table)
-      @ingestion_properties.setReportLevel(Java::ComMicrosoftAzureKustoIngest::IngestionProperties::IngestionReportLevel::FAILURES_AND_SUCCESSES)
-      @ingestion_properties.setReportMethod(Java::ComMicrosoftAzureKustoIngest::IngestionProperties::IngestionReportMethod::TABLE)
       if @kusto_logstash_configuration.kusto_ingest.is_mapping_ref_provided
         @logger.debug('Using mapping reference.', @kusto_logstash_configuration.kusto_ingest.json_mapping)
         @ingestion_properties.setIngestionMapping(@kusto_logstash_configuration.kusto_ingest.json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
@@ -87,15 +83,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @logger.debug('No mapping reference provided. Columns will be mapped by names in the logstash output')
         @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
       end
-      # retry_policy = Java::com.azure.storage.common.policy
-      # duration = Java::java.time.Duration.ofSeconds(5)
-
-      # fixed_delay_options = Java::com.azure.core.http.policy.FixedDelayOptions.new(1,duration)
-      # retry_options = Java::com.azure.core.http.policy.RetryOptions.new(fixed_delay_options)
-      # req_retry_options = Java::com.azure.storage.common.policy.RequestRetryOptions.fromRetryOptions(retry_options, Java::java.time.Duration.ofSeconds(10), "")
-
-      # queued_ingest_client = @kusto_client.to_java(Java::com.microsoft.azure.kusto.ingest.QueuedIngestClientImpl)
-      # queued_ingest_client.setQueueRequestOptions(req_retry_options)
       @logger.debug('Kusto resources are ready.')
     end
 
@@ -103,32 +90,62 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       if @workers_pool.remaining_capacity <= LOW_QUEUE_LENGTH
         @logger.warn("Ingestor queue capacity is running low with #{@workers_pool.remaining_capacity} free slots.")
       end
+      exception = nil
       @workers_pool.post do
-        LogStash::Util.set_thread_name("Kusto to ingest data #{JRuby.reference(Thread.current).native_thread.id}")
-        upload(data)
+        LogStash::Util.set_thread_name("Kusto to ingest data")
+        begin
+          upload(data)
+        rescue => e
+          @logger.error('Error during async upload.', exception: e.class, message: e.message, backtrace: e.backtrace)
+          exception = e
+        end
       end
+      # Wait for the task to complete and check for exceptions
+      @workers_pool.shutdown
+      @workers_pool.wait_for_termination
+    
+      if exception
+        @logger.error('StandardError in upload_async.', exception: exception.class, message: exception.message, backtrace: exception.backtrace)
+        raise exception
+      end
+    rescue Exception => e
+      @logger.error('StandardError in upload_async.', exception: e.class, message: e.message, backtrace: e.backtrace)
+      raise e
     end
 
     def upload(data)
-      begin
-        @logger.debug("Sending data to Kusto")
-        if data.size > 0
+      @logger.info("Sending data to Kusto")
+
+      if data.size > 0
+        ingestionLatch = java.util.concurrent.CountDownLatch.new(1)
+        thread_exception = nil
+    
+        Thread.new do
+          begin
             data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(java.io.ByteArrayInputStream.new(data.to_java_bytes))
-            result = @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
-        else
-          @logger.warn("Data is empty and is not ingested.")
+            ingestion_result = @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
+          rescue => e
+            @logger.error('Error during ingestFromStream.', exception: e.class, message: e.message, backtrace: e.backtrace)
+            thread_exception = e
+          ensure
+            ingestionLatch.countDown()
+          end
         end
-        @logger.debug("Data sent to Kusto.")
-      rescue => e
-        if tries < @retry_count
-          tries += 1
-          logger.warn("Uploading failed, retrying (##{tries} of #{@retry_count})", :exception => e.class, :message => e.message, :path => file.path, :backtrace => e.backtrace)
-          sleep @retry_delay
-          retry
-        else
-          logger.error("Failed to upload file (retried #{@retry_count} times).", :exception => e.class, :message => e.message, :path => file.path, :backtrace => e.backtrace)
+    
+        # Wait for the ingestion to complete with a timeout
+        if !ingestionLatch.await(@latch_timeout, java.util.concurrent.TimeUnit::SECONDS)
+          @logger.error('Ingestion timed out, possible network issue.')
+          raise 'Ingestion timed out, possible network issue.'
         end
+        # Raise the exception from the thread if it occurred
+        raise thread_exception if thread_exception
+      else
+        @logger.warn("Data is empty and is not ingested.")
       end
+      @logger.info("Data sent to Kusto.")
+    rescue => e
+      @logger.error('Uploading failed.', exception: e.class, message: e.message, backtrace: e.backtrace)
+      raise e # Raise the original error if ingestion fails
     end
 
     def stop
