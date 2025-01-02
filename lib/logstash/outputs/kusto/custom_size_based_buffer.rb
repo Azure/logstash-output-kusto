@@ -139,29 +139,14 @@ module LogStash
         rescue => e
           @buffer_config[:logger].error("Flush failed: #{e.message}")
           @buffer_state[:network_down] = true
-      
-          while true
-            sleep(2) # Wait before checking network availability again
-            if network_available?
-              @buffer_config[:logger].info("Network is back up. Retrying flush.")
-              retry
-            end
-          end
-
+          sleep(120) # Wait before checking network availability again
+          @buffer_config[:logger].info("Retrying flush.")
+          retry
         ensure
           @flush_mutex.unlock
         end
       end
       
-      def network_available?
-        begin
-          uri = URI('http://www.google.com')
-          response = Net::HTTP.get_response(uri)
-          response.is_a?(Net::HTTPSuccess)
-        rescue
-          false
-        end
-      end
 
       def save_buffer_to_file(events)
         buffer_state_copy = {
