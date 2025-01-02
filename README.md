@@ -48,8 +48,7 @@ output {
     proxy_protocol => <"http"|"https">
     max_size => 10
     max_interval => 10
-    max_retries => 3
-    failed_items_path => "<path to store failed items>"
+    latch_timeout => 60
   }
 }
 ```
@@ -64,14 +63,12 @@ More information about configuring Logstash can be found in the [logstash config
 | **managed_identity** | Managed Identity to authenticate. For user-based managed ID, use the Client ID GUID. For system-based, use the value `system`. The ID needs to have 'ingest' privileges on the cluster. | Optional |
 | **database** | Database name to place events | Required |
 | **table** | Target table name to place events | Required |
-| **failed_items_path** | Path to store failed items when max_retries is reached. Set to nil to disable persistence to file (May cause data loss). | Required |
 | **json_mapping** | Maps each attribute from incoming event JSON strings to the appropriate column in the table. Note that this must be in JSON format, as this is the interface between Logstash and Kusto | Optional |
 | **proxy_host** | The proxy hostname for redirecting traffic to Kusto. | Optional |
 | **proxy_port** | The proxy port for the proxy. Defaults to 80. | Optional |
 | **proxy_protocol** | The proxy server protocol, is one of http or https. | Optional |
 | **max_size** | Maximum size of the buffer before it gets flushed, defaults to 10MB. | Optional |
-| **max_interval** | Maximum interval (in seconds) before the buffer gets flushed, defaults to 10. | Optional |
-| **max_retries** | Maximum number of retries before the flush fails. Defaults to 3. | Optional |
+| **latch_timeout** | Latch timeout in seconds, defaults to 60. This is the maximum wait time after which the flushing attempt is timed out and the network is considered to be down. The system waits for the network to be back to retry flushing the same batch. | Optional |
 
 > Note : LS_JAVA_OPTS can be used to set proxy parameters as well (using export or SET options)
 

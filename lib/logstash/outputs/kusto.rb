@@ -5,7 +5,6 @@ require 'logstash/namespace'
 require 'logstash/errors'
 
 require 'logstash/outputs/kusto/ingestor'
-require 'logstash/outputs/kusto/interval'
 require 'logstash/outputs/kusto/custom_size_based_buffer'
 require 'logstash/outputs/kusto/kustoLogstashConfiguration'
 
