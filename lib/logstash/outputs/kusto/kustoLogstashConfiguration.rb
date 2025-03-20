@@ -5,11 +5,13 @@ module LogStash
 		module KustoInternal
 			class KustoLogstashConfiguration
 				FIELD_REF = /%\{[^}]+\}/
-				def initialize(kusto_ingest,kusto_auth, kusto_proxy, logger)
+				def initialize(kusto_ingest,kusto_auth, kusto_proxy, kusto_flush_config , kusto_upload_config, logger)
 					@logger = logger
 					@kusto_ingest = kusto_ingest
 					@kusto_auth = kusto_auth
 					@kusto_proxy = kusto_proxy
+					@kusto_flush_config = kusto_flush_config
+					@kusto_upload_config = kusto_upload_config
 					@logger.info("Kusto configuration initialized.")
 				end # def initialize
 
@@ -22,6 +24,12 @@ module LogStash
 				end
 				def kusto_proxy
 					@kusto_proxy
+				end
+				def kusto_flush_config
+					@kusto_flush_config
+				end
+				def kusto_upload_config
+					@kusto_upload_config
 				end
 
 				def validate_config()
@@ -150,6 +158,40 @@ module LogStash
 					@is_mapping_ref_provided
 				end                
 			end # class KustoIngestionConfiguration
+			class KustoFlushConfiguration
+				def initialize(max_items, plugin_flush_interval, max_batch_size)
+					@max_items = max_items
+					@plugin_flush_interval = plugin_flush_interval
+					@max_batch_size = max_batch_size
+					@flush_each = flush_each
+				end
+				# Flush configuration
+				def max_items
+					@max_items
+				end
+				def plugin_flush_interval
+					@plugin_flush_interval
+				end
+				def max_batch_size
+					@max_batch_size
+				end
+				def flush_each
+					@flush_each
+				end
+			end # class KustoFlushConfiguration
+			class KustoUploadConfiguration
+				def initialize(upload_concurrent_count, upload_queue_size)
+					@upload_concurrent_count = upload_concurrent_count
+					@upload_queue_size = upload_queue_size
+				end
+				# Upload configuration
+				def upload_concurrent_count
+					@upload_concurrent_count
+				end
+				def upload_queue_size
+					@upload_queue_size
+				end
+			end # class KustoUploadConfiguration
 		end # module KustoInternal
 	end # module Outputs
 end # module LogStash

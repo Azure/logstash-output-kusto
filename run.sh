@@ -1,0 +1,1 @@
+/softwares/logstash/bin/logstash -f /code/logstash/logstash-output-kusto/e2e/logstash.conf
