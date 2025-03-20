@@ -8,7 +8,9 @@ name: Deploy and Create Release
 jobs:
   build:
     permissions:
+      contents: write
       checks: write
+      repository-projects: write
       pull-requests: write
       id-token: write 
       packages: write # for pushing GitHub packages
