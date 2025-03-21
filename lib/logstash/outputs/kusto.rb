@@ -5,8 +5,8 @@ require 'logstash/namespace'
 require 'logstash/errors'
 
 require 'logstash/outputs/kusto/ingestor'
-require 'logstash/outputs/kusto/interval'
 require 'logstash/outputs/kusto/custom_size_based_buffer'
+require 'logstash/outputs/kusto/kustoLogstashConfiguration'
 
 ##
 # This plugin sends messages to Azure Kusto in batches.
@@ -69,10 +69,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :proxy_protocol, validate: :string, required: false , default: 'http'
 
   # Maximum size of the buffer before it gets flushed, defaults to 10MB
-  config :max_size, validate: :number, default: 10
+  config :max_size, validate: :number, required: false , default: 10
 
   # Maximum interval (in seconds) before the buffer gets flushed, defaults to 10
-  config :max_interval, validate: :number, default: 10
+  config :max_interval, validate: :number, required: false , default: 10
+
+  # Latch timeout in seconds, defaults to 60
+  config :latch_timeout, validate: :number, required: false, default: 60
+
 
   default :codec, 'json_lines'
 
@@ -86,9 +90,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                                                   max_threads: upload_concurrent_count,
                                                   max_queue: upload_queue_size,
                                                   fallback_policy: :caller_runs)
-  
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cli_auth, database, table, final_mapping, proxy_host, proxy_port, proxy_protocol, @logger, executor)
-    
+     
+    kusto_ingest_base =  LogStash::Outputs::KustoInternal::KustoIngestConfiguration.new(ingest_url, database, table, final_mapping) 
+    kusto_auth_base   =  LogStash::Outputs::KustoInternal::KustoAuthConfiguration.new(app_id, app_key, app_tenant, managed_identity, cli_auth) 
+    kusto_proxy_base  =  LogStash::Outputs::KustoInternal::KustoProxyConfiguration.new(proxy_host , proxy_port , proxy_protocol, false) 
+    @kusto_logstash_configuration = LogStash::Outputs::KustoInternal::KustoLogstashConfiguration.new(kusto_ingest_base, kusto_auth_base , kusto_proxy_base, logger)
+    @ingestor = Ingestor.new(@kusto_logstash_configuration, @logger, latch_timeout, executor)
+
     # Deprecation warning for path
     if @path
       @logger.warn("The 'path' configuration option is deprecated and will be removed in a future release.")
@@ -114,7 +122,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   def close
     @logger.info("Closing Kusto output plugin")
-  
     begin
       @buffer.shutdown unless @buffer.nil?
       @logger.info("Buffer shutdown") unless @buffer.nil?
@@ -130,7 +137,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.error("Error stopping ingestor: #{e.message}")
       @logger.error(e.backtrace.join("\n"))
     end
-  
     @logger.info("Kusto output plugin Closed")
   end
 

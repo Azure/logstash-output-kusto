@@ -55,7 +55,7 @@ module LogStash
         @shutdown = true
         @buffer_state[:timer].kill
         prepare_flush(final: true)
-        clear_buffer_files
+        flush_buffer_files
       end
 
       private
@@ -75,7 +75,6 @@ module LogStash
 
         @pending_mutex.synchronize do
           return 0 if @buffer_state[:pending_size] == 0
-
           time_since_last_flush = Time.now.to_i - @buffer_state[:last_flush]
 
           if !force && @buffer_state[:pending_size] < @buffer_config[:max_size] && time_since_last_flush < @buffer_config[:max_interval]
@@ -102,6 +101,7 @@ module LogStash
         end
 
         if Dir.glob(::File.join(@buffer_config[:buffer_dir], 'buffer_state_*.log')).any?
+          @buffer_config[:logger].info("Flushing all buffer state files")
           flush_buffer_files
         end
 
@@ -109,22 +109,22 @@ module LogStash
       end
 
       def perform_flush(events, file_path = nil)
-        if file_path
-          unless ::File.exist?(file_path)
-            return 0
-          end
-          begin
-            buffer_state = Marshal.load(::File.read(file_path))
-            events = buffer_state[:pending_items]
-          rescue => e
-            @buffer_config[:logger].error("Failed to load buffer from file: #{e.message}")
-            return 0
-          end
-        end
-      
+
         @flush_mutex.lock
       
         begin
+          if file_path
+            unless ::File.exist?(file_path)
+              return 0
+            end
+            begin
+              buffer_state = Marshal.load(::File.read(file_path))
+              events = buffer_state[:pending_items]
+            rescue => e
+              @buffer_config[:logger].error("Failed to load buffer from file: #{e.message}")
+              return 0
+            end
+          end
           @buffer_config[:logger].info("Flushing #{events.size} events, #{events.sum(&:bytesize)} bytes")
           @flush_callback.call(events) # Pass the list of events to the callback
           @buffer_state[:network_down] = false # Reset network status after successful flush
@@ -139,26 +139,11 @@ module LogStash
         rescue => e
           @buffer_config[:logger].error("Flush failed: #{e.message}")
           @buffer_state[:network_down] = true
-      
-          while true
-            sleep(2) # Wait before checking network availability again
-            if network_available?
-              @buffer_config[:logger].info("Network is back up. Retrying flush.")
-              retry
-            end
-          end
+          sleep(120) # Wait before checking network availability again
+          @buffer_config[:logger].info("Retrying flush.")
+          retry
         ensure
           @flush_mutex.unlock
-        end
-      end
-      
-      def network_available?
-        begin
-          uri = URI('http://www.google.com')
-          response = Net::HTTP.get_response(uri)
-          response.is_a?(Net::HTTPSuccess)
-        rescue
-          false
         end
       end
       
@@ -168,13 +153,16 @@ module LogStash
           pending_items: events,
           pending_size: events.sum(&:bytesize)
         }
-
-        ::FileUtils.mkdir_p(@buffer_config[:buffer_dir]) # Ensure directory exists
-        file_path = ::File.join(@buffer_config[:buffer_dir], "buffer_state_#{Time.now.to_i}_#{SecureRandom.uuid}.log")
-        ::File.open(file_path, 'w') do |file|
-          file.write(Marshal.dump(buffer_state_copy))
+        begin
+          ::FileUtils.mkdir_p(@buffer_config[:buffer_dir]) # Ensure directory exists
+          file_path = ::File.join(@buffer_config[:buffer_dir], "buffer_state_#{Time.now.to_i}_#{SecureRandom.uuid}.log")
+          ::File.open(file_path, 'w') do |file|
+            file.write(Marshal.dump(buffer_state_copy))
+          end
+          @buffer_config[:logger].info("Saved #{events.size} events to file: #{file_path}")
+        rescue => e
+          @buffer_config[:logger].error("Failed to save buffer to file: #{e.message}")
         end
-        @buffer_config[:logger].info("Saved #{events.size} events to file: #{file_path}")
       end
 
       def load_buffer_from_files
@@ -193,15 +181,9 @@ module LogStash
 
       def flush_buffer_files
         Dir.glob(::File.join(@buffer_config[:buffer_dir], 'buffer_state_*.log')).each do |file_path|
+          @buffer_config[:logger].info("Flushing from buffer state file: #{file_path}")
           Thread.new { perform_flush([], file_path) }
         end
-      end
-
-      def clear_buffer_files
-        Dir.glob(::File.join(@buffer_config[:buffer_dir], 'buffer_state_*.log')).each do |file_path|
-          ::File.delete(file_path)
-        end
-        @buffer_config[:logger].info("Cleared all buffer state files")
       end
     end
   end
