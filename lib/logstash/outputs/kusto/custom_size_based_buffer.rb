@@ -43,7 +43,7 @@ module LogStash
           prepare_flush(force: true) # Flush when buffer is full
           sleep 0.1
         end
-
+      
         @pending_mutex.synchronize do
           @buffer_state[:pending_items] << event
           @buffer_state[:pending_size] += event.bytesize
@@ -109,7 +109,7 @@ module LogStash
       end
 
       def perform_flush(events, file_path = nil)
-        
+
         @flush_mutex.lock
       
         begin
