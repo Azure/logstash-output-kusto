@@ -18,7 +18,7 @@ This connector forwards data to
 
 ## Requirements
 
-- Logstash version 6+. [Installation instructions](https://www.elastic.co/guide/en/logstash/current/installing-logstash.html) 
+- Logstash version 8.7.0 or higher. [Installation instructions](https://www.elastic.co/guide/en/logstash/current/installing-logstash.html) 
 - Azure Data Explorer cluster with a database. Read [Create a cluster and database](https://docs.microsoft.com/en-us/azure/data-explorer/create-cluster-database-portal) for more information.
 - AAD Application credentials with permission to ingest data into Azure Data Explorer. Read [Creating an AAD Application](https://docs.microsoft.com/en-us/azure/kusto/management/access-control/how-to-provision-aad-app) for more information.
 
