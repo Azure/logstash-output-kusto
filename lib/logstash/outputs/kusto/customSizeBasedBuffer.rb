@@ -132,17 +132,33 @@
     #
     # @return [bool] Is the buffer full?
     def buffer_full?
-      @buffer_config[:logger].info("---------------Entering buffer_full?-----------------") 
-      @buffer_config[:logger].info("Pending count: #{@buffer_state[:pending_count]}")
-      @buffer_config[:logger].info("Outgoing count: #{@buffer_state[:outgoing_count]}")
-      @buffer_config[:logger].info("Pending size: #{@buffer_state[:pending_size]}")
-      @buffer_config[:logger].info("Outgoing size: #{@buffer_state[:outgoing_size]}")
-      @buffer_config[:logger].info("Max items: #{@buffer_config[:max_items]}")
-      @buffer_config[:logger].info("Flush each: #{@buffer_config[:flush_each]}")
-      @buffer_config[:logger].info("Max interval: #{@buffer_config[:max_interval]}")
-      @buffer_config[:logger].info("Pending items: #{@buffer_state[:pending_items]}")
-      @buffer_config[:logger].info("Outgoing items: #{@buffer_state[:outgoing_items]}")
-      @buffer_config[:logger].info("---------------Exiting buffer_full?-----------------") 
+
+      c1 = (@buffer_state[:pending_count] + @buffer_state[:outgoing_count] >= @buffer_config[:max_items])
+      c2 = (@buffer_config[:flush_each] != 0 && @buffer_state[:pending_size] + @buffer_state[:outgoing_size] >= @buffer_config[:flush_each])
+
+      if c1 || c2
+        @buffer_config[:logger].debug("---------------Entering buffer_full?-----------------") 
+      end
+
+
+      if c1
+        @buffer_config[:logger].info("Buffer is full: max_items reached")
+        @buffer_config[:logger].debug("Pending count: #{@buffer_state[:pending_count]}")
+        @buffer_config[:logger].debug("Outgoing count: #{@buffer_state[:outgoing_count]}")
+        @buffer_config[:logger].debug("Pending count: #{@buffer_config[:max_items]}")
+      end
+      if c2
+        @buffer_config[:logger].info("Buffer is full: flush_each reached")
+        @buffer_config[:logger].debug("Pending size: #{@buffer_state[:pending_size]}")
+        @buffer_config[:logger].debug("Outgoing size: #{@buffer_state[:outgoing_size]}")
+        @buffer_config[:logger].debug("Flush each: #{@buffer_config[:flush_each]}")
+        @buffer_config[:logger].debug("Max items: #{@buffer_config[:max_items]}")
+      end
+
+      if c1 || c2
+        @buffer_config[:logger].info("---------------Exiting buffer_full?-----------------") 
+      end
+
       (@buffer_state[:pending_count] + @buffer_state[:outgoing_count] >= @buffer_config[:max_items]) || \
       (@buffer_config[:flush_each] != 0 && @buffer_state[:pending_size] + @buffer_state[:outgoing_size] >= @buffer_config[:flush_each])
     end
@@ -225,10 +241,11 @@
           @buffer_state[:outgoing_size] = @buffer_state[:pending_size]
           buffer_clear_pending
         end
-        @buffer_config[:logger].debug("Flushing output",
+        @buffer_config[:logger].info("---------------Exiting buffer_flush?-----------------") 
+        @buffer_config[:logger].info("Flushing output",
           :outgoing_count => @buffer_state[:outgoing_count],
           :time_since_last_flush => time_since_last_flush,
-          :outgoing_events => @buffer_state[:outgoing_items],
+          :outgoing_events_count => @buffer_state[:outgoing_items].length,
           :batch_timeout => @buffer_config[:max_interval],
           :force => force,
           :final => final
@@ -270,6 +287,7 @@
             retry
           end
           @buffer_state[:last_flush] = Time.now.to_i
+          @buffer_config[:logger].info("---------------Exiting buffer_flush?-----------------")           
         end
 
       ensure

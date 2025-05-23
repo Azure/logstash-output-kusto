@@ -4,6 +4,7 @@ require 'logstash/outputs/base'
 require 'logstash/namespace'
 require 'logstash/errors'
 require 'concurrent'
+require 'json'
 
 module LogStash; module Outputs; class KustoOutputInternal
   ##
@@ -12,21 +13,18 @@ module LogStash; module Outputs; class KustoOutputInternal
   class Ingestor
     require 'logstash-output-kusto_jars'
     RETRY_DELAY_SECONDS = 3
-    DEFAULT_THREADPOOL = Concurrent::ThreadPoolExecutor.new(
-      min_threads: 1,
-      max_threads: 8,
-      max_queue: 1,
-      fallback_policy: :caller_runs
-    )
-    LOW_QUEUE_LENGTH = 3
+
     FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(kusto_logstash_configuration, logger, workers_pool)
-      @workers_pool = workers_pool
-      @logger = logger
-      #Validate and assign
-      kusto_logstash_configuration.validate_config()
+    def initialize(kusto_logstash_configuration, logger)
       @kusto_logstash_configuration = kusto_logstash_configuration
+      @logger = logger
+      @workers_pool = Concurrent::ThreadPoolExecutor.new(min_threads: 1,
+            max_threads: kusto_logstash_configuration.kusto_upload_config.upload_concurrent_count,
+            max_queue: kusto_logstash_configuration.kusto_upload_config.upload_queue_size,
+            fallback_policy: :caller_runs
+      ) 
+      #Validate and assign
       @logger.info('Preparing Kusto resources.')
 
       kusto_java = Java::com.microsoft.azure.kusto
@@ -91,20 +89,28 @@ module LogStash; module Outputs; class KustoOutputInternal
       @logger.info("Ingesting #{data_size} rows to database: #{@ingestion_properties.getDatabaseName} table: #{@ingestion_properties.getTableName}")
       if data_size > 0
         #ingestion_status_futures = Concurrent::Future.execute(executor: @workers_pool) do
-        @workers_pool.post {
-            begin
-              in_bytes = java.io.ByteArrayInputStream.new(data.to_s.to_java_bytes)
-              data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(in_bytes)
-              ingest_result = @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
-              @logger.trace("Ingestion result: #{ingest_result}")
-            rescue Exception => e
-              @logger.error("General failed: #{e}")
-              raise e
-            ensure
-              in_bytes.close  
-            end
-         #end # ingestion_status_futures
+        exceptions = Concurrent::Array.new
+        promise = Concurrent::Promises.future { 
+          in_bytes = java.io.ByteArrayInputStream.new(data.to_json.to_java_bytes)
+          data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(in_bytes)
+          ingest_result = @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
+          #@logger.info("Ingestion result: #{ingest_result}")
         }
+        .rescue{ |e|
+          @logger.error("Ingestion failed: #{e.message}")
+          @logger.error("Ingestion failed: #{e.backtrace.join("\n")}")
+          exceptions.push(e)
+          e
+        }
+        .on_resolution do |result, reason|
+          if reason
+            @logger.error("Future completed with error: #{reason}")
+            @logger.error("Future 2 completed with error: #{result}")
+          else
+            @logger.info("Future completed successfully.")
+          end
+        end
+
       else
         @logger.warn("Data is empty and is not ingested.")
       end # if data.size > 0
