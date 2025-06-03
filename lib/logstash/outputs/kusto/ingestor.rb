@@ -90,7 +90,7 @@ module LogStash; module Outputs; class KustoOutputInternal
       if data_size > 0
         #ingestion_status_futures = Concurrent::Future.execute(executor: @workers_pool) do
         exceptions = Concurrent::Array.new
-        promise = Concurrent::Promises.future { 
+        promise = Concurrent::Promises.future {
           in_bytes = java.io.ByteArrayInputStream.new(data.to_json.to_java_bytes)
           data_source_info = Java::com.microsoft.azure.kusto.ingest.source.StreamSourceInfo.new(in_bytes)
           ingest_result = @kusto_client.ingestFromStream(data_source_info, @ingestion_properties)
@@ -102,15 +102,22 @@ module LogStash; module Outputs; class KustoOutputInternal
           exceptions.push(e)
           e
         }
-        .on_resolution do |result, reason|
-          if reason
-            @logger.error("Future completed with error: #{reason}")
-            @logger.error("Future 2 completed with error: #{result}")
-          else
-            @logger.info("Future completed successfully.")
-          end
-        end
+        .on_resolution do |fulfilled, value, reason, *args|
+          @logger.info("******************************************************************************************")
+          @logger.info("Future fulfilled: #{fulfilled}, value: #{value}, reason: #{reason}, args: #{args}, class: #{value.class}")
+          #@logger.info("Ingestion status: #{value.getIngestionStatusCollection().getStatus}")
 
+          if value.class == Java::ComMicrosoftAzureKustoIngestResult::IngestionStatusResult
+            isc = value.getIngestionStatusCollection()&.get(0)&.getStatus()
+            @logger.info("Ingestion status: #{isc}")
+          else
+            @logger.info("Ingestion status is non success status: #{value.class} - #{value}")
+          end
+          if exceptions.size > 0
+            @logger.error("Ingestion failed with exceptions: #{exceptions.map(&:message).join(', ')}")
+          end
+          @logger.info("******************************************************************************************")
+        end
       else
         @logger.warn("Data is empty and is not ingested.")
       end # if data.size > 0

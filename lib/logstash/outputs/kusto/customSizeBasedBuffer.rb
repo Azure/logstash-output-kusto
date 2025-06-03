@@ -142,13 +142,13 @@
 
 
       if c1
-        @buffer_config[:logger].info("Buffer is full: max_items reached")
+        @buffer_config[:logger].debug("Buffer is full: max_items reached")
         @buffer_config[:logger].debug("Pending count: #{@buffer_state[:pending_count]}")
         @buffer_config[:logger].debug("Outgoing count: #{@buffer_state[:outgoing_count]}")
         @buffer_config[:logger].debug("Pending count: #{@buffer_config[:max_items]}")
       end
       if c2
-        @buffer_config[:logger].info("Buffer is full: flush_each reached")
+        @buffer_config[:logger].debug("Buffer is full: flush_each reached")
         @buffer_config[:logger].debug("Pending size: #{@buffer_state[:pending_size]}")
         @buffer_config[:logger].debug("Outgoing size: #{@buffer_state[:outgoing_size]}")
         @buffer_config[:logger].debug("Flush each: #{@buffer_config[:flush_each]}")
@@ -156,7 +156,7 @@
       end
 
       if c1 || c2
-        @buffer_config[:logger].info("---------------Exiting buffer_full?-----------------") 
+        @buffer_config[:logger].debug("---------------Exiting buffer_full?-----------------") 
       end
 
       (@buffer_state[:pending_count] + @buffer_state[:outgoing_count] >= @buffer_config[:max_items]) || \
@@ -241,7 +241,7 @@
           @buffer_state[:outgoing_size] = @buffer_state[:pending_size]
           buffer_clear_pending
         end
-        @buffer_config[:logger].info("---------------Exiting buffer_flush?-----------------") 
+        @buffer_config[:logger].debug("---------------Exiting buffer_flush?-----------------") 
         @buffer_config[:logger].info("Flushing output",
           :outgoing_count => @buffer_state[:outgoing_count],
           :time_since_last_flush => time_since_last_flush,
@@ -287,7 +287,7 @@
             retry
           end
           @buffer_state[:last_flush] = Time.now.to_i
-          @buffer_config[:logger].info("---------------Exiting buffer_flush?-----------------")           
+          @buffer_config[:logger].debug("---------------Exiting buffer_flush?-----------------")           
         end
 
       ensure
