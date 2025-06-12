@@ -13,17 +13,20 @@ class LogStashEventsBatcher
         # Initialize the buffer with the configuration
         # The buffer is a custom buffer that extends the LogStash::Outputs::Base#buffer_initialize
         # It is used to buffer the events before sending them to Kusto
+        @kusto_logstash_configuration = kusto_logstash_configuration
+        @logger = logger
+        @ingestor = LogStash::Outputs::KustoOutputInternal::Ingestor.new(@kusto_logstash_configuration, logger)
+    
         logger.info("Initializing buffer with max_items: #{kusto_logstash_configuration.kusto_flush_config.max_items}, max_interval: #{kusto_logstash_configuration.kusto_flush_config.plugin_flush_interval}, flush_each: #{kusto_logstash_configuration.kusto_flush_config.max_batch_size}")
         buffer_initialize(
             :max_items => kusto_logstash_configuration.kusto_flush_config.max_items,
             :max_interval => kusto_logstash_configuration.kusto_flush_config.plugin_flush_interval,
             :logger => logger,
             #todo: There is a small discrepancy between the total size of the documents and the message body 
-            :flush_each => kusto_logstash_configuration.kusto_flush_config.max_batch_size
+            :flush_each => kusto_logstash_configuration.kusto_flush_config.max_batch_size,
+            :process_failed_batches_on_startup => kusto_logstash_configuration.kusto_flush_config.process_failed_batches_on_startup,
+            :process_failed_batches_on_shutdown => kusto_logstash_configuration.kusto_flush_config.process_failed_batches_on_shutdown
         )
-        @kusto_logstash_configuration = kusto_logstash_configuration
-        @logger = logger
-        @ingestor = LogStash::Outputs::KustoOutputInternal::Ingestor.new(@kusto_logstash_configuration, logger)
     end # initialize
 
     # Public methods
@@ -43,12 +46,17 @@ class LogStashEventsBatcher
             return
         end
         @logger.info("Uploading batch of documents to Kusto #{documents.length} documents")
-        # Upload the documents to Kusto
-        @ingestor.upload(documents)
+        begin
+            @ingestor.upload(documents)
+        rescue => e
+            @logger.error("Error uploading batch to Kusto: #{e.message}")
+            raise e # Let the buffer handle persistence of failed batch
+        end
     end # def flush
 
     def close
-        buffer_flush(:final => true)
+        @logger.info("Closing LogStashEventsBatcher...")
+        shutdown
     end
 
 end # LogStashAutoResizeBuffer

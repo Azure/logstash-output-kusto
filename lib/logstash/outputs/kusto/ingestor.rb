@@ -5,6 +5,7 @@ require 'logstash/namespace'
 require 'logstash/errors'
 require 'concurrent'
 require 'json'
+require 'logstash/outputs/kusto/filePersistence'
 
 module LogStash; module Outputs; class KustoOutputInternal
   ##
@@ -99,8 +100,8 @@ module LogStash; module Outputs; class KustoOutputInternal
         .rescue{ |e|
           @logger.error("Ingestion failed: #{e.message}")
           @logger.error("Ingestion failed: #{e.backtrace.join("\n")}")
-          exceptions.push(e)
-          e
+          LogStash::Outputs::KustoOutputInternal::FilePersistence.persist_batch(data)
+          raise e
         }
         .on_resolution do |fulfilled, value, reason, *args|
           @logger.info("******************************************************************************************")

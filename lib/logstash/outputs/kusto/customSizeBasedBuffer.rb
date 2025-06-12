@@ -91,7 +91,9 @@
         :max_items => options[:max_items] || 50,
         :flush_each => options[:flush_each].to_i || 0,
         :max_interval => options[:max_interval] || 5,
-        :logger => options[:logger] || nil,
+        :logger => options[:logger] || Logger.new(STDOUT),
+        :process_failed_batches_on_startup => options[:process_failed_batches_on_startup] || false,
+        :process_failed_batches_on_shutdown => options[:process_failed_batches_on_shutdown] || false,
         :has_on_flush_error => self.class.method_defined?(:on_flush_error),
         :has_on_full_buffer_receive => self.class.method_defined?(:on_full_buffer_receive)
       }
@@ -124,6 +126,8 @@
 
       # events we've accumulated
       buffer_clear_pending
+      process_failed_batches if options[:process_failed_batches_on_startup]
+
     end
 
     # Determine if +:max_items+ or +:flush_each+ has been reached.
@@ -296,7 +300,38 @@
 
       return items_flushed
     end
+
+    def process_failed_batches
+      require_relative 'filePersistence'
+      LogStash::Outputs::KustoOutputInternal::FilePersistence.load_batches.each do |file, batch|
+        begin
+          @buffer_state[:flush_mutex].lock
+          begin
+            flush(batch, true)
+            LogStash::Outputs::KustoOutputInternal::FilePersistence.delete_batch(file)
+            @buffer_config[:logger].info("Successfully flushed and deleted failed batch file: #{file}") if @buffer_config[:logger]
+          rescue => e
+            @buffer_config[:logger].warn("Failed to flush persisted batch: #{e.message}") if @buffer_config[:logger]
+          ensure
+            @buffer_state[:flush_mutex].unlock
+          end
+        rescue => e
+          @buffer_config[:logger].error("Error processing failed batch file: #{e.message}") if @buffer_config[:logger]
+        end
+      end
+    end
     
+    def shutdown
+      # Stop the timer thread if it exists
+      if @buffer_state && @buffer_state[:timer]
+        @buffer_state[:timer].kill
+        @buffer_state[:timer] = nil
+      end
+      # Final flush of any remaining in-memory events
+      buffer_flush(:final => true) if @buffer_state
+      # Process any failed batches on shutdown if configured to do so
+      process_failed_batches if @buffer_config && @buffer_config[:process_failed_batches_on_shutdown]
+    end
 
     private
     def buffer_clear_pending

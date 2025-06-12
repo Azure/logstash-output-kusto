@@ -74,6 +74,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 	# Maximum interval (in seconds) before the buffer gets flushed, defaults to 10
 	config :max_items, validate: :number, required: false , default: 100
 
+	# Process failed batches on startup
+	config :process_failed_batches_on_startup, validate: :boolean, required: false, default: false
+
+	# Process failed batches on shutdown
+	config :process_failed_batches_on_shutdown, validate: :boolean, required: false, default: false
 
 	default :codec, 'json_lines'
 
@@ -81,9 +86,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     kusto_ingest_base =  LogStash::Outputs::KustoInternal::KustoIngestConfiguration.new(ingest_url, database, table, json_mapping) 
     kusto_auth_base   =  LogStash::Outputs::KustoInternal::KustoAuthConfiguration.new(app_id, app_key, app_tenant, managed_identity, cli_auth) 
     kusto_proxy_base  =  LogStash::Outputs::KustoInternal::KustoProxyConfiguration.new(proxy_host , proxy_port , proxy_protocol, false) 
-    kusto_flush_config = LogStash::Outputs::KustoInternal::KustoFlushConfiguration.new(max_items, plugin_flush_interval,max_batch_size)
+    kusto_flush_config = LogStash::Outputs::KustoInternal::KustoFlushConfiguration.new(max_items, plugin_flush_interval, max_batch_size, process_failed_batches_on_startup, process_failed_batches_on_shutdown)
     kusto_upload_config = LogStash::Outputs::KustoInternal::KustoUploadConfiguration.new(upload_concurrent_count, upload_queue_size)
-    kusto_logstash_configuration = LogStash::Outputs::KustoInternal::KustoLogstashConfiguration.new(kusto_ingest_base, kusto_auth_base , kusto_proxy_base, kusto_flush_config, kusto_upload_config,@logger)
+    kusto_logstash_configuration = LogStash::Outputs::KustoInternal::KustoLogstashConfiguration.new(kusto_ingest_base, kusto_auth_base , kusto_proxy_base, kusto_flush_config, kusto_upload_config, @logger)
     kusto_logstash_configuration.validate_config
     # Initialize the custom buffer with size and interval
     @buffer = LogStash::Outputs::KustoOutputInternal::LogStashEventsBatcher.new(kusto_logstash_configuration,@logger)
@@ -102,21 +107,21 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 	end
 
 	def close
-		# @logger.info("Closing Kusto output plugin")
-		# begin
-		# 	@buffer.shutdown unless @buffer.nil?
-		# 	@logger.info("Buffer shutdown") unless @buffer.nil?
-		# rescue => e
-		# 	@logger.error("Error shutting down buffer: #{e.message}")
-		# 	@logger.error(e.backtrace.join("\n"))
-		# end
-		# 		begin
-		# 	@ingestor.stop unless @ingestor.nil?
-		# 	@logger.info("Ingestor stopped") unless @ingestor.nil?
-		# rescue => e
-		# 	@logger.error("Error stopping ingestor: #{e.message}")
-		# 	@logger.error(e.backtrace.join("\n"))
-		# end
-		# @logger.info("Kusto output plugin Closed")
+		@logger.info("Closing Kusto output plugin")
+		begin
+			@buffer.shutdown unless @buffer.nil?
+			@logger.info("Buffer shutdown") unless @buffer.nil?
+		rescue => e
+			@logger.error("Error shutting down buffer: #{e.message}")
+			@logger.error(e.backtrace.join("\n"))
+		end
+				begin
+			@ingestor.stop unless @ingestor.nil?
+			@logger.info("Ingestor stopped") unless @ingestor.nil?
+		rescue => e
+			@logger.error("Error stopping ingestor: #{e.message}")
+			@logger.error(e.backtrace.join("\n"))
+		end
+		@logger.info("Kusto output plugin Closed")
 	end
 end
