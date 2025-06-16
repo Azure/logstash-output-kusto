@@ -7,8 +7,8 @@ class E2E
 
   def initialize
     super
-    @input_file = "input_file.txt"
-    @output_file = "output_file.txt"
+    @input_file = File.expand_path("input_file.txt", __dir__)
+    @output_file = File.expand_path("output_file.txt", __dir__)
     @columns = "(rownumber:int, rowguid:string, xdouble:real, xfloat:real, xbool:bool, xint16:int, xint32:int, xint64:long, xuint8:long, xuint16:long, xuint32:long, xuint64:long, xdate:datetime, xsmalltext:string, xtext:string, xnumberAsText:string, xtime:timespan, xtextWithNulls:string, xdynamicWithNulls:dynamic)"
     @csv_columns = '"rownumber", "rowguid", "xdouble", "xfloat", "xbool", "xint16", "xint32", "xint64", "xuint8", "xuint16", "xuint32", "xuint64", "xdate", "xsmalltext", "xtext", "xnumberAsText", "xtime", "xtextWithNulls", "xdynamicWithNulls"'
     @column_count = 19
