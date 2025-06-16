@@ -93,7 +93,6 @@
         :max_interval => options[:max_interval] || 5,
         :logger => options[:logger] || Logger.new(STDOUT),
         :process_failed_batches_on_startup => options[:process_failed_batches_on_startup] || false,
-        :process_failed_batches_on_shutdown => options[:process_failed_batches_on_shutdown] || false,
         :has_on_flush_error => self.class.method_defined?(:on_flush_error),
         :has_on_full_buffer_receive => self.class.method_defined?(:on_full_buffer_receive)
       }
@@ -329,8 +328,6 @@
       end
       # Final flush of any remaining in-memory events
       buffer_flush(:final => true) if @buffer_state
-      # Process any failed batches on shutdown if configured to do so
-      process_failed_batches if @buffer_config && @buffer_config[:process_failed_batches_on_shutdown]
     end
 
     private

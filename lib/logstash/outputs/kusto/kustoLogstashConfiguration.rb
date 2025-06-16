@@ -159,14 +159,12 @@ module LogStash
 				end                
 			end # class KustoIngestionConfiguration
 			class KustoFlushConfiguration
-				def initialize(max_items, plugin_flush_interval, max_batch_size, process_failed_batches_on_startup,
-                 process_failed_batches_on_shutdown)
+				def initialize(max_items, plugin_flush_interval, max_batch_size, process_failed_batches_on_startup)
 					@max_items = max_items
 					@plugin_flush_interval = plugin_flush_interval
 					@max_batch_size = max_batch_size
 					@flush_each = flush_each
 					@process_failed_batches_on_startup = process_failed_batches_on_startup
-					@process_failed_batches_on_shutdown = process_failed_batches_on_shutdown
 				end
 				# Flush configuration
 				def max_items
@@ -184,10 +182,7 @@ module LogStash
 				def process_failed_batches_on_startup
 					@process_failed_batches_on_startup
 				end
-
-				def process_failed_batches_on_shutdown
-					@process_failed_batches_on_shutdown
-				end
+				
 			end # class KustoFlushConfiguration
 			class KustoUploadConfiguration
 				def initialize(upload_concurrent_count, upload_queue_size)

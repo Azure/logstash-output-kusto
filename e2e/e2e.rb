@@ -7,7 +7,7 @@ class E2E
 
   def initialize
     super
-    @input_file = "/tmp/input_file.txt"
+    @input_file = "input_file.txt"
     @output_file = "output_file.txt"
     @columns = "(rownumber:int, rowguid:string, xdouble:real, xfloat:real, xbool:bool, xint16:int, xint32:int, xint64:long, xuint8:long, xuint16:long, xuint32:long, xuint64:long, xdate:datetime, xsmalltext:string, xtext:string, xnumberAsText:string, xtime:timespan, xtextWithNulls:string, xdynamicWithNulls:dynamic)"
     @csv_columns = '"rownumber", "rowguid", "xdouble", "xfloat", "xbool", "xint16", "xint32", "xint64", "xuint8", "xuint16", "xuint32", "xuint64", "xdate", "xsmalltext", "xtext", "xnumberAsText", "xtime", "xtextWithNulls", "xdynamicWithNulls"'
@@ -35,21 +35,17 @@ class E2E
     file { path => "#{@output_file}"}
     stdout { codec => rubydebug }
     kusto {
-      path => "tmp%{+YYYY-MM-dd-HH-mm}.txt"
       ingest_url => "#{@ingest_url}"
       cli_auth => true
       database => "#{@database}"
       table => "#{@table_with_mapping}"
       json_mapping => "#{@mapping_name}"
-      max_size => 0.005
     }
     kusto {
-      path => "nomaptmp%{+YYYY-MM-dd-HH-mm}.txt"
       cli_auth => true
       ingest_url => "#{@ingest_url}"
       database => "#{@database}"
       table => "#{@table_without_mapping}"
-      max_size => 0.004
     }
   }
 }
@@ -58,20 +54,20 @@ class E2E
   def create_table_and_mapping
     Array[@table_with_mapping, @table_without_mapping].each { |tableop| 
       puts "Creating table #{tableop}"
-      @query_client.execute(@database, ".drop table #{tableop} ifexists")
+      @query_client.executeMgmt(@database, ".drop table #{tableop} ifexists")
       sleep(1)
-      @query_client.execute(@database, ".create table #{tableop} #{@columns}")
-      @query_client.execute(@database, ".alter table #{tableop} policy ingestionbatching @'{\"MaximumBatchingTimeSpan\":\"00:00:10\", \"MaximumNumberOfItems\": 1, \"MaximumRawDataSizeMB\": 100}'")
+      @query_client.executeMgmt(@database, ".create table #{tableop} #{@columns}")
+      @query_client.executeMgmt(@database, ".alter table #{tableop} policy ingestionbatching @'{\"MaximumBatchingTimeSpan\":\"00:00:10\", \"MaximumNumberOfItems\": 1, \"MaximumRawDataSizeMB\": 100}'")
     }
     # Mapping only for one table
-    @query_client.execute(@database, ".create table #{@table_with_mapping} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
+    @query_client.executeMgmt(@database, ".create table #{@table_with_mapping} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
   end
 
 
   def drop_and_cleanup
     Array[@table_with_mapping, @table_without_mapping].each { |tableop| 
       puts "Dropping table #{tableop}"
-      @query_client.execute(@database, ".drop table #{tableop} ifexists")
+      @query_client.executeMgmt(@database, ".drop table #{tableop} ifexists")
       sleep(1)
     }
   end
@@ -101,7 +97,7 @@ class E2E
       (0...max_timeout).each do |_|
         begin
           sleep(5)
-          query = @query_client.execute(@database, "#{tableop} | sort by rownumber asc")
+          query = @query_client.executeQuery(@database, "#{tableop} | sort by rownumber asc")
           result = query.getPrimaryResults()
           raise "Wrong count - expected #{csv_data.length}, got #{result.count()} in table #{tableop}" unless result.count() == csv_data.length
         rescue Exception => e

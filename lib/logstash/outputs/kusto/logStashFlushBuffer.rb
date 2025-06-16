@@ -25,7 +25,6 @@ class LogStashEventsBatcher
             #todo: There is a small discrepancy between the total size of the documents and the message body 
             :flush_each => kusto_logstash_configuration.kusto_flush_config.max_batch_size,
             :process_failed_batches_on_startup => kusto_logstash_configuration.kusto_flush_config.process_failed_batches_on_startup,
-            :process_failed_batches_on_shutdown => kusto_logstash_configuration.kusto_flush_config.process_failed_batches_on_shutdown
         )
     end # initialize
 
