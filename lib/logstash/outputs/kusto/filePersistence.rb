@@ -4,7 +4,7 @@ require 'fileutils'
 
 module LogStash; module Outputs; class KustoOutputInternal
   module FilePersistence
-    @failed_dir = './tmp/buffer_storage/' # default
+    @failed_dir = '/tmp/buffer_storage/' # default
 
     def self.failed_dir=(dir)
       @failed_dir = dir

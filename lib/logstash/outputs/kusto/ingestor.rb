@@ -104,20 +104,16 @@ module LogStash; module Outputs; class KustoOutputInternal
           raise e
         }
         .on_resolution do |fulfilled, value, reason, *args|
-          @logger.info("******************************************************************************************")
-          @logger.info("Future fulfilled: #{fulfilled}, value: #{value}, reason: #{reason}, args: #{args}, class: #{value.class}")
-          #@logger.info("Ingestion status: #{value.getIngestionStatusCollection().getStatus}")
-
+          @logger.debug("Future fulfilled: #{fulfilled}, value: #{value}, reason: #{reason}, args: #{args}, class: #{value.class}")
           if value.class == Java::ComMicrosoftAzureKustoIngestResult::IngestionStatusResult
             isc = value.getIngestionStatusCollection()&.get(0)&.getStatus()
             @logger.info("Ingestion status: #{isc}")
           else
-            @logger.info("Ingestion status is non success status: #{value.class} - #{value}")
+            @logger.warn("Ingestion status is non success status: #{value.class} - #{value}")
           end
           if exceptions.size > 0
             @logger.error("Ingestion failed with exceptions: #{exceptions.map(&:message).join(', ')}")
           end
-          @logger.info("******************************************************************************************")
         end
       else
         @logger.warn("Data is empty and is not ingested.")
