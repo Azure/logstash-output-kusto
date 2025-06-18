@@ -32,24 +32,31 @@ describe LogStash::Outputs::KustoInternal::KustoLogstashConfiguration do
   let(:kusto_proxy_base) {  LogStash::Outputs::KustoInternal::KustoProxyConfiguration.new(proxy_host , proxy_port , proxy_protocol, proxy_aad_only) }
   let(:kusto_flush_config) { LogStash::Outputs::KustoInternal::KustoFlushConfiguration.new(max_items, plugin_flush_interval, max_batch_size, process_failed_batches_on_startup) }
   let(:kusto_upload_config) { LogStash::Outputs::KustoInternal::KustoUploadConfiguration.new(upload_concurrent_count, upload_queue_size) }
+  let(:file_persistence) { double("FilePersistence") }
 
   describe '#initialize' do
     it 'does not throw an error when initializing' do
       expect {
-        kustoLogstashOutputConfiguration = described_class.new(kusto_ingest_base, kusto_auth_base , kusto_proxy_base, kusto_flush_config, kusto_upload_config, logger)
+        kustoLogstashOutputConfiguration = described_class.new(
+          kusto_ingest_base, kusto_auth_base, kusto_proxy_base, kusto_flush_config, kusto_upload_config, logger, file_persistence
+        )
         kustoLogstashOutputConfiguration.validate_config()
       }.not_to raise_error
     end
 
     it 'exposes all configuration accessors' do
-      config = described_class.new(kusto_ingest_base, kusto_auth_base, kusto_proxy_base, kusto_flush_config, kusto_upload_config, logger)
+      config = described_class.new(
+        kusto_ingest_base, kusto_auth_base, kusto_proxy_base, kusto_flush_config, kusto_upload_config, logger, file_persistence
+      )
       expect(config.kusto_ingest).to eq(kusto_ingest_base)
       expect(config.kusto_auth).to eq(kusto_auth_base)
       expect(config.kusto_proxy).to eq(kusto_proxy_base)
       expect(config.kusto_flush_config).to eq(kusto_flush_config)
       expect(config.kusto_upload_config).to eq(kusto_upload_config)
+      expect(config.file_persistence).to eq(file_persistence)
     end
   end
+
 
   describe LogStash::Outputs::KustoInternal::KustoAuthConfiguration do
     it 'returns correct values for auth config' do
