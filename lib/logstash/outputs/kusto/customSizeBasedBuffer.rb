@@ -86,6 +86,7 @@
       if ! self.class.method_defined?(:flush)
         raise ArgumentError, "Any class including Stud::Buffer must define a flush() method."
       end
+      @file_persistence = options[:file_persistence]
 
       @buffer_config = {
         :max_items => options[:max_items] || 50,
@@ -301,13 +302,12 @@
     end
 
     def process_failed_batches
-      require_relative 'filePersistence'
-      LogStash::Outputs::KustoOutputInternal::FilePersistence.load_batches.each do |file, batch|
+      @file_persistence.load_batches.each do |file, batch|
         begin
           @buffer_state[:flush_mutex].lock
           begin
             flush(batch, true)
-            LogStash::Outputs::KustoOutputInternal::FilePersistence.delete_batch(file)
+            @file_persistence.delete_batch(file)
             @buffer_config[:logger].info("Successfully flushed and deleted failed batch file: #{file}") if @buffer_config[:logger]
           rescue => e
             @buffer_config[:logger].warn("Failed to flush persisted batch: #{e.message}") if @buffer_config[:logger]

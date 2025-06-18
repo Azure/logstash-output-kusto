@@ -5,7 +5,6 @@ require 'logstash/namespace'
 require 'logstash/errors'
 require 'concurrent'
 require 'json'
-require 'logstash/outputs/kusto/filePersistence'
 
 module LogStash; module Outputs; class KustoOutputInternal
   ##
@@ -20,6 +19,7 @@ module LogStash; module Outputs; class KustoOutputInternal
     def initialize(kusto_logstash_configuration, logger)
       @kusto_logstash_configuration = kusto_logstash_configuration
       @logger = logger
+      @file_persistence = kusto_logstash_configuration.file_persistence
       @workers_pool = Concurrent::ThreadPoolExecutor.new(min_threads: 1,
             max_threads: kusto_logstash_configuration.kusto_upload_config.upload_concurrent_count,
             max_queue: kusto_logstash_configuration.kusto_upload_config.upload_queue_size,
@@ -100,7 +100,7 @@ module LogStash; module Outputs; class KustoOutputInternal
         .rescue{ |e|
           @logger.error("Ingestion failed: #{e.message}")
           @logger.error("Ingestion failed: #{e.backtrace.join("\n")}")
-          LogStash::Outputs::KustoOutputInternal::FilePersistence.persist_batch(data)
+          @file_persistence.persist_batch(data)
           raise e
         }
         .on_resolution do |fulfilled, value, reason, *args|

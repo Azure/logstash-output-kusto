@@ -8,7 +8,7 @@ require "logger"
 module LogStash; module Outputs; class KustoOutputInternal
 class LogStashEventsBatcher
     include CustomSizeBasedBuffer
-    def initialize(kusto_logstash_configuration,logger)
+    def initialize(kusto_logstash_configuration, logger)
         logger.info("Initializing LogStashEventsBatcher")
         # Initialize the buffer with the configuration
         # The buffer is a custom buffer that extends the LogStash::Outputs::Base#buffer_initialize
@@ -25,6 +25,7 @@ class LogStashEventsBatcher
             #todo: There is a small discrepancy between the total size of the documents and the message body 
             :flush_each => kusto_logstash_configuration.kusto_flush_config.max_batch_size,
             :process_failed_batches_on_startup => kusto_logstash_configuration.kusto_flush_config.process_failed_batches_on_startup,
+            :file_persistence => kusto_logstash_configuration.file_persistence
         )
     end # initialize
 

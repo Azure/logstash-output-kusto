@@ -65,36 +65,37 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
 	# Check Proxy URL can be over http or https. Do we need it this way or ignore this & remove this
 	config :proxy_protocol, validate: :string, required: false , default: 'https'
+	# Maximum size of the buffer before it gets flushed, in MB. Defaults to 10.
+	config :max_batch_size, validate: :number, required: false, default: 10
 
-	# Maximum size of the buffer before it gets flushed, defaults to 10MB
-	config :max_batch_size, validate: :number, required: false , default: 10
+	# Interval (in seconds) before the buffer gets flushed, regardless of size. Defaults to 10.
+	config :plugin_flush_interval, validate: :number, required: false, default: 10
 
-	# Maximum interval (in seconds) before the buffer gets flushed, defaults to 10
-	config :plugin_flush_interval, validate: :number, required: false , default: 10
+	# Maximum number of items in the buffer before it gets flushed. Defaults to 1000.
+	config :max_items, validate: :number, required: false, default: 1000
 
-	# Maximum interval (in seconds) before the buffer gets flushed, defaults to 10
-	config :max_items, validate: :number, required: false , default: 100
-
-	# Process failed batches on startup
+	# Process failed batches on startup. Defaults to false.
 	config :process_failed_batches_on_startup, validate: :boolean, required: false, default: false
 
-	# Directory to store the failed batches that were not uploaded to Kusto. If the directory does not exist, it will be created, defaults to './tmp/buffer_storage/'
-    config :failed_dir_name, validate: :string, required: false, default: './tmp/buffer_storage/'
+	# Directory to store the failed batches that were not uploaded to Kusto. If the directory does not exist, it will be created, defaults to a temporary directory called "logstash_backout" in Dir.tmpdir
+    config :failed_dir_name, validate: :string, required: false, default: nil
 
 	default :codec, 'json_lines'
 
-  def register
-	LogStash::Outputs::KustoOutputInternal::FilePersistence.failed_dir = failed_dir_name
-    kusto_ingest_base =  LogStash::Outputs::KustoInternal::KustoIngestConfiguration.new(ingest_url, database, table, json_mapping) 
-    kusto_auth_base   =  LogStash::Outputs::KustoInternal::KustoAuthConfiguration.new(app_id, app_key, app_tenant, managed_identity, cli_auth) 
-    kusto_proxy_base  =  LogStash::Outputs::KustoInternal::KustoProxyConfiguration.new(proxy_host , proxy_port , proxy_protocol, false) 
-    kusto_flush_config = LogStash::Outputs::KustoInternal::KustoFlushConfiguration.new(max_items, plugin_flush_interval, max_batch_size, process_failed_batches_on_startup)
-    kusto_upload_config = LogStash::Outputs::KustoInternal::KustoUploadConfiguration.new(upload_concurrent_count, upload_queue_size)
-    kusto_logstash_configuration = LogStash::Outputs::KustoInternal::KustoLogstashConfiguration.new(kusto_ingest_base, kusto_auth_base , kusto_proxy_base, kusto_flush_config, kusto_upload_config, @logger)
-    kusto_logstash_configuration.validate_config
-    # Initialize the custom buffer with size and interval
-    @buffer = LogStash::Outputs::KustoOutputInternal::LogStashEventsBatcher.new(kusto_logstash_configuration,@logger)
-  end
+	def register
+		dir = failed_dir_name.nil? || failed_dir_name.empty? ? ::File.join(Dir.tmpdir, "logstash_backout") : failed_dir_name
+		@file_persistence = LogStash::Outputs::KustoOutputInternal::FilePersistence.new(dir, @logger)
+
+		kusto_ingest_base =  LogStash::Outputs::KustoInternal::KustoIngestConfiguration.new(ingest_url, database, table, json_mapping) 
+		kusto_auth_base   =  LogStash::Outputs::KustoInternal::KustoAuthConfiguration.new(app_id, app_key, app_tenant, managed_identity, cli_auth) 
+		kusto_proxy_base  =  LogStash::Outputs::KustoInternal::KustoProxyConfiguration.new(proxy_host , proxy_port , proxy_protocol, false) 
+		kusto_flush_config = LogStash::Outputs::KustoInternal::KustoFlushConfiguration.new(max_items, plugin_flush_interval, max_batch_size, process_failed_batches_on_startup)
+		kusto_upload_config = LogStash::Outputs::KustoInternal::KustoUploadConfiguration.new(upload_concurrent_count, upload_queue_size)
+		kusto_logstash_configuration = LogStash::Outputs::KustoInternal::KustoLogstashConfiguration.new(kusto_ingest_base, kusto_auth_base , kusto_proxy_base, kusto_flush_config, kusto_upload_config, @logger, @file_persistence)
+		kusto_logstash_configuration.validate_config
+		# Initialize the custom buffer with size and interval
+		@buffer = LogStash::Outputs::KustoOutputInternal::LogStashEventsBatcher.new(kusto_logstash_configuration, @logger)
+	end
 
 
 	public

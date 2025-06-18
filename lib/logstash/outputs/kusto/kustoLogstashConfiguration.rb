@@ -5,13 +5,14 @@ module LogStash
 		module KustoInternal
 			class KustoLogstashConfiguration
 				FIELD_REF = /%\{[^}]+\}/
-				def initialize(kusto_ingest,kusto_auth, kusto_proxy, kusto_flush_config , kusto_upload_config, logger)
+				def initialize(kusto_ingest, kusto_auth, kusto_proxy, kusto_flush_config, kusto_upload_config, logger, file_persistence)
 					@logger = logger
 					@kusto_ingest = kusto_ingest
 					@kusto_auth = kusto_auth
 					@kusto_proxy = kusto_proxy
 					@kusto_flush_config = kusto_flush_config
 					@kusto_upload_config = kusto_upload_config
+					@file_persistence = file_persistence
 					@logger.info("Kusto configuration initialized.")
 				end # def initialize
 
@@ -31,7 +32,9 @@ module LogStash
 				def kusto_upload_config
 					@kusto_upload_config
 				end
-
+				def file_persistence
+					@file_persistence
+				end
 				def validate_config()
 					# Add an additional validation and fail this upfront
 					if @kusto_auth.app_id.to_s.empty? && @kusto_auth.managed_identity_id.to_s.empty? && !@kusto_auth.cli_auth
@@ -182,7 +185,6 @@ module LogStash
 				def process_failed_batches_on_startup
 					@process_failed_batches_on_startup
 				end
-				
 			end # class KustoFlushConfiguration
 			class KustoUploadConfiguration
 				def initialize(upload_concurrent_count, upload_queue_size)
