@@ -52,30 +52,6 @@ module LogStash; module Outputs; class KustoOutputInternal
       end
     end
 
-    def load_batches
-      return [] unless Dir.exist?(@failed_dir)
-      return enum_for(:load_batches) unless block_given?
-      Dir.glob(::File.join(@failed_dir, 'failed_batch_*.json')).each do |file|
-        begin
-          yield file, JSON.load(::File.read(file))
-        rescue => e
-          if e.is_a?(Errno::ENOENT)
-            @logger&.warn("Batch file #{file} was not found when attempting to read. It may have been deleted by another process.")
-          else
-            @logger&.warn("Failed to load batch file #{file}: #{e.message}. Moving to quarantine.")
-            begin
-              quarantine_dir = File.join(@failed_dir, "quarantine")
-              FileUtils.mkdir_p(quarantine_dir) unless Dir.exist?(quarantine_dir)
-              FileUtils.mv(file, quarantine_dir)
-            rescue => del_err
-              @logger&.warn("Failed to move corrupted batch file #{file} to quarantine: #{del_err.message}")
-            end
-          end
-          next
-        end
-      end
-    end
-
     def delete_batch(file)
       begin
         ::File.delete(file) if ::File.exist?(file)

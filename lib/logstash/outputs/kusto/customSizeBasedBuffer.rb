@@ -306,16 +306,16 @@
     end
 
     def process_failed_batches
-      @file_persistence.load_batches.each do |file, batch|
+      Dir.glob(::File.join(@file_persistence.failed_dir, "failed_batch_*.json*")).each do |file|
         processing_file = file + ".processing"
         begin
-          # Try to atomically claim the file for processing
-          File.rename(file, processing_file)
+          ::File.rename(file, processing_file)
         rescue Errno::ENOENT, Errno::EACCES
-          # File already processed or claimed by another thread/process
+          # File already claimed or deleted, skip
           next
         end
         begin
+          batch = JSON.load(::File.read(processing_file))
           @buffer_state[:flush_mutex].lock
           begin
             flush(batch, true)
@@ -326,9 +326,21 @@
           ensure
             @buffer_state[:flush_mutex].unlock
           end
+        rescue Errno::ENOENT
+          @buffer_config[:logger].warn("Batch file #{processing_file} was not found when attempting to read. It may have been deleted by another process.") if @buffer_config[:logger]
+          next
         rescue => e
-          @buffer_config[:logger].error("Error processing failed batch file: #{e.message}") if @buffer_config[:logger]
+          @buffer_config[:logger].warn("Failed to load batch file #{processing_file}: #{e.message}. Moving to quarantine.") if @buffer_config[:logger]
+          begin
+            quarantine_dir = File.join(@file_persistence.failed_dir, "quarantine")
+            FileUtils.mkdir_p(quarantine_dir) unless Dir.exist?(quarantine_dir)
+            FileUtils.mv(processing_file, quarantine_dir)
+          rescue => del_err
+            @buffer_config[:logger].warn("Failed to move corrupted batch file #{processing_file} to quarantine: #{del_err.message}") if @buffer_config[:logger]
+          end
+          next
         end
+        sleep(0.1) # Avoid tight loop in case of many files
       end
     end
     
