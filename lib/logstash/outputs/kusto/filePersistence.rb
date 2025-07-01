@@ -44,7 +44,7 @@ module LogStash; module Outputs; class KustoOutputInternal
       rescue => e
         attempts += 1
         if attempts < max_retries
-          sleep 0.1 * attempts # Exponential backoff
+          sleep 0.1 * (2 ** (attempts - 1)) # Exponential backoff
           retry
         else
           @logger&.fatal("Failed to persist batch after #{attempts} attempts. Data loss may occur: #{e.message}")

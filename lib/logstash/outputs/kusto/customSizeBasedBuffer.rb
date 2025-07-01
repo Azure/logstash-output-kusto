@@ -97,6 +97,9 @@
         :has_on_flush_error => self.class.method_defined?(:on_flush_error),
         :has_on_full_buffer_receive => self.class.method_defined?(:on_full_buffer_receive)
       }
+
+      @shutdown = false
+
       @buffer_state = {
         # items accepted from including class
         :pending_items => {},
@@ -118,6 +121,7 @@
         :last_flush => Time.now.to_i,
         :timer => Thread.new do
           loop do
+            break if @shutdown
             sleep(@buffer_config[:max_interval])
             buffer_flush(:force => true)
           end
@@ -303,12 +307,20 @@
 
     def process_failed_batches
       @file_persistence.load_batches.each do |file, batch|
+        processing_file = file + ".processing"
+        begin
+          # Try to atomically claim the file for processing
+          File.rename(file, processing_file)
+        rescue Errno::ENOENT, Errno::EACCES
+          # File already processed or claimed by another thread/process
+          next
+        end
         begin
           @buffer_state[:flush_mutex].lock
           begin
             flush(batch, true)
-            @file_persistence.delete_batch(file)
-            @buffer_config[:logger].info("Successfully flushed and deleted failed batch file: #{file}") if @buffer_config[:logger]
+            @file_persistence.delete_batch(processing_file)
+            @buffer_config[:logger].info("Successfully flushed and deleted failed batch file: #{processing_file}") if @buffer_config[:logger]
           rescue => e
             @buffer_config[:logger].warn("Failed to flush persisted batch: #{e.message}") if @buffer_config[:logger]
           ensure
@@ -321,9 +333,10 @@
     end
     
     def shutdown
-      # Stop the timer thread if it exists
+      # Graceful shutdown of timer thread
       if @buffer_state && @buffer_state[:timer]
-        @buffer_state[:timer].kill
+        @shutdown = true
+        @buffer_state[:timer].join
         @buffer_state[:timer] = nil
       end
       # Final flush of any remaining in-memory events
