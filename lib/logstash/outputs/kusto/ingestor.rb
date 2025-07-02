@@ -101,7 +101,6 @@ module LogStash; module Outputs; class KustoOutputInternal
           @logger.error("Ingestion failed: #{e.message}")
           @logger.error("Ingestion failed: #{e.backtrace.join("\n")}")
           @file_persistence.persist_batch(data)
-          raise e
         }
         .on_resolution do |fulfilled, value, reason, *args|
           @logger.debug("Future fulfilled: #{fulfilled}, value: #{value}, reason: #{reason}, args: #{args}, class: #{value.class}")

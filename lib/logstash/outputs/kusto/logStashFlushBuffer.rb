@@ -50,7 +50,6 @@ class LogStashEventsBatcher
             @ingestor.upload(documents)
         rescue => e
             @logger.error("Error uploading batch to Kusto: #{e.message}")
-            raise e # Let the buffer handle persistence of failed batch
         end
     end # def flush
 

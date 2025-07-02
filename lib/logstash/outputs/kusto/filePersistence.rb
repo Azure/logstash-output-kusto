@@ -30,6 +30,7 @@ module LogStash; module Outputs; class KustoOutputInternal
           begin
             ::File.write(tmpfile, JSON.dump(batch))
             ::File.rename(tmpfile, filename)
+            @logger&.info("Persisted failed batch to #{filename}")
             return # Success!
           rescue => e
             @logger&.error("Failed to persist batch to #{filename}: #{e.message}")

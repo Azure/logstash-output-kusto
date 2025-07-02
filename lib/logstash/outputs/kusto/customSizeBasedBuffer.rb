@@ -249,7 +249,6 @@
           @buffer_state[:outgoing_size] = @buffer_state[:pending_size]
           buffer_clear_pending
         end
-        @buffer_config[:logger].debug("---------------Exiting buffer_flush?-----------------") 
         @buffer_config[:logger].info("Flushing output",
           :outgoing_count => @buffer_state[:outgoing_count],
           :time_since_last_flush => time_since_last_flush,
@@ -279,23 +278,11 @@
               @buffer_state[:outgoing_size] -= events_volume
             end
             items_flushed += events_size
-
+            @buffer_state[:last_flush] = Time.now.to_i    
           rescue => e
-            @buffer_config[:logger].warn("Failed to flush outgoing items",
-              :outgoing_count => @buffer_state[:outgoing_count],
-              :exception => e,
-              :backtrace => e.backtrace
-            ) if @buffer_config[:logger]
-
-            if @buffer_config[:has_on_flush_error]
-              on_flush_error e
-            end
-
-            sleep 1
-            retry
-          end
-          @buffer_state[:last_flush] = Time.now.to_i
-          @buffer_config[:logger].debug("---------------Exiting buffer_flush?-----------------")           
+            @buffer_config[:logger].warn("Unexpected error during flush: #{e.class}: #{e.message}\n#{e.backtrace.join("\n")}")
+            next
+          end  
         end
 
       ensure
