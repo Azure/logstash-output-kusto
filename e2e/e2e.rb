@@ -56,20 +56,20 @@ class E2E
   def create_table_and_mapping
     Array[@table_with_mapping, @table_without_mapping].each { |tableop| 
       puts "Creating table #{tableop}"
-      @query_client.execute(@database, ".drop table #{tableop} ifexists")
+      @query_client.executeMgmt(@database, ".drop table #{tableop} ifexists")
       sleep(1)
-      @query_client.execute(@database, ".create table #{tableop} #{@columns}")
-      @query_client.execute(@database, ".alter table #{tableop} policy ingestionbatching @'{\"MaximumBatchingTimeSpan\":\"00:00:10\", \"MaximumNumberOfItems\": 1, \"MaximumRawDataSizeMB\": 100}'")
+      @query_client.executeMgmt(@database, ".create table #{tableop} #{@columns}")
+      @query_client.executeMgmt(@database, ".alter table #{tableop} policy ingestionbatching @'{\"MaximumBatchingTimeSpan\":\"00:00:10\", \"MaximumNumberOfItems\": 1, \"MaximumRawDataSizeMB\": 100}'")
     }
     # Mapping only for one table
-    @query_client.execute(@database, ".create table #{@table_with_mapping} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
+    @query_client.executeMgmt(@database, ".create table #{@table_with_mapping} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
   end
 
 
   def drop_and_cleanup
     Array[@table_with_mapping, @table_without_mapping].each { |tableop| 
       puts "Dropping table #{tableop}"
-      @query_client.execute(@database, ".drop table #{tableop} ifexists")
+      @query_client.executeMgmt(@database, ".drop table #{tableop} ifexists")
       sleep(1)
     }
   end
@@ -99,7 +99,7 @@ class E2E
       (0...max_timeout).each do |_|
         begin
           sleep(5)
-          query = @query_client.execute(@database, "#{tableop} | sort by rownumber asc")
+          query = @query_client.executeQuery(@database, "#{tableop} | sort by rownumber asc")
           result = query.getPrimaryResults()
           raise "Wrong count - expected #{csv_data.length}, got #{result.count()} in table #{tableop}" unless result.count() == csv_data.length
         rescue Exception => e
