@@ -15,7 +15,7 @@ def versionFile = Paths.get("version")
 if (Files.exists(versionFile)) {
     version = Files.readAllLines(versionFile).first()
 } else {
-    version = "2.0.7"
+    version = "2.1.0"
 }
 
 repositories {
@@ -26,70 +26,67 @@ repositories {
 // even if we use the ruby-maven gem to package the gem, install and lock_jars will create the logstash_output_kusto_jars.rb file with the same list of dependencies.
 // In the gradle way, running ./gradlew vendor creates the jar file list and adds them to vendor/jar-dependencies folder from where it is referenced in the gemspec (require_paths and files)
 
-// update dependencies to bom azure-sdk-bom/1.2.24 
+// update dependencies to bom azure-sdk-bom/1.2.37 
 
 dependencies {
-    // Use Azure SDK BOM to align azure client versions (bumped)
-    implementation platform('com.azure:azure-sdk-bom:1.2.30')
-
     // Kusto client libraries (updated)
     implementation 'com.microsoft.azure.kusto:kusto-data:7.0.2'
     implementation 'com.microsoft.azure.kusto:kusto-ingest:7.0.2'
 
     // Azure client libraries (versions will be resolved by the BOM)
-    implementation 'com.azure:azure-core-http-netty'
-    implementation 'com.azure:azure-core'
-    implementation 'com.azure:azure-data-tables'
-    implementation 'com.azure:azure-identity'
-    implementation 'com.azure:azure-json'
-    implementation 'com.azure:azure-storage-blob'
-    implementation 'com.azure:azure-storage-common'
-    implementation 'com.azure:azure-storage-queue'
-    implementation 'com.azure:azure-xml'
+    implementation 'com.azure:azure-core-http-netty:1.15.12'
+    implementation 'com.azure:azure-core:1.55.4'
+    implementation 'com.azure:azure-data-tables:12.5.4'
+    implementation 'com.azure:azure-identity:1.16.2'
+    implementation 'com.azure:azure-json:1.5.0'
+    implementation 'com.azure:azure-storage-blob:12.30.1'
+    implementation 'com.azure:azure-storage-common:12.29.1'
+    implementation 'com.azure:azure-storage-queue:12.25.1'
+    implementation 'com.azure:azure-xml:1.2.0'
 
     // Jackson - bump to a newer 2.19.x patch
-    implementation 'com.fasterxml.jackson.core:jackson-annotations:2.19.2'
-    implementation 'com.fasterxml.jackson.core:jackson-core:2.19.2'
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.19.2'
-    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.19.2'
+    implementation 'com.fasterxml.jackson.core:jackson-annotations:2.19.0'
+    implementation 'com.fasterxml.jackson.core:jackson-core:2.19.0'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.19.0'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.19.0'
 
-    implementation 'com.fasterxml.woodstox:woodstox-core:6.7.0'
+    implementation 'com.fasterxml.woodstox:woodstox-core:7.1.0'
     implementation 'com.github.stephenc.jcip:jcip-annotations:1.0-1'
     // MSAL4J bump
-    implementation 'com.microsoft.azure:msal4j:1.16.0'
+    implementation 'com.microsoft.azure:msal4j:1.22.0'
     implementation 'com.nimbusds:content-type:2.3'
     implementation 'com.nimbusds:lang-tag:1.7'
     implementation 'com.nimbusds:nimbus-jose-jwt:10.4.2'
     implementation 'com.nimbusds:oauth2-oidc-sdk:11.27'
     implementation 'com.univocity:univocity-parsers:2.9.1'
-    implementation 'commons-codec:commons-codec:1.16.1'
+    implementation 'commons-codec:commons-codec:1.19.0'
     implementation 'commons-logging:commons-logging:1.3.1'
     implementation 'io.github.resilience4j:resilience4j-core:1.7.1'
     implementation 'io.github.resilience4j:resilience4j-retry:1.7.1'
-    implementation 'io.netty:netty-buffer:4.1.118.Final'
-    implementation 'io.netty:netty-codec-dns:4.1.118.Final'
-    implementation 'io.netty:netty-codec-http2:4.1.118.Final'
-    implementation 'io.netty:netty-codec-http:4.1.118.Final'
-    implementation 'io.netty:netty-codec-socks:4.1.118.Final'
-    implementation 'io.netty:netty-codec:4.1.118.Final'
-    implementation 'io.netty:netty-common:4.1.118.Final'
-    implementation 'io.netty:netty-handler-proxy:4.1.118.Final'
-    implementation 'io.netty:netty-handler:4.1.118.Final'
-    implementation 'io.netty:netty-resolver-dns-classes-macos:4.1.118.Final'
-    implementation 'io.netty:netty-resolver-dns-native-macos:4.1.118.Final:osx-x86_64'
-    implementation 'io.netty:netty-resolver-dns:4.1.118.Final'
-    implementation 'io.netty:netty-resolver:4.1.118.Final'
-    implementation 'io.netty:netty-tcnative-boringssl-static:2.0.65.Final'
-    implementation 'io.netty:netty-tcnative-classes:2.0.65.Final'
-    implementation 'io.netty:netty-transport-classes-epoll:4.1.118.Final'
-    implementation 'io.netty:netty-transport-classes-kqueue:4.1.118.Final'
-    implementation 'io.netty:netty-transport-native-epoll:4.1.118.Final:linux-x86_64'
-    implementation 'io.netty:netty-transport-native-kqueue:4.1.118.Final:osx-x86_64'
-    implementation 'io.netty:netty-transport-native-unix-common:4.1.118.Final'
-    implementation 'io.netty:netty-transport:4.1.118.Final'
-    implementation 'io.projectreactor.netty:reactor-netty-core:1.0.45'
-    implementation 'io.projectreactor.netty:reactor-netty-http:1.0.45'
-    implementation 'io.projectreactor:reactor-core:3.4.38'
+    implementation 'io.netty:netty-buffer:4.2.4.Final'
+    implementation 'io.netty:netty-codec-dns:4.2.4.Final'
+    implementation 'io.netty:netty-codec-http2:4.2.4.Final'
+    implementation 'io.netty:netty-codec-http:4.2.4.Final'
+    implementation 'io.netty:netty-codec-socks:4.2.4.Final'
+    implementation 'io.netty:netty-codec:4.2.4.Final'
+    implementation 'io.netty:netty-common:4.2.4.Final'
+    implementation 'io.netty:netty-handler-proxy:4.2.4.Final'
+    implementation 'io.netty:netty-handler:4.2.4.Final'
+    implementation 'io.netty:netty-resolver-dns-classes-macos:4.2.4.Final'
+    implementation 'io.netty:netty-resolver-dns-native-macos:4.2.4.Final:osx-x86_64'
+    implementation 'io.netty:netty-resolver-dns:4.2.4.Final'
+    implementation 'io.netty:netty-resolver:4.2.4.Final'
+    implementation 'io.netty:netty-tcnative-boringssl-static:2.0.72.Final'
+    implementation 'io.netty:netty-tcnative-classes:2.0.72.Final'
+    implementation 'io.netty:netty-transport-classes-epoll:4.2.4.Final'
+    implementation 'io.netty:netty-transport-classes-kqueue:4.2.4.Final'
+    implementation 'io.netty:netty-transport-native-epoll:4.2.4.Final:linux-x86_64'
+    implementation 'io.netty:netty-transport-native-kqueue:4.2.4.Final:osx-x86_64'
+    implementation 'io.netty:netty-transport-native-unix-common:4.2.4.Final'
+    implementation 'io.netty:netty-transport:4.2.4.Final'
+    implementation 'io.projectreactor.netty:reactor-netty-core:1.2.9'
+    implementation 'io.projectreactor.netty:reactor-netty-http:1.2.9'
+    implementation 'io.projectreactor:reactor-core:3.7.9'
     implementation 'io.vavr:vavr:0.10.4'
     implementation 'io.vavr:vavr-match:0.10.4'
     implementation 'net.java.dev.jna:jna-platform:5.13.0'
@@ -104,8 +101,8 @@ dependencies {
     implementation 'org.jetbrains:annotations:24.1.0'
     implementation 'org.ow2.asm:asm:9.7'
     implementation 'org.reactivestreams:reactive-streams:1.0.4'
-    implementation 'org.slf4j:slf4j-api:1.8.0-beta4'
-    implementation 'org.slf4j:slf4j-simple:1.8.0-beta4'
+    implementation 'org.slf4j:slf4j-api:2.0.17'
+    implementation 'org.slf4j:slf4j-simple:2.0.17'
 }
 
 // This task generates the ruby file with all the dependencies. Once this task runs, look at the lib/logstash-output-kusto_jars.rb file
@@ -116,10 +113,9 @@ task generateGemJarRequiresFile {
         jars_file.newWriter().withWriter { w ->
             w << "# AUTOGENERATED BY THE GRADLE SCRIPT. DO NOT EDIT.\n\n"
             w << "require 'jar_dependencies'\n"
-            configurations.runtimeClasspath.allDependencies.each {
-                w << "require_jar('${it.group}', '${it.name}', '${it.version}')\n"
+            configurations.runtimeClasspath.allDependencies.each { dep ->
+                w << "require_jar('${dep.group}', '${dep.name}', '${dep.version}')\n"
             }
-            w << "require_jar('${project.group}', '${project.name}', '${project.version}')\n"
         }
     }
 }
@@ -131,9 +127,7 @@ task vendor {
     // take in all the dependencies from the runtimeClasspath and copy them to the vendor/jar-dependencies folder
     doLast {
         String vendorPathPrefix = "vendor/jar-dependencies"
-        configurations.runtimeClasspath.allDependencies.find { dep ->
-            dep.name != "azure-sdk-bom"
-        }.each { dep ->
+        configurations.runtimeClasspath.allDependencies.each { dep ->
             println("Copying ${dep.group}:${dep.name}:${dep.version}")
             File f = configurations.runtimeClasspath.filter { it.absolutePath.contains("${dep.group}${File.separator}${dep.name}${File.separator}${dep.version}") }.singleFile
             String groupPath = dep.group.replaceAll('\\.', '/')
@@ -141,7 +135,6 @@ task vendor {
             newJarFile.mkdirs()
             Files.copy(f.toPath(), newJarFile.toPath(), REPLACE_EXISTING)
         }
-
         String projectGroupPath = project.group.replaceAll('\\.', '/')
         File projectJarFile = file("${vendorPathPrefix}${File.separator}${projectGroupPath}${File.separator}${project.name}${File.separator}${project.version}${File.separator}${project.name}-${project.version}.jar")
         projectJarFile.mkdirs()
