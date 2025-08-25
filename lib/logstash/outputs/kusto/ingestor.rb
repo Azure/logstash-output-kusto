@@ -156,7 +156,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # end
 
       if file_size > 0
-        file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, 0); # 0 - let the sdk figure out the size of the file
+        file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path); # 0 - let the sdk figure out the size of the file
         @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
       else
         @logger.warn("File #{path} is an empty file and is not ingested.")
