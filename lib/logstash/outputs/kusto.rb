@@ -130,14 +130,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       final_mapping = mapping
     end
 
-    @current_ls_worker_thread_id = Thread.current.object_id
     # TODO: add id to the tmp path to support multiple outputs of the same type. 
     # TODO: Fix final_mapping when dynamic routing is supported
     # add fields from the meta that will note the destination of the events in the file
     @path = if dynamic_event_routing
               File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][final_mapping]}")
             else
-              File.expand_path("#{path}.#{database}.#{table}.#{@current_ls_worker_thread_id}")
+              File.expand_path("#{path}.#{database}.#{table}")
             end
 
     validate_path
@@ -204,9 +203,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   def multi_receive_encoded(events_and_encoded)
     encoded_by_path = Hash.new { |h, k| h[k] = [] }
-
+    thread_id = Thread.current.object_id
     events_and_encoded.each do |event, encoded|
-      file_output_path = event_path(event)
+      file_output_path = event_path(event, thread_id)
       encoded_by_path[file_output_path] << encoded
     end
 
@@ -245,8 +244,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     target_file.start_with?("#{@file_root}/")
   end
 
-  def event_path(event)
-    file_output_path = generate_filepath(event)
+  def event_path(event, thread_id)
+    file_output_path = generate_filepath(event, thread_id)
     if path_with_field_ref? && !inside_file_root?(file_output_path)
       @logger.warn('The event tried to write outside the files root, writing the event to the failure file', event: event, filename: @failure_path)
       file_output_path = @failure_path
@@ -257,8 +256,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     file_output_path
   end
 
-  def generate_filepath(event)
-    event.sprintf(@path)
+  def generate_filepath(event, thread_id)
+    event.sprintf(@path) + ".#{thread_id}"
   end
 
   def path_with_field_ref?
