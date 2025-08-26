@@ -67,7 +67,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # If `false`, the plugin will disregard temp files found
   config :recovery, validate: :boolean, default: true
 
-  
   # The Kusto endpoint for ingestion related communication. You can see it on the Azure Portal.
   config :ingest_url, validate: :string, required: true
 
@@ -94,7 +93,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   # Mapping name - deprecated, use json_mapping
   config :mapping, validate: :string, deprecated: true
-
 
   # Determines if local files used for temporary storage will be deleted
   # after upload is successful
@@ -132,13 +130,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       final_mapping = mapping
     end
 
+    @current_ls_worker_thread_id = Thread.current.object_id
     # TODO: add id to the tmp path to support multiple outputs of the same type. 
     # TODO: Fix final_mapping when dynamic routing is supported
     # add fields from the meta that will note the destination of the events in the file
     @path = if dynamic_event_routing
               File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][final_mapping]}")
             else
-              File.expand_path("#{path}.#{database}.#{table}")
+              File.expand_path("#{path}.#{database}.#{table}.#{@current_ls_worker_thread_id}")
             end
 
     validate_path
@@ -150,12 +149,18 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                  end
     @failure_path = File.join(@file_root, @filename_failure)
 
-    executor = Concurrent::ThreadPoolExecutor.new(min_threads: 1,
-                                                  max_threads: upload_concurrent_count,
-                                                  max_queue: upload_queue_size,
-                                                  fallback_policy: :caller_runs)
+    executor = Concurrent::ThreadPoolExecutor.new(
+      min_threads: 1,
+      max_threads: upload_concurrent_count,
+      max_queue: upload_queue_size,
+      fallback_policy: :caller_runs
+    )
 
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cli_auth, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port,proxy_protocol, @logger, executor)
+    @ingestor = Ingestor.new(
+      ingest_url, app_id, app_key, app_tenant, managed_identity, cli_auth,
+      database, table, final_mapping, delete_temp_files,
+      proxy_host, proxy_port, proxy_protocol, @logger, executor
+    )
 
     # send existing files
     recover_past_files if recovery
@@ -173,23 +178,22 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   private
+
   def validate_path
     if (root_directory =~ FIELD_REF) != nil
       @logger.error('The starting part of the path should not be dynamic.', path: @path)
       raise LogStash::ConfigurationError.new('The starting part of the path should not be dynamic.')
     end
 
-    if !path_with_field_ref?
+    unless path_with_field_ref?
       @logger.error('Path should include some time related fields to allow for file rotation.', path: @path)
       raise LogStash::ConfigurationError.new('Path should include some time related fields to allow for file rotation.')
     end
   end
 
-  private 
   def root_directory
     parts = @path.split(File::SEPARATOR).reject(&:empty?)
     if Gem.win_platform?
-      # First part is the drive letter
       parts[1]
     else
       parts.first
@@ -197,6 +201,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   public
+
   def multi_receive_encoded(events_and_encoded)
     encoded_by_path = Hash.new { |h, k| h[k] = [] }
 
@@ -208,11 +213,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @io_mutex.synchronize do
       encoded_by_path.each do |path, chunks|
         fd = open(path)
-        # append to the file
         chunks.each { |chunk| fd.write(chunk) }
         fd.flush unless @flusher && @flusher.alive?
       end
-
       close_stale_files if @stale_cleanup_type == 'events'
     end
   end
@@ -222,29 +225,26 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @cleaner.stop unless @cleaner.nil?
     @io_mutex.synchronize do
       @logger.debug('Close: closing files')
-
       @files.each do |path, fd|
         begin
           fd.close
           @logger.debug("Closed file #{path}", fd: fd)
-
           kusto_send_file(path)
         rescue Exception => e
           @logger.error('Exception while flushing and closing files.', exception: e)
         end
       end
     end
-
     @ingestor.stop unless @ingestor.nil?
   end
 
   private
+
   def inside_file_root?(log_path)
     target_file = File.expand_path(log_path)
-    return target_file.start_with?("#{@file_root}/")
+    target_file.start_with?("#{@file_root}/")
   end
 
-  private
   def event_path(event)
     file_output_path = generate_filepath(event)
     if path_with_field_ref? && !inside_file_root?(file_output_path)
@@ -254,77 +254,60 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       file_output_path = @failure_path
     end
     @logger.debug('Writing event to tmp file.', filename: file_output_path)
-
     file_output_path
   end
 
-  private
   def generate_filepath(event)
     event.sprintf(@path)
   end
 
-  private
   def path_with_field_ref?
     path =~ FIELD_REF
   end
 
-  private
   def extract_file_root
     parts = File.expand_path(path).split(File::SEPARATOR)
     parts.take_while { |part| part !~ FIELD_REF }.join(File::SEPARATOR)
   end
 
-  # the back-bone of @flusher, our periodic-flushing interval.
-  private
   def flush_pending_files
     @io_mutex.synchronize do
       @logger.debug('Starting flush cycle')
-
       @files.each do |path, fd|
         @logger.debug('Flushing file', path: path, fd: fd)
         fd.flush
       end
     end
   rescue Exception => e
-    # squash exceptions caught while flushing after logging them
     @logger.error('Exception flushing files', exception: e.message, backtrace: e.backtrace)
   end
 
-  # every 10 seconds or so (triggered by events, but if there are no events there's no point closing files anyway)
-  private
   def close_stale_files
     now = Time.now
     return unless now - @last_stale_cleanup_cycle >= @stale_cleanup_interval
-
     @logger.debug('Starting stale files cleanup cycle', files: @files)
-    inactive_files = @files.select { |path, fd| not fd.active }
+    inactive_files = @files.select { |path, fd| !fd.active }
     @logger.debug("#{inactive_files.count} stale files found", inactive_files: inactive_files)
     inactive_files.each do |path, fd|
       @logger.info("Closing file #{path}")
       fd.close
       @files.delete(path)
-
       kusto_send_file(path)
     end
-    # mark all files as inactive, a call to write will mark them as active again
     @files.each { |path, fd| fd.active = false }
     @last_stale_cleanup_cycle = now
   end
 
-  private
   def cached?(path)
     @files.include?(path) && !@files[path].nil?
   end
 
-  private
   def deleted?(path)
     !File.exist?(path)
   end
 
-  private
   def open(path)
     return @files[path] if !deleted?(path) && cached?(path)
-
     if deleted?(path)
       if @create_if_deleted
         @logger.debug('Required file does not exist, creating it.', path: path)
@@ -333,11 +316,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         return @files[path] if cached?(path)
       end
     end
-
     @logger.info('Opening file', path: path)
-
     dir = File.dirname(path)
-    if !Dir.exist?(dir)
+    unless Dir.exist?(dir)
       @logger.info('Creating directory', directory: dir)
       if @dir_mode != -1
         FileUtils.mkdir_p(dir, mode: @dir_mode)
@@ -345,55 +326,37 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         FileUtils.mkdir_p(dir)
       end
     end
-
-    # work around a bug opening fifos (bug JRUBY-6280)
     stat = begin
-             File.stat(path)
-           rescue
-             nil
-           end
-    fd =  if stat && stat.ftype == 'fifo' && LogStash::Environment.jruby?
-            java.io.FileWriter.new(java.io.File.new(path))
-          elsif @file_mode != -1
-            File.new(path, 'a+', @file_mode)
-          else
-            File.new(path, 'a+')
-          end
-          # fd = if @file_mode != -1
-          #         File.new(path, 'a+', @file_mode)
-          #       else
-          #         File.new(path, 'a+')
-          #       end
-        #  end
+      File.stat(path)
+    rescue
+      nil
+    end
+    fd = if stat && stat.ftype == 'fifo' && LogStash::Environment.jruby?
+           java.io.FileWriter.new(java.io.File.new(path))
+         elsif @file_mode != -1
+           File.new(path, 'a+', @file_mode)
+         else
+           File.new(path, 'a+')
+         end
     @files[path] = IOWriter.new(fd)
   end
 
-  private
   def kusto_send_file(file_path)
     @ingestor.upload_async(file_path, delete_temp_files)
   end
 
-  private
   def recover_past_files
     require 'find'
-
-    # we need to find the last "regular" part in the path before any dynamic vars
     path_last_char = @path.length - 1
-
     pattern_start = @path.index('%') || path_last_char
     last_folder_before_pattern = @path.rindex('/', pattern_start) || path_last_char
     new_path = path[0..last_folder_before_pattern]
-    
     begin
       return unless Dir.exist?(new_path)
       @logger.info("Going to recover old files in path #{@new_path}")
-      
       old_files = Find.find(new_path).select { |p| /.*\.#{database}\.#{table}$/ =~ p }
       @logger.info("Found #{old_files.length} old file(s), sending them now...")
-
-      old_files.each do |file|
-        kusto_send_file(file)
-      end
+      old_files.each { |file| kusto_send_file(file) }
     rescue Errno::ENOENT => e
       @logger.warn('No such file or directory', exception: e.class, message: e.message, path: new_path, backtrace: e.backtrace)
     end
@@ -402,6 +365,8 @@ end
 
 # wrapper class
 class IOWriter
+  attr_accessor :active
+
   def initialize(io)
     @io = io
   end
@@ -417,11 +382,9 @@ class IOWriter
 
   def method_missing(method_name, *args, &block)
     if @io.respond_to?(method_name)
-
       @io.send(method_name, *args, &block)
     else
       super
     end
   end
-  attr_accessor :active
 end
