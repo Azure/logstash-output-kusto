@@ -5,5 +5,5 @@ do
     random_size=$(( (RANDOM % 65535) + 1 ))
     current_date_time=$(date '+%d/%b/%Y:%H:%M:%S %z')
     echo "$random_ip - - [$current_date_time] \"GET /data.php HTTP/1.1\" 200 $random_size" | tee -a '/tmp/curllogs.txt'
-    sleep 0.0000001s
+    sleep 0.001s
 done

@@ -352,7 +352,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     new_path = path[0..last_folder_before_pattern]
     begin
       return unless Dir.exist?(new_path)
-      @logger.info("Going to recover old files in path #{@new_path}")
+      @logger.info("Going to recover old files in path #{new_path}")
       old_files = Find.find(new_path).select { |p| /.*\.#{database}\.#{table}$/ =~ p }
       @logger.info("Found #{old_files.length} old file(s), sending them now...")
       old_files.each { |file| kusto_send_file(file) }
