@@ -18,7 +18,7 @@ This connector forwards data to
 
 ## Requirements
 
-- Logstash version 6+. [Installation instructions](https://www.elastic.co/guide/en/logstash/current/installing-logstash.html) 
+- The latest version is tested for Logstash version 9.1+ (uses JDK 21) [Installation instructions](https://www.elastic.co/guide/en/logstash/current/installing-logstash.html) 
 - Azure Data Explorer cluster with a database. Read [Create a cluster and database](https://docs.microsoft.com/en-us/azure/data-explorer/create-cluster-database-portal) for more information.
 - AAD Application credentials with permission to ingest data into Azure Data Explorer. Read [Creating an AAD Application](https://docs.microsoft.com/en-us/azure/kusto/management/access-control/how-to-provision-aad-app) for more information.
 
@@ -81,6 +81,8 @@ export  LS_JAVA_OPTS="-Dhttp.proxyHost=1.2.34 -Dhttp.proxyPort=8989 -Dhttps.prox
 
 | Version | Release Date | Notes |
 | --- | --- | --- |
+| 2.1.1 | 2025-09-25 | - Fix #84 adding thread-id as well to the file path to avoid race conditions in multi-worker scenario  |
+| 2.1.0 | 2025-09-25 | - Bump SDK versions  |
 | 2.0.8 | 2024-10-23 | - Fix library deprecations, fix issues in the Azure Identity library  |
 | 2.0.7 | 2024-01-01 | - Update Kusto JAVA SDK  |
 | 2.0.3 | 2023-12-12 | - Make JSON mapping field optional. If not provided logstash output JSON attribute names will be used for column resolution  |
