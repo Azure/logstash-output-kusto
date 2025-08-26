@@ -60,17 +60,20 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       name_for_tracing = "logstash-output-kusto:#{Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"}"
       @logger.debug("Client name for tracing: #{name_for_tracing}")
 
-      tuple_utils = Java::org.apache.commons.lang3.tuple
+      java_util = Java::java.util
       # kusto_connection_string.setClientVersionForTracing(name_for_tracing)
       version_for_tracing=Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"
-      kusto_connection_string.setConnectorDetails("Logstash",version_for_tracing.to_s,"","",false,"", tuple_utils.Pair.emptyArray());
-      
+      kusto_connection_string.setConnectorDetails("Logstash",version_for_tracing.to_s,"","",false,"", java_util.Collections.emptyMap());
       @kusto_client = begin
         if is_direct_conn
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
         else
-          kusto_http_client_properties = kusto_java.data.HttpClientProperties.builder().proxy(apache_http.HttpHost.new(proxy_host,proxy_port,proxy_protocol)).build()
-          kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string, kusto_http_client_properties)
+          http_kusto = Java::com.microsoft.azure.kusto.data.http
+          java_net = Java::java.net
+          proxy_inet_server = java_net.InetSocketAddress.new(proxy_host, proxy_port)
+          proxy = Java::com.azure.core.http.ProxyOptions.new(Java::com.azure.core.http.ProxyOptions::Type::HTTP, proxy_inet_server)
+          http_client_properties = http_kusto.HttpClientProperties.builder().proxy(proxy).build()
+          kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string, http_client_properties)
         end
       end
 
@@ -153,7 +156,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # end
 
       if file_size > 0
-        file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, 0); # 0 - let the sdk figure out the size of the file
+        file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path); # 0 - let the sdk figure out the size of the file
         @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
       else
         @logger.warn("File #{path} is an empty file and is not ingested.")
