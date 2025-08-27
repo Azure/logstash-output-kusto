@@ -162,7 +162,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @logger.warn("File #{path} is an empty file and is not ingested.")
       end
       File.delete(path) if delete_on_success
-      @logger.debug("File #{path} sent to kusto.")
+      @logger.info("File #{path} sent to kusto.")
     rescue Errno::ENOENT => e
       @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
     rescue Java::JavaNioFile::NoSuchFileException => e
