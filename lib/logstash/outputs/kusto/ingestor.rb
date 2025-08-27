@@ -20,10 +20,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     LOW_QUEUE_LENGTH = 3
     FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
+    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, delete_local, proxy_host, proxy_port, proxy_protocol, logger, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool
       @logger = logger
-      validate_config(database, table, json_mapping,proxy_protocol,app_id, app_key, managed_identity_id,cli_auth)
+      validate_config(database, table, json_mapping, proxy_protocol, app_id, app_key, managed_identity_id, cli_auth)
       @logger.info('Preparing Kusto resources.')
 
       kusto_java = Java::com.microsoft.azure.kusto
@@ -38,22 +38,22 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       is_direct_conn = (proxy_host.nil? || proxy_host.empty?)
       # Create a connection string
       kusto_connection_string = if is_managed_identity
-          if is_system_assigned_managed_identity
-            @logger.info('Using system managed identity.')
-            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(ingest_url)  
-          else
-            @logger.info('Using user managed identity.')
-            kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(ingest_url, managed_identity_id)
-          end
+        if is_system_assigned_managed_identity
+          @logger.info('Using system managed identity.')
+          kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(ingest_url)
         else
-          if cli_auth
-            @logger.warn('*Use of CLI Auth is only for dev-test scenarios. This is ***NOT RECOMMENDED*** for production*')
-            kusto_java.data.auth.ConnectionStringBuilder.createWithAzureCli(ingest_url)
-          else 
-            @logger.info('Using app id and app key.')
-            kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
-          end
+          @logger.info('Using user managed identity.')
+          kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(ingest_url, managed_identity_id)
         end
+      else
+        if cli_auth
+          @logger.warn('*Use of CLI Auth is only for dev-test scenarios. This is ***NOT RECOMMENDED*** for production*')
+          kusto_java.data.auth.ConnectionStringBuilder.createWithAzureCli(ingest_url)
+        else
+          @logger.info('Using app id and app key.')
+          kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
+        end
+      end
       #
       @logger.debug(Gem.loaded_specs.to_s)
       # Unfortunately there's no way to avoid using the gem/plugin name directly...
@@ -62,8 +62,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
       java_util = Java::java.util
       # kusto_connection_string.setClientVersionForTracing(name_for_tracing)
-      version_for_tracing=Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"
-      kusto_connection_string.setConnectorDetails("Logstash",version_for_tracing.to_s,"","",false,"", java_util.Collections.emptyMap());
+      version_for_tracing = Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"
+      kusto_connection_string.setConnectorDetails("Logstash", version_for_tracing.to_s, "", "", false, "", java_util.Collections.emptyMap())
       @kusto_client = begin
         if is_direct_conn
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
@@ -91,7 +91,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.debug('Kusto resources are ready.')
     end
 
-    def validate_config(database, table, json_mapping, proxy_protocol, app_id, app_key, managed_identity_id,cli_auth)
+    def validate_config(database, table, json_mapping, proxy_protocol, app_id, app_key, managed_identity_id, cli_auth)
       # Add an additional validation and fail this upfront
       if app_id.nil? && app_key.nil? && managed_identity_id.nil?
         if cli_auth
@@ -100,7 +100,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
           @logger.error('managed_identity_id is not provided and app_id/app_key is empty.')
           raise LogStash::ConfigurationError.new('managed_identity_id is not provided and app_id/app_key is empty.')
         end
-      end      
+      end
       if database =~ FIELD_REF
         @logger.error('database config value should not be dynamic.', database)
         raise LogStash::ConfigurationError.new('database config value should not be dynamic.')
@@ -116,11 +116,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         raise LogStash::ConfigurationError.new('json_mapping config value should not be dynamic.')
       end
 
-      if not(["https", "http"].include? proxy_protocol)
+      unless ["https", "http"].include? proxy_protocol
         @logger.error('proxy_protocol has to be http or https.', proxy_protocol)
         raise LogStash::ConfigurationError.new('proxy_protocol has to be http or https.')
       end
-
     end
 
     def upload_async(path, delete_on_success)
@@ -156,7 +155,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # end
 
       if file_size > 0
-        file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path); # 0 - let the sdk figure out the size of the file
+        file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path) # 0 - let the sdk figure out the size of the file
         @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
       else
         @logger.warn("File #{path} is an empty file and is not ingested.")
