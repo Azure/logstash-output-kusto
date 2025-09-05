@@ -129,7 +129,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
       @workers_pool.post do
         LogStash::Util.set_thread_name("Kusto to ingest file: #{path}")
-        upload(path, delete_on_success)
+        uploadV2(path, delete_on_success)
       end
     rescue Exception => e
       @logger.error('StandardError.', exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
@@ -175,6 +175,37 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       sleep RETRY_DELAY_SECONDS
       retry
     end
+
+    def uploadV2(path, delete_on_success)
+      file_size = File.size(path)
+      @logger.info("Ingesting #{file_size} bytes to database: #{@ingestion_properties.getDatabaseName} table: #{@ingestion_properties.getTableName}")
+      if file_size > 0
+        exceptions = Concurrent::Array.new
+        promise = Concurrent::Promises.future {
+          file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path) # 0 - let the sdk figure out the size of the file
+          ingest_result = @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
+        }
+        .rescue{ |e|
+          @logger.error("Ingestion failed: #{e.message}, File on path #{path} will not be deleted.")
+          @logger.error("Ingestion failed: #{e.backtrace.join("\n")}")
+        }
+        .on_resolution do |fulfilled, value, reason, *args|
+          @logger.debug("Future fulfilled: #{fulfilled}, value: #{value}, reason: #{reason}, args: #{args}, class: #{value.class}")
+          if value.class == Java::ComMicrosoftAzureKustoIngestResult::IngestionStatusResult
+            isc = value.getIngestionStatusCollection()&.get(0)&.getStatus()
+            @logger.info("Ingestion status: #{isc}")
+            File.delete(path) if delete_on_success
+          else
+            @logger.warn("Ingestion status is non success status: #{value.class} - #{value}, File on path #{path} will not be deleted.")
+          end
+          if exceptions.size > 0
+            @logger.error("Ingestion failed with exceptions: #{exceptions.map(&:message).join(', ')}, File on path #{path} will not be deleted.")
+          end
+        end
+      else
+        @logger.warn("Data is empty and is not ingested.")
+      end # if data.size > 0
+    end # def upload
 
     def stop
       @workers_pool.shutdown

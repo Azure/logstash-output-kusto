@@ -203,9 +203,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   def multi_receive_encoded(events_and_encoded)
     encoded_by_path = Hash.new { |h, k| h[k] = [] }
-    thread_id = Thread.current.object_id
     events_and_encoded.each do |event, encoded|
-      file_output_path = event_path(event, thread_id)
+      file_output_path = event_path(event)
       encoded_by_path[file_output_path] << encoded
     end
 
@@ -244,8 +243,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     target_file.start_with?("#{@file_root}/")
   end
 
-  def event_path(event, thread_id)
-    file_output_path = generate_filepath(event, thread_id)
+  def event_path(event)
+    file_output_path = generate_filepath(event)
     if path_with_field_ref? && !inside_file_root?(file_output_path)
       @logger.warn('The event tried to write outside the files root, writing the event to the failure file', event: event, filename: @failure_path)
       file_output_path = @failure_path
@@ -256,8 +255,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     file_output_path
   end
 
-  def generate_filepath(event, thread_id)
-    event.sprintf(@path) + ".#{thread_id}"
+  def generate_filepath(event)
+    event.sprintf(@path)
   end
 
   def path_with_field_ref?
