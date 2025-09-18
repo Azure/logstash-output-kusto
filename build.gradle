@@ -30,8 +30,8 @@ repositories {
 
 dependencies {
     // Kusto client libraries (updated)
-    implementation 'com.microsoft.azure.kusto:kusto-data:7.0.2'
-    implementation 'com.microsoft.azure.kusto:kusto-ingest:7.0.2'
+    implementation 'com.microsoft.azure.kusto:kusto-data:7.0.3'
+    implementation 'com.microsoft.azure.kusto:kusto-ingest:7.0.3'
 
     // Azure client libraries (versions will be resolved by the BOM)
     implementation 'com.azure:azure-core-http-netty:1.16.0'
@@ -93,7 +93,6 @@ dependencies {
     implementation 'net.java.dev.jna:jna:5.13.0'
     implementation 'net.minidev:accessors-smart:2.5.2'
     implementation 'net.minidev:json-smart:2.5.2'
-    implementation 'org.apache.commons:commons-lang3:3.14.0'
     implementation 'org.apache.commons:commons-text:1.11.0'
     implementation 'org.apache.httpcomponents:httpclient:4.5.14'
     implementation 'org.apache.httpcomponents:httpcore:4.4.16'
