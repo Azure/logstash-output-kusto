@@ -11,11 +11,24 @@ apply plugin: 'maven-publish'
 // The alternative is to use ruby-maven gem to package, but this runs into classpath conflicts/issues with the logstash plugin.
 group "org.logstash.outputs"
 
+ext {
+    jacksonVersion = '2.19.0'
+    jnaVersion = '5.13.0'
+    kustoVersion = '7.0.3'
+    minidevVersion = '2.5.2'
+    nettyVersion = '4.1.125.Final'
+    resilience4jVersion = '1.7.1'
+    reactorNettyVersion = '1.2.9'
+    slf4jVersion = '2.0.17'
+    tcnativeVersion = '2.0.72.Final'
+    vavrVersion = '0.10.4'
+}
+
 def versionFile = Paths.get("version")
 if (Files.exists(versionFile)) {
     version = Files.readAllLines(versionFile).first()
 } else {
-    version = "2.1.0"
+    version = "2.1.2"
 }
 
 repositories {
@@ -30,8 +43,8 @@ repositories {
 
 dependencies {
     // Kusto client libraries (updated)
-    implementation 'com.microsoft.azure.kusto:kusto-data:7.0.3'
-    implementation 'com.microsoft.azure.kusto:kusto-ingest:7.0.3'
+    implementation "com.microsoft.azure.kusto:kusto-data:${kustoVersion}"
+    implementation "com.microsoft.azure.kusto:kusto-ingest:${kustoVersion}"
 
     // Azure client libraries (versions will be resolved by the BOM)
     implementation 'com.azure:azure-core-http-netty:1.16.0'
@@ -45,10 +58,10 @@ dependencies {
     implementation 'com.azure:azure-xml:1.2.0'
 
     // Jackson - bump to a newer 2.19.x patch
-    implementation 'com.fasterxml.jackson.core:jackson-annotations:2.19.0'
-    implementation 'com.fasterxml.jackson.core:jackson-core:2.19.0'
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.19.0'
-    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.19.0'
+    implementation "com.fasterxml.jackson.core:jackson-annotations:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.datatype:jackson-datatype-jsr310:${jacksonVersion}"
 
     implementation 'com.fasterxml.woodstox:woodstox-core:7.1.0'
     implementation 'com.github.stephenc.jcip:jcip-annotations:1.0-1'
@@ -61,38 +74,38 @@ dependencies {
     implementation 'com.univocity:univocity-parsers:2.9.1'
     implementation 'commons-codec:commons-codec:1.19.0'
     implementation 'commons-logging:commons-logging:1.3.1'
-    implementation 'io.github.resilience4j:resilience4j-core:1.7.1'
-    implementation 'io.github.resilience4j:resilience4j-retry:1.7.1'
-    implementation 'io.netty:netty-buffer:4.1.124.Final'
-    implementation 'io.netty:netty-codec-dns:4.1.124.Final'
-    implementation 'io.netty:netty-codec-http2:4.1.124.Final'
-    implementation 'io.netty:netty-codec-http:4.1.124.Final'
-    implementation 'io.netty:netty-codec-socks:4.1.124.Final'
-    implementation 'io.netty:netty-codec:4.1.124.Final'
-    implementation 'io.netty:netty-common:4.1.124.Final'
-    implementation 'io.netty:netty-handler-proxy:4.1.124.Final'
-    implementation 'io.netty:netty-handler:4.1.124.Final'
-    implementation 'io.netty:netty-resolver-dns-classes-macos:4.1.124.Final'
-    implementation 'io.netty:netty-resolver-dns-native-macos:4.1.124.Final:osx-x86_64'
-    implementation 'io.netty:netty-resolver-dns:4.1.124.Final'
-    implementation 'io.netty:netty-resolver:4.1.124.Final'
-    implementation 'io.netty:netty-tcnative-boringssl-static:2.0.72.Final'
-    implementation 'io.netty:netty-tcnative-classes:2.0.72.Final'
-    implementation 'io.netty:netty-transport-classes-epoll:4.1.124.Final'
-    implementation 'io.netty:netty-transport-classes-kqueue:4.1.124.Final'
-    implementation 'io.netty:netty-transport-native-epoll:4.1.124.Final:linux-x86_64'
-    implementation 'io.netty:netty-transport-native-kqueue:4.1.124.Final:osx-x86_64'
-    implementation 'io.netty:netty-transport-native-unix-common:4.1.124.Final'
-    implementation 'io.netty:netty-transport:4.1.124.Final'
-    implementation 'io.projectreactor.netty:reactor-netty-core:1.2.9'
-    implementation 'io.projectreactor.netty:reactor-netty-http:1.2.9'
-    implementation 'io.projectreactor:reactor-core:3.7.9'
-    implementation 'io.vavr:vavr:0.10.4'
-    implementation 'io.vavr:vavr-match:0.10.4'
-    implementation 'net.java.dev.jna:jna-platform:5.13.0'
-    implementation 'net.java.dev.jna:jna:5.13.0'
-    implementation 'net.minidev:accessors-smart:2.5.2'
-    implementation 'net.minidev:json-smart:2.5.2'
+    implementation "io.github.resilience4j:resilience4j-core:${resilience4jVersion}"
+    implementation "io.github.resilience4j:resilience4j-retry:${resilience4jVersion}"
+    implementation "io.netty:netty-buffer:${nettyVersion}"
+    implementation "io.netty:netty-codec-dns:${nettyVersion}"
+    implementation "io.netty:netty-codec-http2:${nettyVersion}"
+    implementation "io.netty:netty-codec-http:${nettyVersion}"
+    implementation "io.netty:netty-codec-socks:${nettyVersion}"
+    implementation "io.netty:netty-codec:${nettyVersion}"
+    implementation "io.netty:netty-common:${nettyVersion}"
+    implementation "io.netty:netty-handler-proxy:${nettyVersion}"
+    implementation "io.netty:netty-handler:${nettyVersion}"
+    implementation "io.netty:netty-resolver-dns-classes-macos:${nettyVersion}"
+    implementation "io.netty:netty-resolver-dns-native-macos:${nettyVersion}:osx-x86_64"
+    implementation "io.netty:netty-resolver-dns:${nettyVersion}"
+    implementation "io.netty:netty-resolver:${nettyVersion}"
+    implementation "io.netty:netty-tcnative-boringssl-static:${tcnativeVersion}"
+    implementation "io.netty:netty-tcnative-classes:${tcnativeVersion}"
+    implementation "io.netty:netty-transport-classes-epoll:${nettyVersion}"
+    implementation "io.netty:netty-transport-classes-kqueue:${nettyVersion}"
+    implementation "io.netty:netty-transport-native-epoll:${nettyVersion}:linux-x86_64"
+    implementation "io.netty:netty-transport-native-kqueue:${nettyVersion}:osx-x86_64"
+    implementation "io.netty:netty-transport-native-unix-common:${nettyVersion}"
+    implementation "io.netty:netty-transport:${nettyVersion}"
+    implementation "io.projectreactor.netty:reactor-netty-core:${reactorNettyVersion}"
+    implementation "io.projectreactor.netty:reactor-netty-http:${reactorNettyVersion}"
+    implementation "io.projectreactor:reactor-core:3.7.9"
+    implementation "io.vavr:vavr:${vavrVersion}"
+    implementation "io.vavr:vavr-match:${vavrVersion}"
+    implementation "net.java.dev.jna:jna-platform:${jnaVersion}"
+    implementation "net.java.dev.jna:jna:${jnaVersion}"
+    implementation "net.minidev:accessors-smart:${minidevVersion}"
+    implementation "net.minidev:json-smart:${minidevVersion}"
     implementation 'org.apache.commons:commons-text:1.11.0'
     implementation 'org.apache.httpcomponents:httpclient:4.5.14'
     implementation 'org.apache.httpcomponents:httpcore:4.4.16'
@@ -100,8 +113,8 @@ dependencies {
     implementation 'org.jetbrains:annotations:24.1.0'
     implementation 'org.ow2.asm:asm:9.7'
     implementation 'org.reactivestreams:reactive-streams:1.0.4'
-    implementation 'org.slf4j:slf4j-api:2.0.17'
-    implementation 'org.slf4j:slf4j-simple:2.0.17'
+    implementation "org.slf4j:slf4j-api:${slf4jVersion}"
+    implementation "org.slf4j:slf4j-simple:${slf4jVersion}"
 }
 
 // This task generates the ruby file with all the dependencies. Once this task runs, look at the lib/logstash-output-kusto_jars.rb file
