@@ -14,7 +14,7 @@ group "org.logstash.outputs"
 ext {
     jacksonVersion = '2.19.0'
     jnaVersion = '5.13.0'
-    kustoVersion = '7.0.3'
+    kustoVersion = '7.0.4'
     minidevVersion = '2.5.2'
     nettyVersion = '4.1.125.Final'
     resilience4jVersion = '1.7.1'
