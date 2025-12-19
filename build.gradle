@@ -16,7 +16,7 @@ ext {
     jnaVersion = '5.13.0'
     kustoVersion = '7.0.4'
     minidevVersion = '2.5.2'
-    nettyVersion = '4.1.125.Final'
+    nettyVersion = '4.1.129.Final'
     resilience4jVersion = '1.7.1'
     reactorNettyVersion = '1.2.9'
     slf4jVersion = '2.0.17'
@@ -48,13 +48,13 @@ dependencies {
 
     // Azure client libraries (versions will be resolved by the BOM)
     implementation 'com.azure:azure-core-http-netty:1.16.0'
-    implementation 'com.azure:azure-core:1.56.0'
+    implementation 'com.azure:azure-core:1.54.0'
     implementation 'com.azure:azure-data-tables:12.5.4'
-    implementation 'com.azure:azure-identity:1.16.2'
+    implementation 'com.azure:azure-identity:1.16.3'
     implementation 'com.azure:azure-json:1.5.0'
-    implementation 'com.azure:azure-storage-blob:12.28.0'
-    implementation 'com.azure:azure-storage-common:12.27.0'
-    implementation 'com.azure:azure-storage-queue:12.23.0'
+    implementation 'com.azure:azure-storage-blob:12.29.0'
+    implementation 'com.azure:azure-storage-common:12.28.0'
+    implementation 'com.azure:azure-storage-queue:12.24.0'
     implementation 'com.azure:azure-xml:1.2.0'
 
     // Jackson - bump to a newer 2.19.x patch
@@ -69,7 +69,7 @@ dependencies {
     implementation 'com.microsoft.azure:msal4j:1.22.0'
     implementation 'com.nimbusds:content-type:2.3'
     implementation 'com.nimbusds:lang-tag:1.7'
-    implementation 'com.nimbusds:nimbus-jose-jwt:10.4.2'
+    implementation 'com.nimbusds:nimbus-jose-jwt:10.5.0'
     implementation 'com.nimbusds:oauth2-oidc-sdk:11.27'
     implementation 'com.univocity:univocity-parsers:2.9.1'
     implementation 'commons-codec:commons-codec:1.19.0'
@@ -99,14 +99,14 @@ dependencies {
     implementation "io.netty:netty-transport:${nettyVersion}"
     implementation "io.projectreactor.netty:reactor-netty-core:${reactorNettyVersion}"
     implementation "io.projectreactor.netty:reactor-netty-http:${reactorNettyVersion}"
-    implementation "io.projectreactor:reactor-core:3.7.9"
+    implementation "io.projectreactor:reactor-core:3.7.10"
     implementation "io.vavr:vavr:${vavrVersion}"
     implementation "io.vavr:vavr-match:${vavrVersion}"
     implementation "net.java.dev.jna:jna-platform:${jnaVersion}"
     implementation "net.java.dev.jna:jna:${jnaVersion}"
     implementation "net.minidev:accessors-smart:${minidevVersion}"
     implementation "net.minidev:json-smart:${minidevVersion}"
-    implementation 'org.apache.commons:commons-text:1.11.0'
+    implementation 'org.apache.commons:commons-text:1.12.0'
     implementation 'org.apache.httpcomponents:httpclient:4.5.14'
     implementation 'org.apache.httpcomponents:httpcore:4.4.16'
     implementation 'org.codehaus.woodstox:stax2-api:4.2.2'
