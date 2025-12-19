@@ -48,7 +48,7 @@ dependencies {
 
     // Azure client libraries (versions will be resolved by the BOM)
     implementation 'com.azure:azure-core-http-netty:1.16.0'
-    implementation 'com.azure:azure-core:1.54.0'
+    implementation 'com.azure:azure-core:1.56.0'
     implementation 'com.azure:azure-data-tables:12.5.4'
     implementation 'com.azure:azure-identity:1.16.3'
     implementation 'com.azure:azure-json:1.5.0'
@@ -69,7 +69,7 @@ dependencies {
     implementation 'com.microsoft.azure:msal4j:1.22.0'
     implementation 'com.nimbusds:content-type:2.3'
     implementation 'com.nimbusds:lang-tag:1.7'
-    implementation 'com.nimbusds:nimbus-jose-jwt:10.5.0'
+    implementation 'com.nimbusds:nimbus-jose-jwt:10.4.2'
     implementation 'com.nimbusds:oauth2-oidc-sdk:11.27'
     implementation 'com.univocity:univocity-parsers:2.9.1'
     implementation 'commons-codec:commons-codec:1.19.0'
