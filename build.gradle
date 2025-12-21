@@ -16,7 +16,7 @@ ext {
     jnaVersion = '5.13.0'
     kustoVersion = '7.0.4'
     minidevVersion = '2.5.2'
-    nettyVersion = '4.1.125.Final'
+    nettyVersion = '4.1.129.Final'
     resilience4jVersion = '1.7.1'
     reactorNettyVersion = '1.2.9'
     slf4jVersion = '2.0.17'
@@ -52,9 +52,9 @@ dependencies {
     implementation 'com.azure:azure-data-tables:12.5.4'
     implementation 'com.azure:azure-identity:1.16.3'
     implementation 'com.azure:azure-json:1.5.0'
-    implementation 'com.azure:azure-storage-blob:12.28.0'
-    implementation 'com.azure:azure-storage-common:12.27.0'
-    implementation 'com.azure:azure-storage-queue:12.23.0'
+    implementation 'com.azure:azure-storage-blob:12.30.0'
+    implementation 'com.azure:azure-storage-common:12.29.0'
+    implementation 'com.azure:azure-storage-queue:12.25.0'
     implementation 'com.azure:azure-xml:1.2.0'
 
     // Jackson - bump to a newer 2.19.x patch
