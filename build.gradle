@@ -16,9 +16,9 @@ ext {
     jnaVersion = '5.18.1'
     kustoVersion = '7.0.5'
     minidevVersion = '2.5.2'
-    nettyVersion = '4.2.9.Final'
+    nettyVersion = '4.1.130.Final'
     resilience4jVersion = '1.7.1'
-    reactorNettyVersion = '1.3.1'
+    reactorNettyVersion = '1.2.13'
     slf4jVersion = '2.0.17'
     tcnativeVersion = '2.0.74.Final'
     vavrVersion = '0.10.4'
@@ -28,7 +28,7 @@ def versionFile = Paths.get("version")
 if (Files.exists(versionFile)) {
     version = Files.readAllLines(versionFile).first()
 } else {
-    version = "2.1.2"
+    version = "2.2.0"
 }
 
 repositories {
@@ -143,9 +143,10 @@ task vendor {
     // take in all the dependencies from the runtimeClasspath and copy them to the vendor/jar-dependencies folder
     doLast {
         String vendorPathPrefix = "vendor/jar-dependencies"
-        configurations.runtimeClasspath.allDependencies.each { dep ->
+        configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+            def dep = artifact.moduleVersion.id
             println("Copying ${dep.group}:${dep.name}:${dep.version}")
-            File f = configurations.runtimeClasspath.filter { it.absolutePath.contains("${dep.group}${File.separator}${dep.name}${File.separator}${dep.version}") }.singleFile
+            File f = artifact.file
             String groupPath = dep.group.replaceAll('\\.', '/')
             File newJarFile = file("${vendorPathPrefix}${File.separator}${groupPath}${File.separator}${dep.name}${File.separator}${dep.version}${File.separator}${dep.name}-${dep.version}.jar")
             newJarFile.mkdirs()
