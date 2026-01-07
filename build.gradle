@@ -13,14 +13,14 @@ group "org.logstash.outputs"
 
 ext {
     jacksonVersion = '2.19.0'
-    jnaVersion = '5.13.0'
-    kustoVersion = '7.0.4'
+    jnaVersion = '5.18.1'
+    kustoVersion = '7.0.5'
     minidevVersion = '2.5.2'
-    nettyVersion = '4.1.125.Final'
+    nettyVersion = '4.2.9.Final'
     resilience4jVersion = '1.7.1'
-    reactorNettyVersion = '1.2.9'
+    reactorNettyVersion = '1.3.1'
     slf4jVersion = '2.0.17'
-    tcnativeVersion = '2.0.72.Final'
+    tcnativeVersion = '2.0.74.Final'
     vavrVersion = '0.10.4'
 }
 
@@ -47,10 +47,10 @@ dependencies {
     implementation "com.microsoft.azure.kusto:kusto-ingest:${kustoVersion}"
 
     // Azure client libraries (versions will be resolved by the BOM)
-    implementation 'com.azure:azure-core-http-netty:1.16.0'
-    implementation 'com.azure:azure-core:1.56.0'
-    implementation 'com.azure:azure-data-tables:12.5.4'
-    implementation 'com.azure:azure-identity:1.16.3'
+    implementation 'com.azure:azure-core-http-netty:1.16.2'
+    implementation 'com.azure:azure-core:1.57.0'
+    implementation 'com.azure:azure-data-tables:12.5.8'
+    implementation 'com.azure:azure-identity:1.18.1'
     implementation 'com.azure:azure-json:1.5.0'
     implementation 'com.azure:azure-storage-blob:12.30.0'
     implementation 'com.azure:azure-storage-common:12.29.0'
@@ -63,14 +63,14 @@ dependencies {
     implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
     implementation "com.fasterxml.jackson.datatype:jackson-datatype-jsr310:${jacksonVersion}"
 
-    implementation 'com.fasterxml.woodstox:woodstox-core:7.1.0'
+    implementation 'com.fasterxml.woodstox:woodstox-core:7.1.1'
     implementation 'com.github.stephenc.jcip:jcip-annotations:1.0-1'
     // MSAL4J bump
-    implementation 'com.microsoft.azure:msal4j:1.22.0'
+    implementation 'com.microsoft.azure:msal4j:1.23.1'
     implementation 'com.nimbusds:content-type:2.3'
     implementation 'com.nimbusds:lang-tag:1.7'
-    implementation 'com.nimbusds:nimbus-jose-jwt:10.4.2'
-    implementation 'com.nimbusds:oauth2-oidc-sdk:11.27'
+    implementation 'com.nimbusds:nimbus-jose-jwt:10.6'
+    implementation 'com.nimbusds:oauth2-oidc-sdk:11.31'
     implementation 'com.univocity:univocity-parsers:2.9.1'
     implementation 'commons-codec:commons-codec:1.19.0'
     implementation 'commons-logging:commons-logging:1.3.1'
@@ -99,19 +99,17 @@ dependencies {
     implementation "io.netty:netty-transport:${nettyVersion}"
     implementation "io.projectreactor.netty:reactor-netty-core:${reactorNettyVersion}"
     implementation "io.projectreactor.netty:reactor-netty-http:${reactorNettyVersion}"
-    implementation "io.projectreactor:reactor-core:3.7.10"
+    implementation "io.projectreactor:reactor-core:3.8.1"
     implementation "io.vavr:vavr:${vavrVersion}"
     implementation "io.vavr:vavr-match:${vavrVersion}"
     implementation "net.java.dev.jna:jna-platform:${jnaVersion}"
     implementation "net.java.dev.jna:jna:${jnaVersion}"
     implementation "net.minidev:accessors-smart:${minidevVersion}"
     implementation "net.minidev:json-smart:${minidevVersion}"
-    implementation 'org.apache.commons:commons-text:1.12.0'
-    implementation 'org.apache.httpcomponents:httpclient:4.5.14'
-    implementation 'org.apache.httpcomponents:httpcore:4.4.16'
+    implementation 'org.apache.commons:commons-text:1.15.0'
     implementation 'org.codehaus.woodstox:stax2-api:4.2.2'
     implementation 'org.jetbrains:annotations:24.1.0'
-    implementation 'org.ow2.asm:asm:9.7'
+    implementation 'org.ow2.asm:asm:9.9.1'
     implementation 'org.reactivestreams:reactive-streams:1.0.4'
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
     implementation "org.slf4j:slf4j-simple:${slf4jVersion}"
@@ -136,6 +134,12 @@ task generateGemJarRequiresFile {
 // This is referenced in the gemspec as the require_paths and files. Once this vendor task runs, look at the lib/logstash-output-kusto_jars.rb file
 // that references all the dependent jar files.
 task vendor {
+    // Capture project properties at configuration time to avoid deprecation warnings
+    def projectGroupValue = project.group
+    def projectNameValue = project.name
+    def projectVersionValue = project.version
+    def buildDirValue = layout.buildDirectory.get().asFile
+    
     // take in all the dependencies from the runtimeClasspath and copy them to the vendor/jar-dependencies folder
     doLast {
         String vendorPathPrefix = "vendor/jar-dependencies"
@@ -147,10 +151,10 @@ task vendor {
             newJarFile.mkdirs()
             Files.copy(f.toPath(), newJarFile.toPath(), REPLACE_EXISTING)
         }
-        String projectGroupPath = project.group.replaceAll('\\.', '/')
-        File projectJarFile = file("${vendorPathPrefix}${File.separator}${projectGroupPath}${File.separator}${project.name}${File.separator}${project.version}${File.separator}${project.name}-${project.version}.jar")
+        String projectGroupPath = projectGroupValue.toString().replaceAll('\\.', '/')
+        File projectJarFile = file("${vendorPathPrefix}${File.separator}${projectGroupPath}${File.separator}${projectNameValue}${File.separator}${projectVersionValue}${File.separator}${projectNameValue}-${projectVersionValue}.jar")
         projectJarFile.mkdirs()
-        Files.copy(file("$buildDir${File.separator}libs${File.separator}${project.name}-${project.version}.jar").toPath(), projectJarFile.toPath(), REPLACE_EXISTING)
+        Files.copy(file("${buildDirValue}${File.separator}libs${File.separator}${projectNameValue}-${projectVersionValue}.jar").toPath(), projectJarFile.toPath(), REPLACE_EXISTING)
     }
 }
 
