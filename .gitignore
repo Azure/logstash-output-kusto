@@ -65,3 +65,4 @@ local-run.sh
 logs2.txt
 **/.vscode/*.*
 **/settings.json
+run.sh
