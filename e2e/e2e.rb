@@ -23,7 +23,8 @@ class E2E
     puts "DEBUG: @lslocalpath = #{@lslocalpath}"
     @table_with_mapping = "RubyE2E#{Time.now.getutc.to_i}"
     @table_without_mapping = "RubyE2ENoMapping#{Time.now.getutc.to_i}"
-    @table_dynamic = "RubyE2EDynamic#{Time.now.getutc.to_i}"
+    @table_dynamic_odd = "RubyE2EDynamicOdd#{Time.now.getutc.to_i}"
+    @table_dynamic_even = "RubyE2EDynamicEven#{Time.now.getutc.to_i}"
     @mapping_name = "test_mapping"
     @csv_file = "dataset.csv"
 
@@ -33,13 +34,18 @@ class E2E
   }
   filter {
     csv { columns => [#{@csv_columns}]}
-    # Add metadata for dynamic routing test
-    mutate {
-      add_field => {
-        "[@metadata][database]" => "#{@database}"
-        "[@metadata][table]" => "#{@table_dynamic}"
-        "[@metadata][mapping]" => "#{@mapping_name}"
-      }
+    # Add metadata for dynamic routing test - route odd/even rows to different tables
+    ruby {
+      code => "
+        rownumber = event.get('rownumber').to_i
+        if rownumber % 2 == 0
+          event.set('[@metadata][table]', '#{@table_dynamic_even}')
+        else
+          event.set('[@metadata][table]', '#{@table_dynamic_odd}')
+        end
+        event.set('[@metadata][database]', '#{@database}')
+        event.set('[@metadata][mapping]', '#{@mapping_name}')
+      "
     }
   }
   output {
@@ -62,7 +68,7 @@ class E2E
       database => "#{@database}"
       table => "#{@table_without_mapping}"
     }
-    # Test 3: Dynamic routing with metadata fields
+    # Test 3: Dynamic routing with metadata fields (odd/even routing)
     kusto {
       path => "dynamictmp%{+YYYY-MM-dd-HH-mm}"
       cli_auth => true
@@ -77,7 +83,7 @@ class E2E
 
   def create_table_and_mapping
     puts "\n[#{Time.now}] === PHASE 1: Creating tables and mappings ==="
-    Array[@table_with_mapping, @table_without_mapping, @table_dynamic].each { |tableop| 
+    Array[@table_with_mapping, @table_without_mapping, @table_dynamic_odd, @table_dynamic_even].each { |tableop| 
       puts "[#{Time.now}] Creating table #{tableop}"
       puts "[#{Time.now}]   - Dropping table if exists..."
       @query_client.executeMgmt(@database, ".drop table #{tableop} ifexists")
@@ -90,7 +96,7 @@ class E2E
     }
     # Mapping for tables that need it
     puts "[#{Time.now}] Creating JSON mappings..."
-    Array[@table_with_mapping, @table_dynamic].each { |tableop|
+    Array[@table_with_mapping, @table_dynamic_odd, @table_dynamic_even].each { |tableop|
       puts "[#{Time.now}]   - Creating mapping '#{@mapping_name}' for table #{tableop}..."
       @query_client.executeMgmt(@database, ".create table #{tableop} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
       puts "[#{Time.now}]   ✓ Mapping created for #{tableop}"
@@ -101,7 +107,7 @@ class E2E
 
   def drop_and_cleanup
     puts "\n[#{Time.now}] === PHASE 4: Cleanup ==="
-    Array[@table_with_mapping, @table_without_mapping, @table_dynamic].each { |tableop| 
+    Array[@table_with_mapping, @table_without_mapping, @table_dynamic_odd, @table_dynamic_even].each { |tableop| 
       puts "[#{Time.now}] Dropping table #{tableop}..."
       @query_client.executeMgmt(@database, ".drop table #{tableop} ifexists")
       puts "[#{Time.now}]   ✓ Table #{tableop} dropped"
@@ -142,7 +148,8 @@ class E2E
     csv_data = CSV.read(@csv_file)
     puts "[#{Time.now}] Expected data: #{csv_data.length} rows from CSV\n"
     
-    Array[@table_with_mapping, @table_without_mapping, @table_dynamic].each_with_index { |tableop, table_idx| 
+    # For static routing tests, validate full dataset
+    Array[@table_with_mapping, @table_without_mapping].each_with_index { |tableop, table_idx| 
       
       (0...max_timeout).each do |attempt|
         begin
@@ -196,6 +203,82 @@ class E2E
         break
       end
     }
+    
+    # For dynamic routing tests, validate odd/even split
+    puts "\n[#{Time.now}] Validating dynamic routing (odd/even tables)..."
+    
+    # Separate CSV data into odd and even rows based on rownumber
+    odd_rows = csv_data.select { |row| row[0].to_i % 2 == 1 }
+    even_rows = csv_data.select { |row| row[0].to_i % 2 == 0 }
+    
+    puts "[#{Time.now}] Expected: #{odd_rows.length} odd rows, #{even_rows.length} even rows"
+    
+    # Validate odd table
+    puts "\n[#{Time.now}] Validating table: #{@table_dynamic_odd}"
+    validate_dynamic_table(@table_dynamic_odd, odd_rows, "odd")
+    
+    # Validate even table
+    puts "\n[#{Time.now}] Validating table: #{@table_dynamic_even}"
+    validate_dynamic_table(@table_dynamic_even, even_rows, "even")
+    
+    puts "[#{Time.now}] ✓ Dynamic routing validation completed successfully\n"
+  end
+  
+  def validate_dynamic_table(table_name, expected_data, row_type)
+    max_timeout = 10
+    
+    (0...max_timeout).each do |attempt|
+      begin
+        puts "[#{Time.now}]   Attempt #{attempt + 1}/#{max_timeout}: Querying #{row_type} table..."
+        sleep(5)
+        
+        query = @query_client.executeQuery(@database, "#{table_name} | sort by rownumber asc")
+        result = query.getPrimaryResults()
+        actual_count = result.count()
+        
+        puts "[#{Time.now}]   Query result: #{actual_count} rows found (expected #{expected_data.length})"
+        
+        if actual_count != expected_data.length
+          raise "Wrong count - expected #{expected_data.length}, got #{actual_count} in table #{table_name}"
+        end
+                  
+      rescue Exception => e
+        puts "[#{Time.now}]   ✗ Error on attempt #{attempt + 1}: #{e}"
+        if attempt == max_timeout - 1
+          raise "Failed after #{max_timeout} attempts: #{e}"
+        end
+        next
+      end
+      
+      # Validate each row
+      (0...expected_data.length).each do |i|
+        result.next()
+        
+        (0...@column_count).each do |j|
+          csv_item = expected_data[i][j]
+          result_item = result.getObject(j) == nil ? "null" : result.getString(j)
+          #special cases for data that is different in csv vs kusto
+          if j == 4 #kusto boolean field
+            csv_item = csv_item.to_s == "1" ? "true" : "false"
+          elsif j == 12 # date formatting
+            csv_item = csv_item.sub(".0000000", "")
+          elsif j == 15 # numbers as text
+            result_item = expected_data[i][0].to_s
+          elsif j == 17 #null
+            next
+          end
+          
+          if csv_item != result_item
+            puts "[#{Time.now}]     ✗ Mismatch at #{row_type} row #{i}, column #{j}:"
+            puts "[#{Time.now}]       Expected (CSV): #{csv_item}"
+            puts "[#{Time.now}]       Actual (Kusto): #{result_item}"
+            raise "Result doesn't match CSV in table #{table_name} at row #{i}, column #{j}"
+          end
+        end
+      end
+      puts "[#{Time.now}]   ✓ All #{expected_data.length} #{row_type} rows validated successfully"
+      break
+    end
   end
 
   def start
@@ -208,7 +291,8 @@ class E2E
     puts "[#{Time.now}]   - Database: #{@database}"
     puts "[#{Time.now}]   - Table (with mapping): #{@table_with_mapping}"
     puts "[#{Time.now}]   - Table (without mapping): #{@table_without_mapping}"
-    puts "[#{Time.now}]   - Table (dynamic routing): #{@table_dynamic}"
+    puts "[#{Time.now}]   - Table (dynamic odd routing): #{@table_dynamic_odd}"
+    puts "[#{Time.now}]   - Table (dynamic even routing): #{@table_dynamic_even}"
     puts "[#{Time.now}]   - Mapping name: #{@mapping_name}"
     puts "[#{Time.now}]   - Logstash path: #{@lslocalpath}"
     puts "="*80 + "\n"
