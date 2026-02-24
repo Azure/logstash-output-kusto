@@ -16,7 +16,7 @@ ext {
     jnaVersion = '5.18.1'
     kustoVersion = '7.0.5'
     minidevVersion = '2.5.2'
-    nettyVersion = '4.1.130.Final'
+    nettyVersion = '4.1.131.Final'
     resilience4jVersion = '1.7.1'
     reactorNettyVersion = '1.2.13'
     slf4jVersion = '2.0.17'
