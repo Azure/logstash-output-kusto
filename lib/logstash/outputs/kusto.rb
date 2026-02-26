@@ -31,7 +31,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :path, validate: :string, required: true
 
   # Flush interval (in seconds) for flushing writes to files.
-  # 0 will flush on every message. Increase this value to recude IO calls but keep 
+  # 0 will flush on every message. Increase this value to recude IO calls but keep
   # in mind that events buffered before flush can be lost in case of abrupt failure.
   config :flush_interval, validate: :number, default: 2
 
@@ -67,12 +67,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # If `false`, the plugin will disregard temp files found
   config :recovery, validate: :boolean, default: true
 
-  
   # The Kusto endpoint for ingestion related communication. You can see it on the Azure Portal.
   config :ingest_url, validate: :string, required: true
 
   # The following are the credentails used to connect to the Kusto service
-  # application id 
+  # application id
   config :app_id, validate: :string, required: false
   # application key (secret)
   config :app_key, validate: :password, required: false
@@ -83,10 +82,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # CLI credentials for dev-test
   config :cli_auth, validate: :boolean, default: false
   # The following are the data settings that impact where events are written to
-  # Database name
-  config :database, validate: :string, required: true
-  # Target table name
-  config :table, validate: :string, required: true
+  # Database name (optional when dynamic_event_routing is enabled)
+  config :database, validate: :string, required: false
+  # Target table name (optional when dynamic_event_routing is enabled)
+  config :table, validate: :string, required: false
   # Mapping name - Used by Kusto to map each attribute from incoming event JSON strings to the appropriate column in the table.
   # Note that this must be in JSON format, as this is the interface between Logstash and Kusto
   # Make this optional as name resolution in the JSON mapping can be done based on attribute names in the incoming event JSON strings
@@ -110,14 +109,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # starts processing them in the main thread (not healthy)
   config :upload_queue_size, validate: :number, default: 30
 
-  # Host of the proxy , is an optional field. Can connect directly
+  # Host of the proxy, is an optional field. Can connect directly
   config :proxy_host, validate: :string, required: false
 
-  # Port where the proxy runs , defaults to 80. Usually a value like 3128
-  config :proxy_port, validate: :number, required: false , default: 80
+  # Port where the proxy runs, defaults to 80. Usually a value like 3128
+  config :proxy_port, validate: :number, required: false, default: 80
 
   # Check Proxy URL can be over http or https. Dowe need it this way or ignore this & remove this
-  config :proxy_protocol, validate: :string, required: false , default: 'http'
+  config :proxy_protocol, validate: :string, required: false, default: 'http'
 
   default :codec, 'json_lines'
 
@@ -127,16 +126,21 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @files = {}
     @io_mutex = Mutex.new
 
+    # Validate that database and table are provided when not using dynamic routing
+    if !dynamic_event_routing && (database.nil? || database.empty? || table.nil? || table.empty?)
+      raise LogStash::ConfigurationError.new('database and table are required when dynamic_event_routing is false')
+    end
+
     final_mapping = json_mapping
     if final_mapping.nil? || final_mapping.empty?
       final_mapping = mapping
     end
 
-    # TODO: add id to the tmp path to support multiple outputs of the same type. 
+    # TODO: add id to the tmp path to support multiple outputs of the same type.
     # TODO: Fix final_mapping when dynamic routing is supported
     # add fields from the meta that will note the destination of the events in the file
     @path = if dynamic_event_routing
-              File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][final_mapping]}")
+              File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][mapping]}")
             else
               File.expand_path("#{path}.#{database}.#{table}")
             end
@@ -155,7 +159,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                                                   max_queue: upload_queue_size,
                                                   fallback_policy: :caller_runs)
 
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cli_auth, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port,proxy_protocol, @logger, executor)
+    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cli_auth, delete_temp_files, proxy_host, proxy_port, proxy_protocol, @logger, executor)
 
     # send existing files
     recover_past_files if recovery
@@ -173,6 +177,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   private
+
   def validate_path
     if (root_directory =~ FIELD_REF) != nil
       @logger.error('The starting part of the path should not be dynamic.', path: @path)
@@ -185,7 +190,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
   end
 
-  private 
+  private
+
   def root_directory
     parts = @path.split(File::SEPARATOR).reject(&:empty?)
     if Gem.win_platform?
@@ -239,12 +245,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   private
+
   def inside_file_root?(log_path)
     target_file = File.expand_path(log_path)
     return target_file.start_with?("#{@file_root}/")
   end
 
   private
+
   def event_path(event)
     file_output_path = generate_filepath(event)
     if path_with_field_ref? && !inside_file_root?(file_output_path)
@@ -259,16 +267,19 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   private
+
   def generate_filepath(event)
     event.sprintf(@path)
   end
 
   private
+
   def path_with_field_ref?
     path =~ FIELD_REF
   end
 
   private
+
   def extract_file_root
     parts = File.expand_path(path).split(File::SEPARATOR)
     parts.take_while { |part| part !~ FIELD_REF }.join(File::SEPARATOR)
@@ -276,6 +287,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   # the back-bone of @flusher, our periodic-flushing interval.
   private
+
   def flush_pending_files
     @io_mutex.synchronize do
       @logger.debug('Starting flush cycle')
@@ -292,6 +304,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   # every 10 seconds or so (triggered by events, but if there are no events there's no point closing files anyway)
   private
+
   def close_stale_files
     now = Time.now
     return unless now - @last_stale_cleanup_cycle >= @stale_cleanup_interval
@@ -312,16 +325,19 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   private
+
   def cached?(path)
     @files.include?(path) && !@files[path].nil?
   end
 
   private
+
   def deleted?(path)
     !File.exist?(path)
   end
 
   private
+
   def open(path)
     return @files[path] if !deleted?(path) && cached?(path)
 
@@ -352,28 +368,24 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
            rescue
              nil
            end
-    fd =  if stat && stat.ftype == 'fifo' && LogStash::Environment.jruby?
-            java.io.FileWriter.new(java.io.File.new(path))
-          elsif @file_mode != -1
-            File.new(path, 'a+', @file_mode)
-          else
-            File.new(path, 'a+')
-          end
-          # fd = if @file_mode != -1
-          #         File.new(path, 'a+', @file_mode)
-          #       else
-          #         File.new(path, 'a+')
-          #       end
-        #  end
+    fd = if stat && stat.ftype == 'fifo' && LogStash::Environment.jruby?
+           java.io.FileWriter.new(java.io.File.new(path))
+         elsif @file_mode != -1
+           File.new(path, 'a+', @file_mode)
+         else
+           File.new(path, 'a+')
+         end
     @files[path] = IOWriter.new(fd)
   end
 
   private
+
   def kusto_send_file(file_path)
     @ingestor.upload_async(file_path, delete_temp_files)
   end
 
   private
+
   def recover_past_files
     require 'find'
 
@@ -383,11 +395,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     pattern_start = @path.index('%') || path_last_char
     last_folder_before_pattern = @path.rindex('/', pattern_start) || path_last_char
     new_path = path[0..last_folder_before_pattern]
-    
+
     begin
       return unless Dir.exist?(new_path)
       @logger.info("Going to recover old files in path #{@new_path}")
-      
+
       old_files = Find.find(new_path).select { |p| /.*\.#{database}\.#{table}$/ =~ p }
       @logger.info("Found #{old_files.length} old file(s), sending them now...")
 
@@ -417,11 +429,11 @@ class IOWriter
 
   def method_missing(method_name, *args, &block)
     if @io.respond_to?(method_name)
-
       @io.send(method_name, *args, &block)
     else
       super
     end
   end
+
   attr_accessor :active
 end
