@@ -64,7 +64,7 @@ export LOGSTASH_SOURCE=1
 export LOGSTASH_PATH="/path/to/logstash"        # local Logstash installation root
 export JRUBY_HOME=$LOGSTASH_PATH/vendor/jruby
 export JAVA_HOME=$LOGSTASH_PATH/jdk
-export PATH=$JRUBY_HOME/bin:$JAVA_HOME/bin:$LOGSTASH_PATH/bin/logstash:$PATH
+export PATH=$JRUBY_HOME/bin:$JAVA_HOME/bin:$LOGSTASH_PATH/bin:$PATH
 ```
 
 The script runs the full pipeline: install bundler → bundle install → vendor JARs → run unit tests → build gem → install the gem into local Logstash → run e2e tests. E2e tests also require Kusto cluster connection variables (`ENGINE_URL`, `INGEST_URL`, `TEST_DATABASE`) and use Azure CLI auth.
