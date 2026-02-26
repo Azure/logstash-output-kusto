@@ -52,7 +52,7 @@ jruby -S gem build logstash-output-kusto.gemspec
 
 **Full build sequence (from scratch):**
 ```sh
-bundle install && ./gradlew vendor && jruby -S bundle exec rspec && jruby -S gem build *.gemspec
+jruby -S bundle install && ./gradlew vendor && jruby -S bundle exec rspec && jruby -S gem build *.gemspec
 ```
 
 ## Running Locally
