@@ -129,9 +129,7 @@ module LogStash
                 begin
                   buffer_flush(force: true)
                 rescue StandardError => e
-                  if @buffer_config[:logger]
-                    @buffer_config[:logger].error("Error in timed flush: #{e.message}\n#{e.backtrace.join("\n")}")
-                  end
+                  @buffer_config[:logger].error("Error in timed flush: #{e.message}\n#{e.backtrace.join("\n")}") if @buffer_config[:logger]
                 end
               end
             end
@@ -340,9 +338,7 @@ module LogStash
           begin
             flush(batch, true)
             @file_persistence.delete_batch(processing_file)
-            if @buffer_config[:logger]
-              @buffer_config[:logger].info("Successfully flushed and deleted failed batch file: #{processing_file}")
-            end
+            @buffer_config[:logger].info("Successfully flushed and deleted failed batch file: #{processing_file}") if @buffer_config[:logger]
           rescue StandardError => e
             @buffer_config[:logger].warn("Failed to flush persisted batch: #{e.message}") if @buffer_config[:logger]
           ensure
@@ -353,17 +349,13 @@ module LogStash
             @buffer_config[:logger].warn("Batch file #{processing_file} was not found when attempting to read. It may have been deleted by another process.")
           end
         rescue StandardError => e
-          if @buffer_config[:logger]
-            @buffer_config[:logger].warn("Failed to load batch file #{processing_file}: #{e.message}. Moving to quarantine.")
-          end
+          @buffer_config[:logger].warn("Failed to load batch file #{processing_file}: #{e.message}. Moving to quarantine.") if @buffer_config[:logger]
           begin
             quarantine_dir = File.join(@file_persistence.failed_dir, 'quarantine')
             FileUtils.mkdir_p(quarantine_dir) unless Dir.exist?(quarantine_dir)
             FileUtils.mv(processing_file, quarantine_dir)
           rescue StandardError => del_err
-            if @buffer_config[:logger]
-              @buffer_config[:logger].warn("Failed to move corrupted batch file #{processing_file} to quarantine: #{del_err.message}")
-            end
+            @buffer_config[:logger].warn("Failed to move corrupted batch file #{processing_file} to quarantine: #{del_err.message}") if @buffer_config[:logger]
           end
         end
 

@@ -154,18 +154,20 @@ module LogStash
           now = Time.now
           return unless now - @last_stale_cleanup_cycle >= @stale_cleanup_interval
 
-          @logger.debug('Starting stale files cleanup cycle', files: @files)
-          inactive_files = @files.select { |_path, fd| !fd.active }
-          @logger.debug("#{inactive_files.count} stale files found",
-                        inactive_files: inactive_files)
-          inactive_files.each do |path, fd|
-            @logger.info("Closing file #{path}")
-            fd.close
-            @files.delete(path)
-            kusto_send_file(path)
+          @io_mutex.synchronize do
+            @logger.debug('Starting stale files cleanup cycle', files: @files)
+            inactive_files = @files.select { |_path, fd| !fd.active }
+            @logger.debug("#{inactive_files.count} stale files found",
+                          inactive_files: inactive_files)
+            inactive_files.each do |path, fd|
+              @logger.info("Closing file #{path}")
+              fd.close
+              @files.delete(path)
+              kusto_send_file(path)
+            end
+            @files.each { |_path, fd| fd.active = false }
+            @last_stale_cleanup_cycle = now
           end
-          @files.each { |_path, fd| fd.active = false }
-          @last_stale_cleanup_cycle = now
         end
 
         def cached?(path)
@@ -193,10 +195,10 @@ module LogStash
           dir = File.dirname(path)
           unless Dir.exist?(dir)
             @logger.info('Creating directory', directory: dir)
-            if @dir_mode != -1
-              FileUtils.mkdir_p(dir, mode: @dir_mode)
-            else
+            if @dir_mode == -1
               FileUtils.mkdir_p(dir)
+            else
+              FileUtils.mkdir_p(dir, mode: @dir_mode)
             end
           end
 

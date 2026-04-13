@@ -27,6 +27,13 @@ module LogStash
             @logger.error('managed_identity_id is not provided, cli_auth is false and app_id/app_key is empty.')
             raise LogStash::ConfigurationError, 'managed_identity_id is not provided and app_id/app_key is empty.'
           end
+          # When using app_id auth, app_key and app_tenant must also be provided
+          unless @kusto_auth.app_id.to_s.empty?
+            if @kusto_auth.app_key.nil? || @kusto_auth.app_key.value.to_s.empty?
+              raise LogStash::ConfigurationError, 'app_key is required when app_id is provided.'
+            end
+            raise LogStash::ConfigurationError, 'app_tenant is required when app_id is provided.' if @kusto_auth.app_tenant.to_s.empty?
+          end
           # If proxy AAD is required and the proxy configuration is not provided - fail
           if @kusto_proxy.proxy_aad_only && @kusto_proxy.is_direct_conn
             @logger.error('proxy_aad_only can be used only when proxy is configured.', @kusto_proxy.proxy_aad_only)

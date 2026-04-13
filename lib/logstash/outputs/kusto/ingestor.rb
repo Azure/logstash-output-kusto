@@ -147,6 +147,8 @@ module LogStash
         def upload_file(path, delete_on_success)
           file_size = File.size(path)
           @logger.debug("Sending file to kusto: #{path}. size: #{file_size}")
+          retries = 0
+          max_retries = 10
 
           if file_size > 0
             file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(
@@ -165,10 +167,17 @@ module LogStash
           @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path,
                                                                     backtrace: e.backtrace)
         rescue StandardError => e
-          @logger.error('Uploading failed, retrying.', exception: e.class, message: e.message, path: path,
-                                                       backtrace: e.backtrace)
-          sleep RETRY_DELAY_SECONDS
-          retry
+          retries += 1
+          if retries <= max_retries
+            delay = RETRY_DELAY_SECONDS * retries
+            @logger.error("Uploading failed, retrying (#{retries}/#{max_retries}) in #{delay}s.",
+                          exception: e.class, message: e.message, path: path)
+            sleep delay
+            retry
+          else
+            @logger.error("Uploading failed after #{max_retries} retries, giving up.",
+                          exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+          end
         end
 
         def stop

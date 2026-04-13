@@ -120,3 +120,10 @@ jobs:
           ENGINE_URL: ${{ secrets.ENGINE_URL }}
           INGEST_URL: ${{ secrets.INGEST_URL }}
           TEST_DATABASE: ${{ secrets.TEST_DATABASE }}
+      - name: Run e2e buffered mode
+        run: jruby -J-cp ../vendor/jar-dependencies e2e_buffered.rb
+        working-directory: 'e2e'
+        env:
+          ENGINE_URL: ${{ secrets.ENGINE_URL }}
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          TEST_DATABASE: ${{ secrets.TEST_DATABASE }}

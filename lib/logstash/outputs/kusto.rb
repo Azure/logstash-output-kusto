@@ -167,13 +167,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       events_and_encoded.each do |event, _encoded|
         @buffer.batch_event(event.to_hash)
       rescue StandardError => e
-        @logger.error("Error processing event: #{e.message}")
+        @logger.error('Failed to process event, event dropped.',
+                      exception: e.class, message: e.message, backtrace: e.backtrace)
       end
     else
       events_and_encoded.each do |event, encoded|
         @file_handler.receive(event, encoded)
       rescue StandardError => e
-        @logger.error("Error processing event: #{e.message}")
+        @logger.error('Failed to process event, event dropped.',
+                      exception: e.class, message: e.message, backtrace: e.backtrace)
       end
     end
   end
