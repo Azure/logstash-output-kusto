@@ -1,8 +1,6 @@
 require '../lib/logstash-output-kusto_jars'
 require 'csv'
 require 'fileutils'
-require 'net/http'
-require 'json'
 
 KUSTO_JAVA = Java::com.microsoft.azure.kusto
 
@@ -16,7 +14,7 @@ KUSTO_JAVA = Java::com.microsoft.azure.kusto
 # Performance: uses active polling instead of fixed sleeps to minimize
 # wait times while keeping generous timeouts for CI reliability.
 class E2EBase
-  # Maximum time to wait for Logstash API to become ready (seconds)
+  # Maximum time to wait for Logstash pipeline to become ready (seconds)
   STARTUP_TIMEOUT = 90
   # Maximum time to wait for output file to have all rows (seconds)
   DATA_TIMEOUT = 90
@@ -24,8 +22,6 @@ class E2EBase
   ASSERT_TIMEOUT = 120
   # Graceful stop timeout before SIGKILL (seconds)
   STOP_TIMEOUT = 30
-  # Logstash monitoring API port (configurable via LS_API_PORT env var)
-  API_PORT = (ENV['LS_API_PORT'] || '9600').to_i
 
   def initialize
     @engine_url = ENV.fetch('ENGINE_URL', nil)
@@ -103,17 +99,19 @@ class E2EBase
     input_file = test_path("input_#{label}.txt")
     output_file = test_path("output_#{label}.txt")
     config_file = test_path("logstash_#{label}.conf")
+    @logstash_log = test_path("logstash_#{label}.log")
 
     File.write(config_file, config_content)
     File.write(output_file, '')
     File.write(input_file, '')
+    File.write(@logstash_log, '')
 
     lscommand = "#{@lslocalpath} -f #{File.absolute_path(config_file)}"
     puts "[#{label}] Starting logstash: #{lscommand}"
-    @logstash_pid = spawn(lscommand)
+    @logstash_pid = spawn(lscommand, [:out, :err] => [@logstash_log, 'a'])
     puts "[#{label}] PID #{@logstash_pid}"
 
-    # Poll Logstash API until pipeline is running (fast) or fall back to fixed wait
+    # Poll logstash log for pipeline readiness (much faster than API polling)
     wait_for_logstash_ready(label)
 
     # Feed test data
@@ -249,47 +247,47 @@ class E2EBase
     File.expand_path(filename, __dir__)
   end
 
-  # Poll Logstash's monitoring API until the pipeline is running.
-  # Falls back to a shorter fixed wait if the API is unavailable.
+  # Poll Logstash's log file for the "Pipelines running" message, which
+  # is emitted once the pipeline is fully started and ready to process.
+  # Much more reliable than HTTP API polling (which may not be accessible
+  # in CI environments). Falls back to a short fixed wait if the pattern
+  # is never found.
+  PIPELINE_READY_PATTERN = /Pipelines running|Pipeline is running|Pipeline started/
+  FALLBACK_WAIT = 30
+
   def wait_for_logstash_ready(label)
     deadline = Time.now + STARTUP_TIMEOUT
-    api_available = false
+    start_time = Time.now
 
     while Time.now < deadline
       sleep(2)
 
-      # First check if the process is still alive
+      # Check if the process is still alive
       begin
         Process.kill(0, @logstash_pid)
       rescue Errno::ESRCH
+        # Dump log for diagnostics before raising
+        puts File.read(@logstash_log) if @logstash_log && File.exist?(@logstash_log)
         raise "Logstash process #{@logstash_pid} died during startup"
       end
 
-      # Try the monitoring API
+      # Check log file for pipeline readiness
       begin
-        uri = URI("http://localhost:#{API_PORT}/_node/pipelines?pretty")
-        response = Net::HTTP.get_response(uri)
-        if response.is_a?(Net::HTTPSuccess)
-          body = JSON.parse(response.body)
-          pipelines = body['pipelines'] || {}
-          running = pipelines.values.any? { |p| p['status'] == 'running' }
-          if running
-            elapsed = (Time.now - (deadline - STARTUP_TIMEOUT)).round(1)
-            puts "[#{label}] Pipeline running after #{elapsed}s"
-            api_available = true
-            break
-          end
+        log_content = File.read(@logstash_log)
+        if log_content.match?(PIPELINE_READY_PATTERN)
+          elapsed = (Time.now - start_time).round(1)
+          puts "[#{label}] Pipeline running after #{elapsed}s"
+          return
         end
-      rescue Errno::ECONNREFUSED, Errno::ECONNRESET, SocketError, Net::OpenTimeout,
-             JSON::ParserError, Timeout::Error
-        # API not ready yet — keep polling
+      rescue StandardError
+        # Log file might not be written yet
       end
     end
 
-    unless api_available
-      # Fallback: API never became available — use a short fixed wait
-      puts "[#{label}] Warning: API polling timed out after #{STARTUP_TIMEOUT}s, proceeding anyway"
-    end
+    # Fallback: pattern not found — give a short grace period
+    puts "[#{label}] Warning: pipeline readiness not detected in log after #{STARTUP_TIMEOUT}s, " \
+         "waiting #{FALLBACK_WAIT}s as fallback"
+    sleep(FALLBACK_WAIT)
   end
 
   # Poll the output file until it has the expected number of lines.
@@ -322,7 +320,7 @@ class E2EBase
   end
 
   def cleanup_temp_files
-    %w[input_*.txt output_*.txt logstash_*.conf].each do |pattern|
+    %w[input_*.txt output_*.txt logstash_*.conf logstash_*.log].each do |pattern|
       Dir.glob(File.expand_path(pattern, __dir__)).each do |f|
         File.delete(f)
       rescue StandardError => e
