@@ -1,6 +1,60 @@
-Metrics/LineLength:
-  # Change the default 80 chars limit value
-  Max: 120
+AllCops:
+  NewCops: enable
+  TargetRubyVersion: 2.6
+  Exclude:
+    - 'vendor/**/*'
+    - 'build/**/*'
+    - 'tmp/**/*'
+
+# Project uses camelCase file names (Java convention)
+Naming/FileName:
+  Enabled: false
+
+# Line length - keep existing relaxed limit
+Layout/LineLength:
+  Max: 160
+
+# JRuby doesn't benefit from frozen string literals
+Style/FrozenStringLiteralComment:
+  Enabled: false
+
+# Not all classes need documentation
+Style/Documentation:
+  Enabled: false
+
+# Allow longer methods in config/plugin classes
+Metrics/MethodLength:
+  Max: 30
+
+Metrics/AbcSize:
+  Max: 40
+
+Metrics/CyclomaticComplexity:
+  Max: 12
+
+Metrics/PerceivedComplexity:
+  Max: 12
+
+Metrics/ClassLength:
+  Max: 300
+
+Metrics/BlockLength:
+  Max: 40
+  Exclude:
+    - 'spec/**/*'
+
+Metrics/ModuleLength:
+  Max: 300
+
+Metrics/ParameterLists:
+  Max: 8
+
+# Gemspec style - this is a Logstash plugin, not a public gem
+Gemspec/RequireMFA:
+  Enabled: false
+
+Gemspec/DevelopmentDependencies:
+  Enabled: false
 
 Lint/UselessAccessModifier:
   ContextCreatingMethods:

@@ -3,6 +3,10 @@ import java.nio.file.Paths
 
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING
 
+plugins {
+    id 'com.diffplug.spotless' version '7.0.2'
+}
+
 apply plugin: 'java'
 apply plugin: 'idea'
 apply plugin: 'maven-publish'
@@ -39,7 +43,7 @@ repositories {
 // even if we use the ruby-maven gem to package the gem, install and lock_jars will create the logstash_output_kusto_jars.rb file with the same list of dependencies.
 // In the gradle way, running ./gradlew vendor creates the jar file list and adds them to vendor/jar-dependencies folder from where it is referenced in the gemspec (require_paths and files)
 
-// update dependencies to bom azure-sdk-bom/1.2.37 
+// update dependencies to bom azure-sdk-bom/1.2.37
 
 dependencies {
     // Kusto client libraries — all transitive deps that we explicitly pin are excluded
@@ -221,14 +225,14 @@ dependencies {
         exclude group: 'commons-codec'
         exclude group: 'commons-logging'
     }
-    implementation 'org.apache.httpcomponents:httpcore:4.4.16'    
+    implementation 'org.apache.httpcomponents:httpcore:4.4.16'
     implementation 'org.codehaus.woodstox:stax2-api:4.2.2'
     implementation 'org.jetbrains:annotations:24.1.0'
     implementation 'org.ow2.asm:asm:9.9.1'
     implementation 'org.reactivestreams:reactive-streams:1.0.4'
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
     implementation "org.slf4j:slf4j-simple:${slf4jVersion}"
-        
+
 }
 
 // This task generates the ruby file with all the dependencies. Once this task runs, look at the lib/logstash-output-kusto_jars.rb file
@@ -255,7 +259,7 @@ task vendor {
     def projectNameValue = project.name
     def projectVersionValue = project.version
     def buildDirValue = layout.buildDirectory.get().asFile
-    
+
     // take in all the dependencies from the runtimeClasspath and copy them to the vendor/jar-dependencies folder
     doLast {
         String vendorPathPrefix = "vendor/jar-dependencies"
@@ -282,3 +286,67 @@ task vendor {
 
 // The jar task is the standard packaging task & the generateGemJarRequiresFile task generates the ruby file with all the dependencies.
 vendor.dependsOn(jar, generateGemJarRequiresFile)
+
+// ─── Code formatting ───────────────────────────────────────────────────────────
+
+// Spotless formats Gradle build files
+spotless {
+    groovyGradle {
+        target '*.gradle', 'gradle/**/*.gradle'
+        trimTrailingWhitespace()
+        leadingTabsToSpaces(4)
+        endWithNewline()
+    }
+}
+
+// Resolve JRuby binary from LOGSTASH_PATH (same convention as build.sh)
+def resolveJRubyBin() {
+    def logstashPath = System.getenv('LOGSTASH_PATH') ?: '/softwares/logstash'
+    def jrubyBin = "${logstashPath}/vendor/jruby/bin/jruby"
+    if (!new File(jrubyBin).exists()) {
+        throw new GradleException("JRuby not found at ${jrubyBin}. Set LOGSTASH_PATH environment variable.")
+    }
+    return jrubyBin
+}
+
+task formatRuby(type: Exec) {
+    description = 'Auto-correct Ruby source files using RuboCop'
+    group = 'formatting'
+    def logstashPath = System.getenv('LOGSTASH_PATH') ?: '/softwares/logstash'
+    environment 'LOGSTASH_SOURCE', '1'
+    environment 'LOGSTASH_PATH', logstashPath
+    // Defer JRuby resolution to execution time so other tasks are not affected
+    doFirst {
+        def jrubyBin = resolveJRubyBin()
+        executable jrubyBin
+        args '-S', 'rubocop', '--autocorrect', 'lib/', 'spec/'
+    }
+    // RuboCop returns exit code 1 when non-fixable offenses remain after autocorrect
+    ignoreExitValue = true
+}
+
+task checkRuby(type: Exec) {
+    description = 'Check Ruby source file formatting using RuboCop'
+    group = 'formatting'
+    def logstashPath = System.getenv('LOGSTASH_PATH') ?: '/softwares/logstash'
+    environment 'LOGSTASH_SOURCE', '1'
+    environment 'LOGSTASH_PATH', logstashPath
+    // Defer JRuby resolution to execution time so other tasks are not affected
+    doFirst {
+        def jrubyBin = resolveJRubyBin()
+        executable jrubyBin
+        args '-S', 'rubocop', 'lib/', 'spec/'
+    }
+}
+
+task format {
+    description = 'Format all source files (Gradle + Ruby)'
+    group = 'formatting'
+    dependsOn 'spotlessApply', 'formatRuby'
+}
+
+task checkFormat {
+    description = 'Check formatting of all source files (Gradle + Ruby)'
+    group = 'formatting'
+    dependsOn 'spotlessCheck', 'checkRuby'
+}
