@@ -111,7 +111,8 @@ class E2EAll < E2EBase
 
   # ── Test 3: Buffered time flush ──────────────────────────────────
   # plugin_flush_interval => 5 (seconds) so the timer triggers flush.
-  # Large batch size + high max_items ensure only time triggers the flush.
+  # Large batch size (100KB) ensures all 10 events (~5KB total) fit
+  # comfortably without triggering a size-based flush.
   def test_buffered_time_flush
     table = unique_table('RubyE2EBufTime')
     create_tables([table], with_mapping: [table])
@@ -134,9 +135,9 @@ class E2EAll < E2EBase
       database => "#{@database}"
       table => "#{table}"
       json_mapping => "#{@mapping_name}"
-      max_batch_size => 100
+      max_batch_size => 102400
       plugin_flush_interval => 5
-      max_items => 10000
+      max_items => 100000
     }
   }
 )

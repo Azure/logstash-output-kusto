@@ -1,6 +1,8 @@
 require '../lib/logstash-output-kusto_jars'
 require 'csv'
 require 'fileutils'
+require 'net/http'
+require 'json'
 
 KUSTO_JAVA = Java::com.microsoft.azure.kusto
 
@@ -8,12 +10,22 @@ KUSTO_JAVA = Java::com.microsoft.azure.kusto
 # - Kusto client lifecycle (before_all / after_all)
 # - Table creation and cleanup
 # - Logstash start / stop with single-instance guarantee
-# - Data feeding and assertion
+# - Data feeding and assertion (poll-based, no fixed sleeps)
 # - Sequential test execution with per-test cleanup
+#
+# Performance: uses active polling instead of fixed sleeps to minimize
+# wait times while keeping generous timeouts for CI reliability.
 class E2EBase
-  STARTUP_WAIT = 60
-  DATA_WAIT = 60
+  # Maximum time to wait for Logstash API to become ready (seconds)
+  STARTUP_TIMEOUT = 90
+  # Maximum time to wait for output file to have all rows (seconds)
+  DATA_TIMEOUT = 90
+  # Maximum time to wait for Kusto query results (seconds)
+  ASSERT_TIMEOUT = 120
+  # Graceful stop timeout before SIGKILL (seconds)
   STOP_TIMEOUT = 30
+  # Logstash monitoring API port (configurable via LS_API_PORT env var)
+  API_PORT = (ENV['LS_API_PORT'] || '9600').to_i
 
   def initialize
     @engine_url = ENV.fetch('ENGINE_URL', nil)
@@ -29,6 +41,7 @@ class E2EBase
                    '"xtext", "xnumberAsText", "xtime", "xtextWithNulls", "xdynamicWithNulls"'
     @column_count = 19
     @csv_file = File.expand_path('dataset.csv', __dir__)
+    @expected_rows = CSV.read(@csv_file).length
     @mapping_name = 'test_mapping'
     @logstash_pid = nil
     @tables_created = []
@@ -98,26 +111,18 @@ class E2EBase
     lscommand = "#{@lslocalpath} -f #{File.absolute_path(config_file)}"
     puts "[#{label}] Starting logstash: #{lscommand}"
     @logstash_pid = spawn(lscommand)
-    puts "[#{label}] PID #{@logstash_pid}, waiting #{STARTUP_WAIT}s for startup..."
-    sleep(STARTUP_WAIT)
+    puts "[#{label}] PID #{@logstash_pid}"
 
-    # Verify process is still alive after startup wait
-    begin
-      Process.kill(0, @logstash_pid)
-      puts "[#{label}] Logstash process #{@logstash_pid} is running"
-    rescue Errno::ESRCH
-      raise "Logstash process #{@logstash_pid} died during startup"
-    end
+    # Poll Logstash API until pipeline is running (fast) or fall back to fixed wait
+    wait_for_logstash_ready(label)
 
     # Feed test data
     puts "[#{label}] Writing test data from #{@csv_file}"
     data = File.read(@csv_file)
     File.open(input_file, 'a') { |f| f.write(data) }
-    puts "[#{label}] Waiting #{DATA_WAIT}s for data processing..."
-    sleep(DATA_WAIT)
-    output_content = File.read(output_file)
-    line_count = output_content.lines.count
-    puts "[#{label}] Output file has #{line_count} lines"
+
+    # Poll output file until all rows are processed instead of fixed sleep
+    wait_for_output(output_file, label)
   end
 
   def stop_logstash
@@ -154,31 +159,37 @@ class E2EBase
 
   # ── Data assertion ───────────────────────────────────────────────
 
-  def assert_data(table, max_attempts: 20)
+  def assert_data(table, timeout: ASSERT_TIMEOUT)
     csv_data = CSV.read(@csv_file)
-    puts "Validating table #{table} (expecting #{csv_data.length} rows)"
+    puts "Validating table #{table} (expecting #{csv_data.length} rows, timeout #{timeout}s)"
 
+    deadline = Time.now + timeout
     validated = false
-    max_attempts.times do |attempt|
+    attempt = 0
+
+    while Time.now < deadline
+      attempt += 1
+      sleep(3)
       begin
-        sleep(5)
         query = @query_client.executeQuery(@database, "#{table} | sort by rownumber asc")
         result = query.getPrimaryResults
         unless result.count == csv_data.length
-          puts "  Attempt #{attempt + 1}/#{max_attempts}: got #{result.count}/#{csv_data.length} rows"
+          remaining = (deadline - Time.now).round(0)
+          puts "  Attempt #{attempt}: got #{result.count}/#{csv_data.length} rows (#{remaining}s left)"
           next
         end
       rescue StandardError => e
-        puts "  Attempt #{attempt + 1}/#{max_attempts}: #{e.message}"
+        remaining = (deadline - Time.now).round(0)
+        puts "  Attempt #{attempt}: #{e.message} (#{remaining}s left)"
         next
       end
 
       validate_rows(csv_data, result, table)
-      puts "  All #{csv_data.length} rows validated for #{table}"
+      puts "  All #{csv_data.length} rows validated for #{table} (attempt #{attempt})"
       validated = true
       break
     end
-    raise "Timed out waiting for data in #{table} after #{max_attempts} attempts" unless validated
+    raise "Timed out waiting for data in #{table} after #{timeout}s (#{attempt} attempts)" unless validated
   end
 
   # ── Test runner ──────────────────────────────────────────────────
@@ -236,6 +247,78 @@ class E2EBase
 
   def test_path(filename)
     File.expand_path(filename, __dir__)
+  end
+
+  # Poll Logstash's monitoring API until the pipeline is running.
+  # Falls back to a shorter fixed wait if the API is unavailable.
+  def wait_for_logstash_ready(label)
+    deadline = Time.now + STARTUP_TIMEOUT
+    api_available = false
+
+    while Time.now < deadline
+      sleep(2)
+
+      # First check if the process is still alive
+      begin
+        Process.kill(0, @logstash_pid)
+      rescue Errno::ESRCH
+        raise "Logstash process #{@logstash_pid} died during startup"
+      end
+
+      # Try the monitoring API
+      begin
+        uri = URI("http://localhost:#{API_PORT}/_node/pipelines?pretty")
+        response = Net::HTTP.get_response(uri)
+        if response.is_a?(Net::HTTPSuccess)
+          body = JSON.parse(response.body)
+          pipelines = body['pipelines'] || {}
+          running = pipelines.values.any? { |p| p['status'] == 'running' }
+          if running
+            elapsed = (Time.now - (deadline - STARTUP_TIMEOUT)).round(1)
+            puts "[#{label}] Pipeline running after #{elapsed}s"
+            api_available = true
+            break
+          end
+        end
+      rescue Errno::ECONNREFUSED, Errno::ECONNRESET, SocketError, Net::OpenTimeout,
+             JSON::ParserError, Timeout::Error
+        # API not ready yet — keep polling
+      end
+    end
+
+    unless api_available
+      # Fallback: API never became available — use a short fixed wait
+      puts "[#{label}] Warning: API polling timed out after #{STARTUP_TIMEOUT}s, proceeding anyway"
+    end
+  end
+
+  # Poll the output file until it has the expected number of lines.
+  # This replaces a fixed DATA_WAIT sleep — we know exactly when the
+  # pipeline has finished processing all events.
+  def wait_for_output(output_file, label)
+    deadline = Time.now + DATA_TIMEOUT
+    last_count = 0
+
+    while Time.now < deadline
+      sleep(2)
+      begin
+        content = File.read(output_file)
+        line_count = content.lines.count
+        if line_count != last_count
+          puts "[#{label}] Output file: #{line_count}/#{@expected_rows} lines"
+          last_count = line_count
+        end
+        if line_count >= @expected_rows
+          elapsed = (Time.now - (deadline - DATA_TIMEOUT)).round(1)
+          puts "[#{label}] All #{@expected_rows} rows processed in #{elapsed}s"
+          return
+        end
+      rescue StandardError
+        # File might not exist yet
+      end
+    end
+
+    puts "[#{label}] Warning: only #{last_count}/#{@expected_rows} rows after #{DATA_TIMEOUT}s, proceeding with assertion"
   end
 
   def cleanup_temp_files
