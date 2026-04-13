@@ -94,7 +94,7 @@ module LogStash
             max_items: options[:max_items] || 50,
             flush_each: options[:flush_each].to_i || 0,
             max_interval: options[:max_interval] || 5,
-            logger: options[:logger] || Logger.new(STDOUT),
+            logger: options[:logger] || Logger.new($stdout),
             process_failed_batches_on_startup: options[:process_failed_batches_on_startup] || false,
             has_on_flush_error: self.class.method_defined?(:on_flush_error),
             has_on_full_buffer_receive: self.class.method_defined?(:on_full_buffer_receive)
@@ -129,7 +129,7 @@ module LogStash
                 begin
                   buffer_flush(force: true)
                 rescue StandardError => e
-                  @buffer_config[:logger].error("Error in timed flush: #{e.message}\n#{e.backtrace.join("\n")}") if @buffer_config[:logger]
+                  @buffer_config[:logger]&.error("Error in timed flush: #{e.message}\n#{e.backtrace.join("\n")}")
                 end
               end
             end
@@ -184,7 +184,10 @@ module LogStash
         #              passed to +flush+ together, along with the grouping key itself.
         def buffer_receive(event, group = nil)
           buffer_initialize unless @buffer_state
-          # block if we've accumulated too many events
+          # Block if we've accumulated too many events.
+          # Attempt a flush each iteration so we aren't waiting passively for
+          # another thread to drain the buffer — prevents deadlock when all
+          # workers are blocked here simultaneously.
           while buffer_full?
             if @buffer_config[:has_on_full_buffer_receive]
               on_full_buffer_receive(
@@ -192,6 +195,8 @@ module LogStash
                 outgoing: @buffer_state[:outgoing_count]
               )
             end
+            buffer_flush
+            break if @shutdown
             sleep 0.1
           end
           @buffer_state[:pending_mutex].synchronize do
@@ -234,14 +239,14 @@ module LogStash
           items_flushed = 0
 
           begin
-            return 0 if @buffer_state[:pending_count] == 0
+            return 0 if (@buffer_state[:pending_count]).zero?
 
             # compute time_since_last_flush only when some item is pending
             time_since_last_flush = get_time_since_last_flush
 
             return 0 if !force &&
                         (@buffer_state[:pending_count] < @buffer_config[:max_items]) &&
-                        (@buffer_config[:flush_each] == 0 || @buffer_state[:pending_size] < @buffer_config[:flush_each]) &&
+                        ((@buffer_config[:flush_each]).zero? || @buffer_state[:pending_size] < @buffer_config[:flush_each]) &&
                         (time_since_last_flush < @buffer_config[:max_interval])
 
             @buffer_state[:pending_mutex].synchronize do
@@ -250,15 +255,13 @@ module LogStash
               @buffer_state[:outgoing_size] = @buffer_state[:pending_size]
               buffer_clear_pending
             end
-            if @buffer_config[:logger]
-              @buffer_config[:logger].info('Flushing output',
-                                           outgoing_count: @buffer_state[:outgoing_count],
-                                           time_since_last_flush: time_since_last_flush,
-                                           outgoing_events_count: @buffer_state[:outgoing_items].length,
-                                           batch_timeout: @buffer_config[:max_interval],
-                                           force: force,
-                                           final: final)
-            end
+            @buffer_config[:logger]&.info('Flushing output',
+                                          outgoing_count: @buffer_state[:outgoing_count],
+                                          time_since_last_flush: time_since_last_flush,
+                                          outgoing_events_count: @buffer_state[:outgoing_items].length,
+                                          batch_timeout: @buffer_config[:max_interval],
+                                          force: force,
+                                          final: final)
 
             @buffer_state[:outgoing_items].each do |group, events|
               if group.nil?
@@ -291,7 +294,7 @@ module LogStash
               end
               # Persist failed events to disk to prevent data loss
               begin
-                @file_persistence.persist_batch(events) if @file_persistence
+                @file_persistence&.persist_batch(events)
               rescue StandardError => persist_error
                 @buffer_config[:logger].error("UNRECOVERABLE: Failed to persist #{failed_size} events after flush error: #{persist_error.message}. Data loss has occurred.")
               end
@@ -320,7 +323,7 @@ module LogStash
         def process_new_json_files
           Dir.glob(::File.join(@file_persistence.failed_dir,
                                'failed_batch_*.json')).each do |file|
-            processing_file = file + '.processing'
+            processing_file = "#{file}.processing"
             begin
               ::File.rename(file, processing_file)
               process_failed_batch_file(processing_file)
@@ -333,29 +336,27 @@ module LogStash
         end
 
         def process_failed_batch_file(processing_file)
-          batch = JSON.load(::File.read(processing_file))
+          batch = JSON.parse(::File.read(processing_file))
           @buffer_state[:flush_mutex].lock
           begin
             flush(batch, true)
             @file_persistence.delete_batch(processing_file)
-            @buffer_config[:logger].info("Successfully flushed and deleted failed batch file: #{processing_file}") if @buffer_config[:logger]
+            @buffer_config[:logger]&.info("Successfully flushed and deleted failed batch file: #{processing_file}")
           rescue StandardError => e
-            @buffer_config[:logger].warn("Failed to flush persisted batch: #{e.message}") if @buffer_config[:logger]
+            @buffer_config[:logger]&.warn("Failed to flush persisted batch: #{e.message}")
           ensure
             @buffer_state[:flush_mutex].unlock
           end
         rescue Errno::ENOENT
-          if @buffer_config[:logger]
-            @buffer_config[:logger].warn("Batch file #{processing_file} was not found when attempting to read. It may have been deleted by another process.")
-          end
+          @buffer_config[:logger]&.warn("Batch file #{processing_file} was not found when attempting to read. It may have been deleted by another process.")
         rescue StandardError => e
-          @buffer_config[:logger].warn("Failed to load batch file #{processing_file}: #{e.message}. Moving to quarantine.") if @buffer_config[:logger]
+          @buffer_config[:logger]&.warn("Failed to load batch file #{processing_file}: #{e.message}. Moving to quarantine.")
           begin
-            quarantine_dir = File.join(@file_persistence.failed_dir, 'quarantine')
-            FileUtils.mkdir_p(quarantine_dir) unless Dir.exist?(quarantine_dir)
+            quarantine_dir = ::File.join(@file_persistence.failed_dir, 'quarantine')
+            FileUtils.mkdir_p(quarantine_dir)
             FileUtils.mv(processing_file, quarantine_dir)
           rescue StandardError => del_err
-            @buffer_config[:logger].warn("Failed to move corrupted batch file #{processing_file} to quarantine: #{del_err.message}") if @buffer_config[:logger]
+            @buffer_config[:logger]&.warn("Failed to move corrupted batch file #{processing_file} to quarantine: #{del_err.message}")
           end
         end
 

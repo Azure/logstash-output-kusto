@@ -33,27 +33,10 @@ bin/logstash-plugin install logstash-output-kusto
 
 The plugin supports two ingestion modes:
 
-- **File mode (default)** — Events are written to temporary files on disk, then uploaded to Kusto via file-based ingestion. This is the original behavior and is used when none of the buffered-mode parameters are set. Requires the `path` parameter.
-- **Buffered mode** — Events are buffered in memory and uploaded directly to Kusto via stream ingestion. Activated by setting any of `max_batch_size`, `plugin_flush_interval`, or `max_items`. Supports size-based, time-based, and count-based flush triggers with automatic retry and failed-batch persistence.
+- **Buffered mode (default)** — Events are buffered in memory and uploaded directly to Kusto via stream ingestion. This is the default mode when `path` is not set. Supports size-based, time-based, and count-based flush triggers with automatic retry and failed-batch persistence.
+- **File mode** — Events are written to temporary files on disk, then uploaded to Kusto via file-based ingestion. Activated by setting the `path` parameter. This is the original behavior, preserved for backward compatibility.
 
-### File mode example (default, backward-compatible)
-
-```ruby
-output {
-  kusto {
-    ingest_url => "https://ingest-<cluster-name>.kusto.windows.net/"
-    app_id => "<application id>"
-    app_key => "<application key/secret>"
-    app_tenant => "<tenant id>"
-    database => "<database name>"
-    table => "<target table>"
-    json_mapping => "<mapping name>"
-    path => "/tmp/kusto/%{+YYYY-MM-dd-HH-mm}"
-  }
-}
-```
-
-### Buffered mode example
+### Buffered mode example (default)
 
 ```ruby
 output {
@@ -68,6 +51,23 @@ output {
     max_batch_size => 10
     plugin_flush_interval => 10
     max_items => 1000
+  }
+}
+```
+
+### File mode example (backward-compatible)
+
+```ruby
+output {
+  kusto {
+    ingest_url => "https://ingest-<cluster-name>.kusto.windows.net/"
+    app_id => "<application id>"
+    app_key => "<application key/secret>"
+    app_tenant => "<tenant id>"
+    database => "<database name>"
+    table => "<target table>"
+    json_mapping => "<mapping name>"
+    path => "/tmp/kusto/%{+YYYY-MM-dd-HH-mm}"
   }
 }
 ```

@@ -12,7 +12,7 @@ module LogStash
         def initialize(dir = nil, logger = nil)
           @failed_dir = dir || ::File.join(Dir.tmpdir, 'logstash_backout')
           begin
-            ::FileUtils.mkdir_p(@failed_dir) unless Dir.exist?(@failed_dir)
+            ::FileUtils.mkdir_p(@failed_dir)
           rescue StandardError => e
             logger&.fatal("Failed to create backup directory #{@failed_dir}: #{e.message}")
             raise
@@ -26,6 +26,7 @@ module LogStash
           attempts = 0
           begin
             @write_mutex.synchronize do
+              ::FileUtils.mkdir_p(@failed_dir) unless ::File.directory?(@failed_dir)
               tmpfile = ::File.join(@failed_dir, "tmp_#{SecureRandom.uuid}.json")
               filename = ::File.join(@failed_dir,
                                      "failed_batch_#{Time.now.to_i}_#{SecureRandom.uuid}.json")

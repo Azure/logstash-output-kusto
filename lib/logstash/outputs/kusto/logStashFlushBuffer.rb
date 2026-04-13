@@ -29,29 +29,29 @@ module LogStash
             process_failed_batches_on_startup: kusto_logstash_configuration.kusto_flush_config.process_failed_batches_on_startup,
             file_persistence: kusto_logstash_configuration.file_persistence
           )
-        end # initialize
+        end
 
         # Public methods
 
         # Adding an event document into the buffer
         def batch_event(event_document)
           buffer_receive(event_document)
-        end # def batch_event
+        end
 
         # Flushing all buffer content to Kusto.
         # Called from Stud::Buffer#buffer_flush when there are events to flush
         def flush(documents, _close = false)
           # Skip in case there are no candidate documents to deliver
-          if documents.length < 1
-            @logger.warn('No documents in batch in the batch. Skipping')
+          if documents.empty?
+            @logger.warn('No documents in batch. Skipping')
             return
           end
           @logger.info("Uploading batch of documents to Kusto #{documents.length} documents")
           @ingestor.upload(documents)
-        end # def flush
+        end
 
         def stop_ingestor
-          @ingestor.stop unless @ingestor.nil?
+          @ingestor&.stop
         end
 
         def close
@@ -59,5 +59,5 @@ module LogStash
           shutdown
           stop_ingestor
         end
-      end # LogStashAutoResizeBuffer
+      end
     end; end; end

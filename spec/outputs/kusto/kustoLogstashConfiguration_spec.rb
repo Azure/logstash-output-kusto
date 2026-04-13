@@ -117,4 +117,131 @@ describe LogStash::Outputs::KustoInternal::KustoLogstashConfiguration do
       expect(upload.upload_queue_size).to eq(upload_queue_size)
     end
   end
+
+  # -------------------------------------------------------------------
+  # validate_config error-path tests (Thread 30 from PR review)
+  # -------------------------------------------------------------------
+  describe '#validate_config' do
+    # Helper to build a config with overrides and call validate_config
+    def build_and_validate(auth_overrides: {}, proxy_overrides: {}, ingest_overrides: {})
+      auth_defaults = { app_id: app_id, app_key: app_key, app_tenant: app_tenant,
+                        managed_identity: managed_identity, cli_auth: cliauth }
+      a = auth_defaults.merge(auth_overrides)
+      auth = LogStash::Outputs::KustoInternal::KustoAuthConfiguration.new(
+        a[:app_id], a[:app_key], a[:app_tenant], a[:managed_identity], a[:cli_auth]
+      )
+
+      proxy_defaults = { host: proxy_host, port: proxy_port, protocol: proxy_protocol,
+                         aad_only: proxy_aad_only }
+      p = proxy_defaults.merge(proxy_overrides)
+      proxy = LogStash::Outputs::KustoInternal::KustoProxyConfiguration.new(
+        p[:host], p[:port], p[:protocol], p[:aad_only]
+      )
+
+      ingest_defaults = { url: ingest_url, database: database, table: table,
+                          mapping: json_mapping }
+      i = ingest_defaults.merge(ingest_overrides)
+      ingest = LogStash::Outputs::KustoInternal::KustoIngestConfiguration.new(
+        i[:url], i[:database], i[:table], i[:mapping]
+      )
+
+      config = described_class.new(ingest, auth, proxy, kusto_flush_config,
+                                   kusto_upload_config, logger, file_persistence)
+      config.validate_config
+    end
+
+    context 'when no auth credentials are provided' do
+      it 'raises ConfigurationError' do
+        expect do
+          build_and_validate(auth_overrides: { app_id: '', app_key: nil, managed_identity: '', cli_auth: false })
+        end.to raise_error(LogStash::ConfigurationError, /managed_identity_id is not provided/)
+      end
+    end
+
+    context 'when app_id is set but app_key is missing' do
+      it 'raises ConfigurationError' do
+        expect do
+          build_and_validate(auth_overrides: { app_key: nil })
+        end.to raise_error(LogStash::ConfigurationError, /app_key is required/)
+      end
+    end
+
+    context 'when app_id is set but app_key is empty' do
+      it 'raises ConfigurationError' do
+        expect do
+          build_and_validate(auth_overrides: { app_key: LogStash::Util::Password.new('') })
+        end.to raise_error(LogStash::ConfigurationError, /app_key is required/)
+      end
+    end
+
+    context 'when app_id is set but app_tenant is missing' do
+      it 'raises ConfigurationError' do
+        expect do
+          build_and_validate(auth_overrides: { app_tenant: '' })
+        end.to raise_error(LogStash::ConfigurationError, /app_tenant is required/)
+      end
+    end
+
+    context 'when proxy_aad_only is true but no proxy host is configured' do
+      it 'raises ConfigurationError' do
+        expect do
+          build_and_validate(proxy_overrides: { host: '', aad_only: true })
+        end.to raise_error(LogStash::ConfigurationError, /proxy_aad_only can be used only when proxy is configured/)
+      end
+    end
+
+    context 'when database contains a dynamic field reference' do
+      it 'raises ConfigurationError' do
+        expect do
+          # rubocop:disable Style/FormatStringToken
+          build_and_validate(ingest_overrides: { database: '%{some_field}' })
+          # rubocop:enable Style/FormatStringToken
+        end.to raise_error(LogStash::ConfigurationError, /database config value should not be dynamic/)
+      end
+    end
+
+    context 'when table contains a dynamic field reference' do
+      it 'raises ConfigurationError' do
+        expect do
+          # rubocop:disable Style/FormatStringToken
+          build_and_validate(ingest_overrides: { table: '%{some_field}' })
+          # rubocop:enable Style/FormatStringToken
+        end.to raise_error(LogStash::ConfigurationError, /table config value should not be dynamic/)
+      end
+    end
+
+    context 'when json_mapping contains a dynamic field reference' do
+      it 'raises ConfigurationError' do
+        expect do
+          # rubocop:disable Style/FormatStringToken
+          build_and_validate(ingest_overrides: { mapping: '%{some_field}' })
+          # rubocop:enable Style/FormatStringToken
+        end.to raise_error(LogStash::ConfigurationError, /json_mapping config value should not be dynamic/)
+      end
+    end
+
+    context 'when proxy_protocol is invalid' do
+      it 'raises ConfigurationError' do
+        expect do
+          build_and_validate(proxy_overrides: { protocol: 'ftp' })
+        end.to raise_error(LogStash::ConfigurationError, /proxy_protocol has to be http or https/)
+      end
+    end
+
+    context 'when cli_auth is used (no app_id needed)' do
+      it 'passes validation' do
+        expect do
+          build_and_validate(auth_overrides: { app_id: '', app_key: nil, managed_identity: '', cli_auth: true })
+        end.not_to raise_error
+      end
+    end
+
+    context 'when managed_identity is used (no app_id needed)' do
+      it 'passes validation' do
+        expect do
+          build_and_validate(auth_overrides: { app_id: '', app_key: nil, managed_identity: 'my-identity' })
+        end.not_to raise_error
+      end
+    end
+  end
 end

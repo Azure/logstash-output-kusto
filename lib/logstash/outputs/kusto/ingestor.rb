@@ -8,7 +8,17 @@ module LogStash
   module Outputs
     class KustoOutputInternal
       ##
-      # This handles the overall logic and communication with Kusto
+      # Core Kusto transport layer. Handles both ingestion modes:
+      #   - `upload(data)` — streaming ingestion for buffered mode (ingestFromStream)
+      #   - `upload_file(path)` — queued ingestion for file mode (ingestFromFile)
+      #
+      # Both paths use a shared ThreadPoolExecutor for parallel uploads with
+      # configurable concurrency (`upload_concurrent_count`) and queue depth
+      # (`upload_queue_size`). Backpressure uses caller_runs policy.
+      #
+      # IMPORTANT: All bare `File`/`Dir` references MUST use `::File`/`::Dir`
+      # because this code lives under `LogStash::Outputs::` where `File` resolves
+      # to `LogStash::Outputs::File` (the logstash file output plugin class).
       #
       class Ingestor
         require 'logstash-output-kusto_jars'
@@ -16,7 +26,7 @@ module LogStash
         MAX_RETRIES = 3
         LOW_QUEUE_LENGTH = 3
 
-        FIELD_REF = /%\{[^}]+\}/
+        FIELD_REF = /%\{[^}]+\}/.freeze
 
         def initialize(kusto_logstash_configuration, logger)
           @kusto_logstash_configuration = kusto_logstash_configuration
@@ -46,7 +56,7 @@ module LogStash
                                       else
                                         @logger.info('Using user managed identity.')
                                         kusto_java.data.auth.ConnectionStringBuilder.createWithAadManagedIdentity(
-                                          @kusto_logstash_configuration.kusto_ingest.ingest_url, @kusto_logstash_configuration.kusto_ingest.managed_identity_id
+                                          @kusto_logstash_configuration.kusto_ingest.ingest_url, @kusto_logstash_configuration.kusto_auth.managed_identity_id
                                         )
                                       end
                                     elsif @kusto_logstash_configuration.kusto_auth.cli_auth
@@ -91,18 +101,17 @@ module LogStash
                           @kusto_logstash_configuration.kusto_ingest.json_mapping)
             @ingestion_properties.setIngestionMapping(@kusto_logstash_configuration.kusto_ingest.json_mapping,
                                                       kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
-            @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::MULTIJSON)
           else
             @logger.debug('No mapping reference provided. Columns will be mapped by names in the logstash output')
-            @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::MULTIJSON)
           end
+          @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::MULTIJSON)
           @logger.debug('Kusto resources are ready.')
         end
 
         def upload(data)
           data_size = data.size
           @logger.info("Ingesting #{data_size} rows to database: #{@ingestion_properties.getDatabaseName} table: #{@ingestion_properties.getTableName}")
-          if data_size > 0
+          if data_size.positive?
             # Serialize data before submitting to the pool so serialization errors
             # fail fast in the calling thread rather than inside a worker.
             json_bytes = data.to_json.to_java_bytes
@@ -127,13 +136,11 @@ module LogStash
             end
           else
             @logger.warn('Data is empty and is not ingested.')
-          end # if data.size > 0
-        end # def upload
+          end
+        end
 
         def upload_file_async(path, delete_on_success)
-          if @workers_pool.remaining_capacity <= LOW_QUEUE_LENGTH
-            @logger.warn("Ingestor queue capacity is running low with #{@workers_pool.remaining_capacity} free slots.")
-          end
+          @logger.warn("Ingestor queue capacity is running low with #{@workers_pool.remaining_capacity} free slots.") if @workers_pool.remaining_capacity <= LOW_QUEUE_LENGTH
 
           @workers_pool.post do
             upload_file(path, delete_on_success)
@@ -145,20 +152,37 @@ module LogStash
         end
 
         def upload_file(path, delete_on_success)
-          file_size = File.size(path)
+          file_size = ::File.size(path)
           @logger.debug("Sending file to kusto: #{path}. size: #{file_size}")
+
+          unless file_size.positive?
+            @logger.warn("File #{path} is an empty file and is not ingested.")
+            return
+          end
+
           retries = 0
           max_retries = 10
-
-          if file_size > 0
-            file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(
-              path, 0
-            )
+          begin
+            file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path)
             @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
-          else
-            @logger.warn("File #{path} is an empty file and is not ingested.")
+          rescue Errno::ENOENT, Errno::EACCES
+            raise # unrecoverable file errors, propagate to outer rescue
+          rescue StandardError => e
+            retries += 1
+            if retries <= max_retries
+              delay = RETRY_DELAY_SECONDS * retries
+              @logger.error("Uploading failed, retrying (#{retries}/#{max_retries}) in #{delay}s.",
+                            exception: e.class, message: e.message, path: path)
+              sleep delay
+              retry
+            else
+              @logger.error("Uploading failed after #{max_retries} retries, giving up.",
+                            exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
+              return
+            end
           end
-          File.delete(path) if delete_on_success
+
+          ::File.delete(path) if delete_on_success
           @logger.debug("File #{path} sent to kusto.")
         rescue Errno::ENOENT => e
           @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path,
@@ -166,18 +190,6 @@ module LogStash
         rescue Java::JavaNioFile::NoSuchFileException => e
           @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path,
                                                                     backtrace: e.backtrace)
-        rescue StandardError => e
-          retries += 1
-          if retries <= max_retries
-            delay = RETRY_DELAY_SECONDS * retries
-            @logger.error("Uploading failed, retrying (#{retries}/#{max_retries}) in #{delay}s.",
-                          exception: e.class, message: e.message, path: path)
-            sleep delay
-            retry
-          else
-            @logger.error("Uploading failed after #{max_retries} retries, giving up.",
-                          exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
-          end
         end
 
         def stop
@@ -193,7 +205,7 @@ module LogStash
           end
           @workers_pool.shutdown
           @workers_pool.wait_for_termination(nil)
-        end # def stop
+        end
 
         private
 
@@ -218,5 +230,5 @@ module LogStash
             end
           end
         end
-      end # class Ingestor
+      end
     end; end; end # module LogStash::Outputs::KustoOutputInternal

@@ -39,7 +39,7 @@ module LogStash
         # @return [void]
         def start
           @mutex.synchronize do
-            return if @thread && @thread.alive?
+            return if @thread&.alive?
 
             @thread = Thread.new { run }
           end
@@ -53,13 +53,13 @@ module LogStash
             @stopped = true
           end
 
-          @thread && @thread.join
+          @thread&.join
         end
 
         ##
         # @return [Boolean]
         def alive?
-          @thread && @thread.alive?
+          @thread&.alive?
         end
 
         private

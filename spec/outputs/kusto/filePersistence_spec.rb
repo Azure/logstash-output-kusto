@@ -21,7 +21,7 @@ describe LogStash::Outputs::KustoOutputInternal::FilePersistence do
     file_persistence.persist_batch(batch)
     files = Dir.glob(File.join(tmp_dir, 'failed_batch_*.json'))
     expect(files.size).to eq(1)
-    loaded_batch = JSON.load(File.read(files.first))
+    loaded_batch = JSON.parse(File.read(files.first))
     expect(loaded_batch).to eq(batch)
   end
 
@@ -41,7 +41,7 @@ describe LogStash::Outputs::KustoOutputInternal::FilePersistence do
   end
 
   it 'returns empty array if directory does not exist' do
-    file_persistence = described_class.new(tmp_dir, logger) # Re-instantiate!
+    _file_persistence = described_class.new(tmp_dir, logger) # Re-instantiate!
     FileUtils.rm_rf(tmp_dir)
     files = Dir.glob(File.join(tmp_dir, 'failed_batch_*.json'))
     expect(files).to eq([])

@@ -10,7 +10,7 @@ module LogStash
       # temporary files on disk, then uploaded to Kusto via ingestFromFile.
       #
       class FileModeHandler
-        FIELD_REF = /%\{[^}]+\}/
+        FIELD_REF = /%\{[^}]+\}/.freeze
 
         def initialize(kusto_logstash_configuration, file_opts, logger)
           @logger = logger
@@ -32,16 +32,16 @@ module LogStash
           @files = {}
           @io_mutex = Mutex.new
 
-          @path = File.expand_path("#{@path}.#{@database}.#{@table}")
+          @path = ::File.expand_path("#{@path}.#{@database}.#{@table}")
 
           validate_path
 
           @file_root = if path_with_field_ref?
                          extract_file_root
                        else
-                         File.dirname(@path)
+                         ::File.dirname(@path)
                        end
-          @failure_path = File.join(@file_root, @filename_failure)
+          @failure_path = ::File.join(@file_root, @filename_failure)
 
           @ingestor = Ingestor.new(kusto_logstash_configuration, logger)
 
@@ -49,9 +49,9 @@ module LogStash
 
           @last_stale_cleanup_cycle = Time.now
 
-          @flusher = Interval.start(@flush_interval, -> { flush_pending_files }) if @flush_interval > 0
+          @flusher = Interval.start(@flush_interval, -> { flush_pending_files }) if @flush_interval.positive?
 
-          return unless (@stale_cleanup_type == 'interval') && (@stale_cleanup_interval > 0)
+          return unless (@stale_cleanup_type == 'interval') && @stale_cleanup_interval.positive?
 
           @cleaner = Interval.start(@stale_cleanup_interval, -> { close_stale_files })
         end
@@ -62,13 +62,19 @@ module LogStash
           @io_mutex.synchronize do
             fd = open(file_output_path)
             fd.write(encoded)
-            fd.flush unless @flusher && @flusher.alive?
+            fd.flush unless @flusher&.alive?
           end
         end
 
+        # Called after each batch of events in multi_receive_encoded.
+        # Triggers stale file cleanup when stale_cleanup_type is 'events'.
+        def after_batch
+          close_stale_files if @stale_cleanup_type == 'events'
+        end
+
         def close
-          @flusher.stop unless @flusher.nil?
-          @cleaner.stop unless @cleaner.nil?
+          @flusher&.stop
+          @cleaner&.stop
           @io_mutex.synchronize do
             @logger.debug('Close: closing files')
             @files.each do |path, fd|
@@ -79,7 +85,7 @@ module LogStash
               @logger.error('Exception while flushing and closing files.', exception: e)
             end
           end
-          @ingestor.stop unless @ingestor.nil?
+          @ingestor&.stop
         end
 
         private
@@ -102,7 +108,7 @@ module LogStash
         end
 
         def root_directory
-          parts = @path.split(File::SEPARATOR).reject(&:empty?)
+          parts = @path.split(::File::SEPARATOR).reject(&:empty?)
           if Gem.win_platform?
             parts[1]
           else
@@ -128,12 +134,12 @@ module LogStash
         end
 
         def extract_file_root
-          parts = File.expand_path(@path).split(File::SEPARATOR)
-          parts.take_while { |part| part !~ FIELD_REF }.join(File::SEPARATOR)
+          parts = ::File.expand_path(@path).split(::File::SEPARATOR)
+          parts.take_while { |part| part !~ FIELD_REF }.join(::File::SEPARATOR)
         end
 
         def inside_file_root?(log_path)
-          target_file = File.expand_path(log_path)
+          target_file = ::File.expand_path(log_path)
           target_file.start_with?("#{@file_root}/")
         end
 
@@ -156,7 +162,7 @@ module LogStash
 
           @io_mutex.synchronize do
             @logger.debug('Starting stale files cleanup cycle', files: @files)
-            inactive_files = @files.select { |_path, fd| !fd.active }
+            inactive_files = @files.reject { |_path, fd| fd.active }
             @logger.debug("#{inactive_files.count} stale files found",
                           inactive_files: inactive_files)
             inactive_files.each do |path, fd|
@@ -175,7 +181,7 @@ module LogStash
         end
 
         def deleted?(path)
-          !File.exist?(path)
+          !::File.exist?(path)
         end
 
         def open(path)
@@ -192,27 +198,27 @@ module LogStash
 
           @logger.info('Opening file', path: path)
 
-          dir = File.dirname(path)
-          unless Dir.exist?(dir)
+          dir = ::File.dirname(path)
+          unless ::Dir.exist?(dir)
             @logger.info('Creating directory', directory: dir)
             if @dir_mode == -1
-              FileUtils.mkdir_p(dir)
+              ::FileUtils.mkdir_p(dir)
             else
-              FileUtils.mkdir_p(dir, mode: @dir_mode)
+              ::FileUtils.mkdir_p(dir, mode: @dir_mode)
             end
           end
 
           stat = begin
-            File.stat(path)
+            ::File.stat(path)
           rescue StandardError
             nil
           end
           fd = if stat && stat.ftype == 'fifo' && LogStash::Environment.jruby?
                  java.io.FileWriter.new(java.io.File.new(path))
                elsif @file_mode != -1
-                 File.new(path, 'a+', @file_mode)
+                 ::File.new(path, 'a+', @file_mode)
                else
-                 File.new(path, 'a+')
+                 ::File.new(path, 'a+')
                end
           @files[path] = IOWriter.new(fd)
         end
@@ -230,13 +236,11 @@ module LogStash
           new_path = @path[0..last_folder_before_pattern]
 
           begin
-            return unless Dir.exist?(new_path)
+            return unless ::Dir.exist?(new_path)
 
             @logger.info("Going to recover old files in path #{new_path}")
 
-            old_files = Find.find(new_path).select do |p|
-              /.*\.#{@database}\.#{@table}$/ =~ p
-            end
+            old_files = ::Find.find(new_path).grep(/.*\.#{@database}\.#{@table}$/)
             @logger.info("Found #{old_files.length} old file(s), sending them now...")
 
             old_files.each do |file|
@@ -247,7 +251,7 @@ module LogStash
                                                       backtrace: e.backtrace)
           end
         end
-      end # class FileModeHandler
+      end
 
       # Wrapper class for file IO with activity tracking
       class IOWriter

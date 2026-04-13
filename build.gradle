@@ -319,7 +319,7 @@ task formatRuby(type: Exec) {
     doFirst {
         def jrubyBin = resolveJRubyBin()
         executable jrubyBin
-        args '-S', 'rubocop', '--autocorrect', 'lib/', 'spec/'
+        args '-S', 'rubocop', '-A', 'lib/', 'spec/'
     }
     // RuboCop returns exit code 1 when non-fixable offenses remain after autocorrect
     ignoreExitValue = true
