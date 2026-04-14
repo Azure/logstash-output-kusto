@@ -73,12 +73,12 @@ module LogStash
       # Port where the proxy runs , defaults to 80. Usually a value like 3128
       config :proxy_port, validate: :number, required: false, default: 80
 
-      # Check Proxy URL can be over http or https. Do we need it this way or ignore this & remove this
-      config :proxy_protocol, validate: :string, required: false, default: 'https'
+      # Check Proxy URL can be over http or https.
+      config :proxy_protocol, validate: :string, required: false, default: 'http'
 
       # --- Buffered mode configs (used by default when path is not set) ---
       # Maximum size of the buffer before it gets flushed, in bytes.
-      config :max_batch_size, validate: :number, required: false, default: 10
+      config :max_batch_size, validate: :number, required: false, default: 10_485_760
 
       # Interval (in seconds) before the buffer gets flushed, regardless of size.
       config :plugin_flush_interval, validate: :number, required: false, default: 10

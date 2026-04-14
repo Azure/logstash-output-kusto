@@ -95,13 +95,13 @@ More information about configuring Logstash can be found in the [logstash config
 
 #### Buffered mode parameters
 
-Setting **any** of these parameters activates buffered (in-memory) mode. When none are set, the plugin uses file mode.
+These parameters apply when buffered mode is active (the default, when `path` is not set).
 
 | Parameter Name | Description | Notes |
 | --- | --- | --- |
-| **max_batch_size** | Maximum size of the in-memory buffer (in bytes) before it gets flushed. | Optional. Default when active: `10` |
-| **plugin_flush_interval** | Interval (in seconds) before the buffer gets flushed regardless of size. | Optional. Default when active: `10` |
-| **max_items** | Maximum number of events in the buffer before it gets flushed. | Optional. Default when active: `1000` |
+| **max_batch_size** | Maximum size of the in-memory buffer (in bytes) before it gets flushed. | Optional. Default: `10485760` (10 MB) |
+| **plugin_flush_interval** | Interval (in seconds) before the buffer gets flushed regardless of size. | Optional. Default: `10` |
+| **max_items** | Maximum number of events in the buffer before it gets flushed. | Optional. Default: `1000` |
 | **process_failed_batches_on_startup** | Retry persisted failed batches when the plugin starts. | Optional. Default: `false` |
 | **failed_dir_name** | Directory to store failed batches. If the directory does not exist, it will be created. | Optional. Default: system temp directory |
 

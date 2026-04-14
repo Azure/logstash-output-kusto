@@ -112,9 +112,9 @@ module LogStash
           data_size = data.size
           @logger.info("Ingesting #{data_size} rows to database: #{@ingestion_properties.getDatabaseName} table: #{@ingestion_properties.getTableName}")
           if data_size.positive?
-            # Serialize data before submitting to the pool so serialization errors
-            # fail fast in the calling thread rather than inside a worker.
-            json_bytes = data.to_json.to_java_bytes
+            # Serialize as newline-delimited JSON (one object per line) to match
+            # the MULTIJSON data format expected by Kusto ingestion.
+            json_bytes = data.map(&:to_json).join("\n").to_java_bytes
 
             promise = Concurrent::Promises.future_on(@workers_pool) do
               ingest_with_retry(data, json_bytes)
@@ -144,6 +144,10 @@ module LogStash
 
           @workers_pool.post do
             upload_file(path, delete_on_success)
+          rescue StandardError => e
+            @logger.error('Unhandled error in file upload worker.',
+                          exception: e.class, message: e.message, path: path,
+                          backtrace: e.backtrace)
           end
         rescue StandardError => e
           @logger.error('Error submitting file upload.', exception: e.class, message: e.message, path: path,
@@ -204,7 +208,11 @@ module LogStash
             end
           end
           @workers_pool.shutdown
-          @workers_pool.wait_for_termination(nil)
+          # Bounded wait to avoid blocking shutdown indefinitely if a worker is stuck
+          return if @workers_pool.wait_for_termination(120)
+
+          @logger.warn('Worker pool did not terminate within 120s, forcing shutdown.')
+          @workers_pool.kill
         end
 
         private

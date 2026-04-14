@@ -34,24 +34,29 @@ module LogStash
           end
           # If proxy AAD is required and the proxy configuration is not provided - fail
           if @kusto_proxy.proxy_aad_only && @kusto_proxy.is_direct_conn
-            @logger.error('proxy_aad_only can be used only when proxy is configured.', @kusto_proxy.proxy_aad_only)
+            @logger.error('proxy_aad_only can be used only when proxy is configured.',
+                          proxy_aad_only: @kusto_proxy.proxy_aad_only)
             raise LogStash::ConfigurationError, 'proxy_aad_only can be used only when proxy is configured.'
           end
 
           if @kusto_ingest.database =~ FIELD_REF
-            @logger.error('database config value should not be dynamic.', @kusto_ingest.database)
+            @logger.error('database config value should not be dynamic.',
+                          database: @kusto_ingest.database)
             raise LogStash::ConfigurationError, 'database config value should not be dynamic.'
           end
           if @kusto_ingest.table =~ FIELD_REF
-            @logger.error('table config value should not be dynamic.', @kusto_ingest.table)
+            @logger.error('table config value should not be dynamic.',
+                          table: @kusto_ingest.table)
             raise LogStash::ConfigurationError, 'table config value should not be dynamic.'
           end
           if @kusto_ingest.json_mapping =~ FIELD_REF
-            @logger.error('json_mapping config value should not be dynamic.', @kusto_ingest.json_mapping)
+            @logger.error('json_mapping config value should not be dynamic.',
+                          json_mapping: @kusto_ingest.json_mapping)
             raise LogStash::ConfigurationError, 'json_mapping config value should not be dynamic.'
           end
           unless %w[https http].include? @kusto_proxy.proxy_protocol
-            @logger.error('proxy_protocol has to be http or https.', @kusto_proxy.proxy_protocol)
+            @logger.error('proxy_protocol has to be http or https.',
+                          proxy_protocol: @kusto_proxy.proxy_protocol)
             raise LogStash::ConfigurationError, 'proxy_protocol has to be http or https.'
           end
 

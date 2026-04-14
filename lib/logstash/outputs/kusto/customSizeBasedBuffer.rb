@@ -101,6 +101,11 @@ module LogStash
           }
 
           @shutdown = false
+          # Mutex + ConditionVariable for interruptible timer sleep.
+          # shutdown() signals the CV so the timer thread wakes immediately
+          # instead of sleeping for the full max_interval.
+          @shutdown_mutex = Mutex.new
+          @shutdown_cv = ConditionVariable.new
 
           @buffer_state = {
             # items accepted from including class
@@ -125,7 +130,12 @@ module LogStash
               loop do
                 break if @shutdown
 
-                sleep(@buffer_config[:max_interval])
+                # Interruptible sleep: wakes on shutdown signal or after max_interval
+                @shutdown_mutex.synchronize do
+                  @shutdown_cv.wait(@shutdown_mutex, @buffer_config[:max_interval])
+                end
+                break if @shutdown
+
                 begin
                   buffer_flush(force: true)
                 rescue StandardError => e
@@ -197,6 +207,7 @@ module LogStash
             end
             buffer_flush
             break if @shutdown
+
             sleep 0.1
           end
           @buffer_state[:pending_mutex].synchronize do
@@ -361,9 +372,10 @@ module LogStash
         end
 
         def shutdown
-          # Graceful shutdown of timer thread
+          # Graceful shutdown of timer thread — signal CV so it wakes immediately
           if @buffer_state && @buffer_state[:timer]
             @shutdown = true
+            @shutdown_mutex.synchronize { @shutdown_cv.signal }
             @buffer_state[:timer].join
             @buffer_state[:timer] = nil
           end
