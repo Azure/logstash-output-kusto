@@ -1,0 +1,68 @@
+# Combined Logstash config for manual testing BOTH ingestion modes simultaneously.
+# Both kusto outputs read from the same input. Each uses a different json_mapping
+# with a constant `ingestion_mode` field ("buffered" or "file") so you can
+# distinguish which mode produced each row in Kusto:
+#
+#   ManualTestLogs | summarize count() by ingestion_mode
+#
+# Usage:
+#   1. ./manual-test/setup-table.sh                   # create table + mappings (once)
+#   2. ./random-data.sh /tmp/curllogs.txt 0            # generate data (other terminal)
+#   3. logstash -f manual-test/combined.conf           # run this config
+
+input {
+  file {
+    path => "/tmp/curllogs.txt"
+    sincedb_path => "/dev/null"
+    start_position => "beginning"
+  }
+}
+
+filter {
+  grok {
+    match => { "message" => "%{IP:ip} - - \[%{HTTPDATE:timestamp}\] \"%{WORD:method} %{URIPATHPARAM:url} HTTP/%{NUMBER}\" %{NUMBER:status:int} %{NUMBER:size:int}" }
+  }
+  mutate {
+    add_field => { "raw" => "%{message}" }
+  }
+  date {
+    match => [ "timestamp", "dd/MMM/yyyy:HH:mm:ss Z" ]
+    target => "timestamp"
+  }
+  mutate {
+    remove_field => [ "message", "@version", "host", "log", "event", "@timestamp" ]
+  }
+}
+
+output {
+  # Console output for quick visual verification
+  stdout { codec => dots }
+
+  # ── Buffered mode ──────────────────────────────────────────────────
+  # No path set → in-memory buffer, flushes at 10KB or every 10 seconds.
+  # Uses 'buffered_mapping' which stamps ingestion_mode = "buffered".
+  kusto {
+    ingest_url => "https://<your-cluster-name>.kusto.windows.net"
+    cli_auth => true
+    database => "e2e"
+    table => "ManualTestLogs"
+    json_mapping => "buffered_mapping"
+    max_batch_size => 102400
+    plugin_flush_interval => 30
+    max_items => 5000
+  }
+
+  # ── File mode ──────────────────────────────────────────────────────
+  # Path is set → writes to disk, then uploads via file-based ingestion.
+  # Uses 'file_mapping' which stamps ingestion_mode = "file".
+  kusto {
+    path => "/tmp/logstash-kusto-manual/%{+YYYY-MM-dd-HH}.log"
+    ingest_url => "https://<your-cluster-name>.kusto.windows.net"
+    cli_auth => true
+    database => "e2e"
+    table => "ManualTestLogs"
+    json_mapping => "file_mapping"
+    stale_cleanup_type => "interval"
+    stale_cleanup_interval => 15
+  }
+}
