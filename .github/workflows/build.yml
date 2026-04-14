@@ -113,8 +113,8 @@ jobs:
         run: /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
       - name: Install libraries
         run: ./gradlew vendor
-      - name: Run e2e
-        run: jruby -J-cp ../vendor/jar-dependencies e2e.rb
+      - name: Run e2e tests
+        run: jruby -J-cp ../vendor/jar-dependencies e2e_all.rb
         working-directory: 'e2e'
         env:
           ENGINE_URL: ${{ secrets.ENGINE_URL }}

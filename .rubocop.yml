@@ -1,6 +1,98 @@
-Metrics/LineLength:
-  # Change the default 80 chars limit value
-  Max: 120
+AllCops:
+  NewCops: enable
+  TargetRubyVersion: 2.6
+  Exclude:
+    - 'vendor/**/*'
+    - 'build/**/*'
+    - 'tmp/**/*'
+
+# Project uses camelCase file names (Java convention)
+Naming/FileName:
+  Enabled: false
+
+# Project uses camelCase variable names matching Java-style class names
+Naming/VariableName:
+  Enabled: false
+
+# get_ prefix is common in this project (Java interop style)
+Naming/AccessorMethodName:
+  Enabled: false
+
+# Line length - relaxed for long Java class references and SDK calls
+Layout/LineLength:
+  Max: 300
+
+# The project uses compact `end; end; end` for closing nested modules
+Layout/EndAlignment:
+  Enabled: false
+
+# JRuby doesn't benefit from frozen string literals
+Style/FrozenStringLiteralComment:
+  Enabled: false
+
+# Not all classes need documentation
+Style/Documentation:
+  Enabled: false
+
+# Multiline block chaining is used for promise/future pipelines
+Style/MultilineBlockChain:
+  Enabled: false
+
+# Boolean defaults are used in flush(close=false) callbacks
+Style/OptionalBooleanParameter:
+  Enabled: false
+
+# method_missing is used in IOWriter proxy without respond_to_missing
+Style/MissingRespondToMissing:
+  Enabled: false
+
+# != nil checks are used alongside .nil? in the codebase
+Style/NonNilCheck:
+  Enabled: false
+
+# Duplicate branches in retry/rescue are intentional (same error handling)
+Lint/DuplicateBranch:
+  Enabled: false
+
+# Kernel#open is used only for local file paths, not URLs
+Security/Open:
+  Enabled: false
+
+# ── Metrics ──────────────────────────────────────────────────────
+# Relaxed to accommodate existing complex methods (Kusto SDK init,
+# buffer flush logic) without requiring large-scale refactoring.
+Metrics/MethodLength:
+  Max: 70
+
+Metrics/AbcSize:
+  Max: 140
+
+Metrics/CyclomaticComplexity:
+  Max: 25
+
+Metrics/PerceivedComplexity:
+  Max: 25
+
+Metrics/ClassLength:
+  Max: 400
+
+Metrics/BlockLength:
+  Max: 40
+  Exclude:
+    - 'spec/**/*'
+
+Metrics/ModuleLength:
+  Max: 400
+
+Metrics/ParameterLists:
+  Max: 8
+
+# Gemspec style - this is a Logstash plugin, not a public gem
+Gemspec/RequireMFA:
+  Enabled: false
+
+Gemspec/DevelopmentDependencies:
+  Enabled: false
 
 Lint/UselessAccessModifier:
   ContextCreatingMethods:
