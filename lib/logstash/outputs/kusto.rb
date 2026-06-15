@@ -37,8 +37,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # side (resolving the destination at upload time), so the two can never drift.
   #
   # Returns a hash { database:, table:, mapping: } when the marker is present and
-  # both database and table are valid identifiers, or nil otherwise. An empty or
-  # invalid mapping segment is normalised to nil (mapping is optional).
+  # both database and table are valid identifiers, or nil otherwise. The mapping
+  # segment is optional: an empty value or an unresolved field reference
+  # (e.g. `%{[@metadata][mapping]}`, left behind when the field is absent) is
+  # normalised to nil (route without a mapping), but a mapping that resolved to a
+  # genuinely invalid identifier makes the whole target unroutable so the event
+  # is dead-lettered instead of being silently ingested with the wrong mapping.
   def self.decode_routing_target(path)
     return nil if path.nil?
 
@@ -51,7 +55,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     return nil if database_value.nil? || database_value !~ IDENTIFIER_PATTERN
     return nil if table_value.nil? || table_value !~ IDENTIFIER_PATTERN
 
-    mapping_value = nil if mapping_value.nil? || mapping_value.empty? || mapping_value !~ IDENTIFIER_PATTERN
+    if mapping_value.nil? || mapping_value.empty? || mapping_value =~ FIELD_REF
+      # Absent or unresolved mapping field reference -> route without a mapping.
+      mapping_value = nil
+    elsif mapping_value !~ IDENTIFIER_PATTERN
+      # Resolved to a genuinely invalid identifier -> unroutable.
+      return nil
+    end
     { database: database_value, table: table_value, mapping: mapping_value }
   end
 
@@ -430,7 +440,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.warn('The event tried to write outside the files root, writing the event to the failure file', event: event, filename: @failure_path)
       file_output_path = @failure_path
     elsif @dynamic_routing && !valid_routing_target?(file_output_path)
-      return handle_unroutable_event(event, 'did not resolve to a valid Kusto routing target')
+      return handle_unroutable_event(event, "did not resolve to a valid Kusto routing target (database/table must match #{IDENTIFIER_PATTERN.inspect})")
     elsif !@create_if_deleted && deleted?(file_output_path)
       file_output_path = @failure_path
     end
@@ -451,7 +461,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   private
   def handle_unroutable_event(event, reason)
     if @dlq_writer
-      @dlq_writer.write(event, "Event could not be routed to Kusto: #{reason} (database/table must resolve to #{IDENTIFIER_PATTERN.inspect}).")
+      @dlq_writer.write(event, "Event could not be routed to Kusto: #{reason}.")
       @logger.debug('Routed unroutable event to the dead letter queue.', event: event, reason: reason)
       return nil
     end

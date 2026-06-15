@@ -136,6 +136,19 @@ describe LogStash::Outputs::Kusto::Ingestor do
     it 'returns nil when database or table did not resolve' do
       expect(ingestor.decode_routing_target("/tmp/kusto/2024-01-01.kusto~mydb~")).to be_nil
     end
+
+    it 'treats an unresolved mapping field reference as no mapping (mapping is optional)' do
+      target = ingestor.decode_routing_target("/tmp/kusto/2024-01-01.kusto~mydb~mytable~%{[@metadata][mapping]}")
+      expect(target[:database]).to eq('mydb')
+      expect(target[:table]).to eq('mytable')
+      expect(target[:mapping]).to be_nil
+    end
+
+    it 'returns nil when the mapping resolved to a genuinely invalid identifier' do
+      # A resolved-but-invalid mapping must not be silently dropped: the event is
+      # unroutable so it is dead-lettered rather than ingested with the wrong mapping.
+      expect(ingestor.decode_routing_target("/tmp/kusto/2024-01-01.kusto~mydb~mytable~bad mapping")).to be_nil
+    end
   end
 
   # describe 'receiving events' do
