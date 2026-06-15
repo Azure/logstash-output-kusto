@@ -128,7 +128,8 @@ describe LogStash::Outputs::Kusto do
 
     it 'fails fast when a static database contains characters outside the allowlist' do
       kusto = described_class.new(dyn.merge('database' => 'bad.db.name'))
-      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /must match/)
+      # The error must use the human-readable allowlist, not a raw regexp dump.
+      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /must match \[A-Za-z0-9_-\]\+/)
       kusto.close
     end
 

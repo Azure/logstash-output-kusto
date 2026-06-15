@@ -31,6 +31,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # prevents path traversal (no '/', '\\', '.' or '~') in the temp file name.
   IDENTIFIER_PATTERN = /\A[A-Za-z0-9_-]+\z/
 
+  # Human-readable description of IDENTIFIER_PATTERN for user-facing messages
+  # (config errors, DLQ reasons). Avoids leaking the raw Ruby regexp dump
+  # (e.g. `(?-mix:\A...)`) and matches the allowlist documented in the README.
+  IDENTIFIER_PATTERN_DESCRIPTION = '[A-Za-z0-9_-]+ (letters, digits, underscore and hyphen only)'
+
   # Decodes the (database, table, mapping) routing target encoded into a dynamic
   # temp file name by the output. This is the single source of truth shared by
   # the writer side (validating events before they are written) and the ingestor
@@ -290,8 +295,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
 
     unless value =~ IDENTIFIER_PATTERN
-      @logger.error("#{name} static value '#{value}' must match #{IDENTIFIER_PATTERN.inspect} when dynamic routing is enabled.")
-      raise LogStash::ConfigurationError.new("#{name} static value '#{value}' must match #{IDENTIFIER_PATTERN.inspect} when dynamic routing is enabled.")
+      @logger.error("#{name} static value '#{value}' must match #{IDENTIFIER_PATTERN_DESCRIPTION} when dynamic routing is enabled.")
+      raise LogStash::ConfigurationError.new("#{name} static value '#{value}' must match #{IDENTIFIER_PATTERN_DESCRIPTION} when dynamic routing is enabled.")
     end
   end
 
@@ -440,7 +445,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.warn('The event tried to write outside the files root, writing the event to the failure file', event: event, filename: @failure_path)
       file_output_path = @failure_path
     elsif @dynamic_routing && !valid_routing_target?(file_output_path)
-      return handle_unroutable_event(event, "did not resolve to a valid Kusto routing target (database/table must match #{IDENTIFIER_PATTERN.inspect})")
+      return handle_unroutable_event(event, "did not resolve to a valid Kusto routing target (database/table must match #{IDENTIFIER_PATTERN_DESCRIPTION})")
     elsif !@create_if_deleted && deleted?(file_output_path)
       file_output_path = @failure_path
     end
@@ -621,11 +626,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
       # In dynamic mode the database/table are not known up-front, so recover
       # any leftover temp file carrying the routing marker. In static mode keep
-      # matching the exact `.database.table` suffix as before.
+      # matching the exact `.database.table` suffix as before. Restrict to regular
+      # files so a directory whose name happens to match is never sent to ingest.
       old_files = if @dynamic_routing
-                    Find.find(new_path).select { |p| p.include?(ROUTING_MARKER) }
+                    Find.find(new_path).select { |p| File.file?(p) && p.include?(ROUTING_MARKER) }
                   else
-                    Find.find(new_path).select { |p| /.*\.#{database}\.#{table}$/ =~ p }
+                    Find.find(new_path).select { |p| File.file?(p) && /.*\.#{database}\.#{table}$/ =~ p }
                   end
       @logger.info("Found #{old_files.length} old file(s), sending them now...")
 
