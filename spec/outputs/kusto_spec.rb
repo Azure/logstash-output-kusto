@@ -53,4 +53,164 @@ describe LogStash::Outputs::Kusto do
 
   end
 
+  describe 'dynamic routing' do
+
+    let(:dynamic_options) { options.merge(
+      'path' => './kusto_tst/%{+YYYY-MM-dd-HH-mm}',
+      'table' => '%{[@metadata][table]}',
+      'database' => '%{[@metadata][database]}',
+      'json_mapping' => '%{[@metadata][mapping]}'
+    ) }
+
+    it 'registers without error when table/database are field references' do
+      kusto = described_class.new(dynamic_options)
+      expect { kusto.register }.not_to raise_error
+      kusto.close
+    end
+
+    it 'routes a fully-resolved event to a file carrying the routing marker' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'mydb')
+      event.set('[@metadata][table]', 'mytable')
+      event.set('[@metadata][mapping]', 'mymapping')
+      path = kusto.send(:event_path, event)
+      expect(path).to include('.kusto~mydb~mytable~mymapping')
+      expect(path).not_to eq(kusto.failure_path)
+      kusto.close
+    end
+
+    it 'routes an event missing the routing fields to the failure file' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      event = LogStash::Event.new
+      path = kusto.send(:event_path, event)
+      expect(path).to eq(kusto.failure_path)
+      kusto.close
+    end
+
+    it 'routes an event whose resolved identifier is invalid to the failure file' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'mydb')
+      event.set('[@metadata][table]', 'bad.table.name')
+      event.set('[@metadata][mapping]', 'mymapping')
+      path = kusto.send(:event_path, event)
+      expect(path).to eq(kusto.failure_path)
+      kusto.close
+    end
+
+    it 'allows a missing (empty) mapping while still routing on database/table' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'mydb')
+      event.set('[@metadata][table]', 'mytable')
+      path = kusto.send(:event_path, event)
+      expect(path).not_to eq(kusto.failure_path)
+      expect(path).to include('.kusto~mydb~mytable~')
+      kusto.close
+    end
+
+  end
+
+  describe 'dynamic routing - register-time validation' do
+
+    let(:dyn) { options.merge('path' => './kusto_tst/%{+YYYY-MM-dd-HH-mm}', 'table' => '%{[@metadata][table]}') }
+
+    it 'fails fast when a static database is empty in dynamic mode' do
+      kusto = described_class.new(dyn.merge('database' => ''))
+      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /database must not be empty/)
+      kusto.close
+    end
+
+    it 'fails fast when a static database contains characters outside the allowlist' do
+      kusto = described_class.new(dyn.merge('database' => 'bad.db.name'))
+      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /must match/)
+      kusto.close
+    end
+
+    it 'accepts a valid static database combined with a dynamic table' do
+      kusto = described_class.new(dyn.merge('database' => 'my_db-1'))
+      expect { kusto.register }.not_to raise_error
+      kusto.close
+    end
+
+  end
+
+  describe 'dynamic routing - dead letter queue' do
+
+    let(:dynamic_options) { options.merge(
+      'path' => './kusto_tst/%{+YYYY-MM-dd-HH-mm}',
+      'table' => '%{[@metadata][table]}',
+      'database' => '%{[@metadata][database]}',
+      'json_mapping' => '%{[@metadata][mapping]}'
+    ) }
+
+    let(:dlq_writer) { double('dlq_writer') }
+
+    it 'sends an unroutable event to the DLQ and writes nothing to disk when DLQ is enabled' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      # simulate DLQ being enabled
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+
+      event = LogStash::Event.new # missing routing fields
+      expect(dlq_writer).to receive(:write).with(event, kind_of(String))
+      path = kusto.send(:event_path, event)
+      expect(path).to be_nil # signals caller to not write to any temp file
+      kusto.close
+    end
+
+    it 'falls back to the failure file when DLQ is disabled' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, nil)
+
+      event = LogStash::Event.new
+      path = kusto.send(:event_path, event)
+      expect(path).to eq(kusto.failure_path)
+      kusto.close
+    end
+
+    it 'does not hand the failure file to the ingestor in dynamic mode' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      ingestor = kusto.instance_variable_get(:@ingestor)
+      expect(ingestor).not_to receive(:upload_async)
+      kusto.send(:kusto_send_file, kusto.failure_path)
+      kusto.close
+    end
+
+    it 'does not write DLQ-routed events to any temp file (multi_receive_encoded skips nil paths)' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+      allow(dlq_writer).to receive(:write)
+
+      event = LogStash::Event.new # missing routing fields -> DLQ
+      # open must never be called because there is no path to write to
+      expect(kusto).not_to receive(:open)
+      kusto.multi_receive_encoded([[event, '{"a":1}']])
+      kusto.close
+    end
+
+    it 'emits a single aggregated warning per batch rather than one per event' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+      allow(dlq_writer).to receive(:write)
+      logger = spy('logger')
+      kusto.instance_variable_set(:@logger, logger)
+
+      events = Array.new(5) { [LogStash::Event.new, '{"a":1}'] } # all unroutable -> DLQ
+      kusto.multi_receive_encoded(events)
+      expect(logger).to have_received(:warn).with(/5 event\(s\) in this batch could not be routed/).once
+      kusto.close
+    end
+
+  end
+
 end

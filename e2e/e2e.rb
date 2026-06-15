@@ -21,6 +21,7 @@ class E2E
     end
     @table_with_mapping = "RubyE2E#{Time.now.getutc.to_i}"
     @table_without_mapping = "RubyE2ENoMapping#{Time.now.getutc.to_i}"    
+    @table_dynamic = "RubyE2EDynamic#{Time.now.getutc.to_i}"
     @mapping_name = "test_mapping"
     @csv_file = "dataset.csv"
 
@@ -30,6 +31,8 @@ class E2E
   }
   filter {
     csv { columns => [#{@csv_columns}]}
+    # Inject routing metadata used by the dynamic kusto output below.
+    mutate { add_field => { "[@metadata][kusto_table]" => "#{@table_dynamic}" } }
   }
   output {
     file { path => "#{@output_file}"}
@@ -49,25 +52,37 @@ class E2E
       database => "#{@database}"
       table => "#{@table_without_mapping}"
     }
+    # Dynamic routing: the destination table is resolved per-event from
+    # event metadata (issue #92). Database stays static, table is dynamic.
+    kusto {
+      path => "dyntmp%{+YYYY-MM-dd-HH-mm}.txt"
+      cli_auth => true
+      ingest_url => "#{@ingest_url}"
+      database => "#{@database}"
+      table => "%{[@metadata][kusto_table]}"
+      json_mapping => "#{@mapping_name}"
+    }
   }
 }
   end
 
   def create_table_and_mapping
-    Array[@table_with_mapping, @table_without_mapping].each { |tableop| 
+    Array[@table_with_mapping, @table_without_mapping, @table_dynamic].each { |tableop|
       puts "Creating table #{tableop}"
       @query_client.executeMgmt(@database, ".drop table #{tableop} ifexists")
       sleep(1)
       @query_client.executeMgmt(@database, ".create table #{tableop} #{@columns}")
       @query_client.executeMgmt(@database, ".alter table #{tableop} policy ingestionbatching @'{\"MaximumBatchingTimeSpan\":\"00:00:10\", \"MaximumNumberOfItems\": 1, \"MaximumRawDataSizeMB\": 100}'")
     }
-    # Mapping only for one table
-    @query_client.executeMgmt(@database, ".create table #{@table_with_mapping} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
+    # Mapping for the tables that use it (static-with-mapping and dynamic).
+    Array[@table_with_mapping, @table_dynamic].each { |tableop|
+      @query_client.executeMgmt(@database, ".create table #{tableop} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
+    }
   end
 
 
   def drop_and_cleanup
-    Array[@table_with_mapping, @table_without_mapping].each { |tableop| 
+    Array[@table_with_mapping, @table_without_mapping, @table_dynamic].each { |tableop|
       puts "Dropping table #{tableop}"
       @query_client.executeMgmt(@database, ".drop table #{tableop} ifexists")
       sleep(1)
@@ -94,7 +109,10 @@ class E2E
   def assert_data
     max_timeout = 10
     csv_data = CSV.read(@csv_file)
-    Array[@table_with_mapping, @table_without_mapping].each { |tableop| 
+    # @table_dynamic is fed by the dynamic-routing kusto output (issue #92): the
+    # table name is resolved per-event from [@metadata][kusto_table]. It uses the
+    # same mapping and receives the full dataset, so it is validated identically.
+    Array[@table_with_mapping, @table_without_mapping, @table_dynamic].each { |tableop|
       puts "Validating results for table  #{tableop}"    
       (0...max_timeout).each do |_|
         begin

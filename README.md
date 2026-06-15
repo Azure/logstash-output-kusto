@@ -60,9 +60,10 @@ More information about configuring Logstash can be found in the [logstash config
 | **ingest_url** | The Kusto endpoint for ingestion-related communication. See it on the Azure Portal.| Required|
 | **app_id, app_key, app_tenant**| Credentials required to connect to the ADX service. Be sure to use an application with 'ingest' privileges. | Optional|
 | **managed_identity**| Managed Identity to authenticate. For user-based managed ID, use the Client ID GUID. For system-based, use the value `system`. The ID needs to have 'ingest' privileges on the cluster. | Optional|
-| **database**| Database name to place events | Required |
-| **table** | Target table name to place events | Required
-| **json_mapping** | Maps each attribute from incoming event JSON strings to the appropriate column in the table. Note that this must be in JSON format, as this is the interface between Logstash and Kusto | Optional |
+| **database**| Database name to place events. Supports Logstash field references (e.g. `%{[@metadata][database]}`) for dynamic routing. | Required |
+| **table** | Target table name to place events. Supports Logstash field references (e.g. `%{[@metadata][table]}`) for dynamic routing. | Required
+| **json_mapping** | Maps each attribute from incoming event JSON strings to the appropriate column in the table. Note that this must be in JSON format, as this is the interface between Logstash and Kusto. Supports Logstash field references for dynamic routing. | Optional |
+| **dynamic_event_routing** | Forces dynamic routing on even when `database`/`table`/`json_mapping` contain no field reference. Dynamic routing is enabled automatically whenever any of those values contains a `%{...}` field reference, so this flag is usually not needed. Defaults to false. | Optional |
 | **recovery** | If set to true (default), plugin will attempt to resend pre-existing temp files found in the path upon startup | |
 | **delete_temp_files** | Determines if temp files will be deleted after a successful upload (true is default; set false for debug purposes only)| |
 | **flush_interval** | The time (in seconds) for flushing writes to temporary files. Default is 2 seconds, 0 will flush on every event. Increase this value to reduce IO calls but keep in mind that events in the buffer will be lost in case of abrupt failure.| |
@@ -76,11 +77,58 @@ More information about configuring Logstash can be found in the [logstash config
 export  LS_JAVA_OPTS="-Dhttp.proxyHost=1.2.34 -Dhttp.proxyPort=8989 -Dhttps.proxyHost=1.2.3.4 -Dhttps.proxyPort=8989"
 ```
 
+### Dynamic event routing
+
+You can route each event to a different database, table and/or JSON mapping by
+using Logstash field references in the `database`, `table` or `json_mapping`
+settings. This lets a single output block send events to multiple Azure Data
+Explorer tables based on event content.
+
+```ruby
+filter {
+	mutate { add_field => { "[@metadata][table]" => "%{[app]}_%{[event_type]}" } }
+}
+
+output {
+	kusto {
+            path         => "/tmp/kusto/%{+YYYY-MM-dd-HH-mm}.txt"
+            ingest_url   => "https://ingest-<cluster-name>.kusto.windows.net/"
+            app_id       => "<application id>"
+            app_key      => "<application key/secret>"
+            app_tenant   => "<tenant id>"
+            database     => "<database name>"
+            table        => "%{[@metadata][table]}"   # dynamic routing
+            json_mapping => "<mapping name>"
+	}
+}
+```
+
+Notes and caveats:
+
+- Dynamic routing turns on automatically when any of `database`, `table` or
+  `json_mapping` contains a `%{...}` field reference. You can also force it on
+  with `dynamic_event_routing => true`.
+- Resolved `database`, `table` and `json_mapping` values must match
+  `[A-Za-z0-9_-]+` (letters, digits, underscore and hyphen only).
+- Events that cannot be routed — because the referenced field is missing or the
+  resolved value is invalid — are **not** ingested into an unintended table.
+  Instead they are sent to Logstash's
+  [Dead Letter Queue](https://www.elastic.co/guide/en/logstash/current/dead-letter-queues.html)
+  when it is enabled in `logstash.yml`. When the DLQ is disabled, such events are
+  retained in the local failure file (`_filepath_failures` under the path root)
+  so that no data is lost; this file is not auto-drained and should be monitored
+  by the operator.
+- If a static `database`/`table` is combined with dynamic routing, it is
+  validated at startup and the plugin fails fast on an empty or invalid value.
+- The `json_mapping` reference is optional: if it does not resolve, the event is
+  still routed using `database`/`table` and columns are mapped by attribute name.
+
 
 ### Release Notes and versions
 
 | Version | Release Date | Notes |
 | --- | --- | --- |
+| 2.2.0 | 2026-06-11 | - Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) to route events to different destinations from a single output. Unresolved or invalid targets are written to the failure file rather than ingested.  |
 | 2.0.8 | 2024-10-23 | - Fix library deprecations, fix issues in the Azure Identity library  |
 | 2.0.7 | 2024-01-01 | - Update Kusto JAVA SDK  |
 | 2.0.3 | 2023-12-12 | - Make JSON mapping field optional. If not provided logstash output JSON attribute names will be used for column resolution  |
