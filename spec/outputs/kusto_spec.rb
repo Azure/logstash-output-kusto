@@ -184,6 +184,36 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
+    it 'treats a dummy (no-op) DLQ writer as disabled so events are not silently dropped' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+
+      # Stand-ins whose class name matches Logstash's no-op writer.
+      dummy_class = Class.new do
+        def self.name; 'LogStash::Util::DummyDeadLetterQueueWriter'; end
+      end
+      direct_dummy = dummy_class.new
+      wrapped_dummy = double('wrapper', inner_writer: direct_dummy)
+      real_writer = double('real_writer', inner_writer: double('inner'))
+
+      expect(kusto.send(:dummy_dlq_writer?, direct_dummy)).to be true
+      expect(kusto.send(:dummy_dlq_writer?, nil)).to be true
+      expect(kusto.send(:dummy_dlq_writer?, real_writer)).to be false
+
+      # A directly-supplied dummy must be detected as "disabled" so the plugin
+      # falls back to the failure file rather than dropping events into a no-op.
+      ctx = double('execution_context', dlq_writer: direct_dummy)
+      allow(kusto).to receive(:execution_context).and_return(ctx)
+      expect(kusto.send(:dlq_enabled?)).to be false
+
+      # A wrapped dummy (inner_writer is a dummy) is likewise disabled.
+      ctx_wrapped = double('execution_context', dlq_writer: wrapped_dummy)
+      allow(kusto).to receive(:execution_context).and_return(ctx_wrapped)
+      expect(kusto.send(:dlq_enabled?)).to be false
+
+      kusto.close
+    end
+
     it 'does not write DLQ-routed events to any temp file (multi_receive_encoded skips nil paths)' do
       kusto = described_class.new(dynamic_options)
       kusto.register

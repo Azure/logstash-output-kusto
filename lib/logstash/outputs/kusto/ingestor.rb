@@ -18,7 +18,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       fallback_policy: :caller_runs
     )
     LOW_QUEUE_LENGTH = 3
-    FIELD_REF = /%\{[^}]+\}/
+    # Possessive quantifier (`++`) prevents catastrophic/quadratic backtracking
+    # when scanning attacker- or config-supplied strings such as `%{%{%{...`
+    # (CodeQL rb/polynomial-redos). Match semantics are identical to `[^}]+`.
+    FIELD_REF = /%\{[^}]++\}/
 
     def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, dynamic_routing, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool

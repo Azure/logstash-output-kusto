@@ -128,7 +128,7 @@ Notes and caveats:
 
 | Version | Release Date | Notes |
 | --- | --- | --- |
-| 2.2.0 | 2026-06-11 | - Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) to route events to different destinations from a single output. Unresolved or invalid targets are written to the failure file rather than ingested.  |
+| 2.2.0 | 2026-06-11 | - Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) to route events to different destinations from a single output. Unresolved or invalid targets are sent to the Dead Letter Queue when it is enabled, otherwise retained in the failure file rather than ingested.  |
 | 2.0.8 | 2024-10-23 | - Fix library deprecations, fix issues in the Azure Identity library  |
 | 2.0.7 | 2024-01-01 | - Update Kusto JAVA SDK  |
 | 2.0.3 | 2023-12-12 | - Make JSON mapping field optional. If not provided logstash output JSON attribute names will be used for column resolution  |

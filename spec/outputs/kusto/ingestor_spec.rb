@@ -89,8 +89,11 @@ describe LogStash::Outputs::Kusto::Ingestor do
 
     context 'one of appid or managedid has to be provided' do
       it "with empty managed identity and appid" do
+        # Use a valid proxy protocol so the failure is attributable to the missing
+        # credentials, not to proxy-protocol validation. With no app_id/app_key and
+        # no managed identity (and cli_auth disabled) config validation must fail.
         expect {
-          ingestor = described_class.new(ingest_url, "", app_key, app_tenant, "", cliauth, database, table, json_mapping, dynamic_routing, delete_local, proxy_host, proxy_port,'socks',logger)
+          ingestor = described_class.new(ingest_url, nil, nil, app_tenant, nil, cliauth, database, table, json_mapping, dynamic_routing, delete_local, proxy_host, proxy_port,'http',logger)
           ingestor.stop
         }.to raise_error(LogStash::ConfigurationError)          
       end

@@ -14,7 +14,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config_name 'kusto'
   concurrency :shared
 
-  FIELD_REF = /%\{[^}]+\}/
+  # Possessive quantifier (`++`) prevents catastrophic/quadratic backtracking
+  # when scanning attacker- or config-supplied strings such as `%{%{%{...`
+  # (CodeQL rb/polynomial-redos). Match semantics are identical to `[^}]+`.
+  FIELD_REF = /%\{[^}]++\}/
 
   # Marker appended to the temp file name (after the user-provided path) to
   # carry the per-event routing target when dynamic routing is active.
@@ -293,16 +296,27 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     writer = execution_context.dlq_writer
     return false if writer.nil?
 
-    if writer.respond_to?(:inner_writer)
-      inner = writer.inner_writer
-      return false if inner.nil?
-      return false if defined?(::LogStash::Util::DummyDeadLetterQueueWriter) && inner.is_a?(::LogStash::Util::DummyDeadLetterQueueWriter)
-    end
+    # When the DLQ is disabled Logstash hands plugins a dummy writer that silently
+    # discards everything. Depending on the Logstash version that dummy may be the
+    # writer itself or wrapped behind `inner_writer`, so check BOTH. Treating a
+    # dummy as "enabled" would route unroutable events into a no-op (silent data
+    # loss) instead of the local failure-file fallback, so we are conservative.
+    return false if dummy_dlq_writer?(writer)
+    return false if writer.respond_to?(:inner_writer) && dummy_dlq_writer?(writer.inner_writer)
 
     true
   rescue StandardError => e
     @logger.debug('Could not determine DLQ availability; treating DLQ as disabled.', exception: e.class, message: e.message)
     false
+  end
+
+  # Detects Logstash's no-op dead-letter-queue writer across versions. Uses a
+  # class-name match rather than `is_a?` because the concrete constant differs
+  # between Logstash releases and may not be loadable from a third-party plugin.
+  private
+  def dummy_dlq_writer?(writer)
+    return true if writer.nil?
+    writer.class.name.to_s.include?('DummyDeadLetterQueueWriter')
   end
 
   def validate_path
@@ -593,7 +607,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     
     begin
       return unless Dir.exist?(new_path)
-      @logger.info("Going to recover old files in path #{@new_path}")
+      @logger.info("Going to recover old files in path #{new_path}")
 
       # In dynamic mode the database/table are not known up-front, so recover
       # any leftover temp file carrying the routing marker. In static mode keep
