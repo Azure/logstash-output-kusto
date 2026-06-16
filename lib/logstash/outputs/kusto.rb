@@ -203,12 +203,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                        value_dynamic?(final_mapping)
 
     # Fail fast on statically-broken dynamic configs: a non-field-reference
-    # database/table must be a valid identifier (it is embedded verbatim into the
-    # routing marker). Without this guard such a config would silently dead-letter
-    # every event at runtime.
+    # database/table/mapping is embedded verbatim into the routing marker, so an
+    # invalid literal would make every event unroutable at runtime. database and
+    # table are required; json_mapping is optional but, when given as a literal,
+    # must still be a valid identifier.
     if @dynamic_routing
       validate_dynamic_literal('database', database)
       validate_dynamic_literal('table', table)
+      validate_dynamic_literal('json_mapping', final_mapping, optional: true)
     end
 
     # The temp file name carries the routing target so the ingestor knows where
@@ -284,14 +286,16 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     value
   end
 
-  # Validates a static (non-field-reference) database/table value used in dynamic
-  # mode. Such literals are embedded verbatim into the routing marker, so they
-  # must be non-empty and match the identifier allowlist; otherwise every event
-  # would silently fail routing at runtime.
-  def validate_dynamic_literal(name, value)
+  # Validates a static (non-field-reference) database/table/mapping value used in
+  # dynamic mode. Such literals are embedded verbatim into the routing marker, so
+  # they must match the identifier allowlist; otherwise every event would fail
+  # routing at runtime. Required values (database/table) must also be non-empty;
+  # an optional value (json_mapping) may be empty/nil (routed without a mapping).
+  def validate_dynamic_literal(name, value, optional: false)
     return if value_dynamic?(value) # field reference: validated per event at write time
 
     if value.nil? || value.empty?
+      return if optional
       @logger.error("#{name} must not be empty when dynamic routing is enabled.")
       raise LogStash::ConfigurationError.new("#{name} must not be empty when dynamic routing is enabled.")
     end

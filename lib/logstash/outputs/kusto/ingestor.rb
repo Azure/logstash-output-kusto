@@ -124,23 +124,23 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # dynamic routing is enabled. In static mode they must be literal values.
       unless dynamic_routing
         if database =~ FIELD_REF
-          @logger.error('database config value should not be dynamic.', database)
+          @logger.error('database config value should not be dynamic.', database: database)
           raise LogStash::ConfigurationError.new('database config value should not be dynamic.')
         end
 
         if table =~ FIELD_REF
-          @logger.error('table config value should not be dynamic.', table)
+          @logger.error('table config value should not be dynamic.', table: table)
           raise LogStash::ConfigurationError.new('table config value should not be dynamic.')
         end
 
         if json_mapping =~ FIELD_REF
-          @logger.error('json_mapping config value should not be dynamic.', json_mapping)
+          @logger.error('json_mapping config value should not be dynamic.', json_mapping: json_mapping)
           raise LogStash::ConfigurationError.new('json_mapping config value should not be dynamic.')
         end
       end
 
       if not(["https", "http"].include? proxy_protocol)
-        @logger.error('proxy_protocol has to be http or https.', proxy_protocol)
+        @logger.error('proxy_protocol has to be http or https.', proxy_protocol: proxy_protocol)
         raise LogStash::ConfigurationError.new('proxy_protocol has to be http or https.')
       end
 

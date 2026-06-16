@@ -142,6 +142,24 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
+    it 'fails fast when a static json_mapping contains characters outside the allowlist' do
+      kusto = described_class.new(dyn.merge('database' => 'mydb', 'json_mapping' => 'bad.mapping'))
+      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /json_mapping static value.*must match/)
+      kusto.close
+    end
+
+    it 'allows a static json_mapping to be absent (mapping is optional)' do
+      kusto = described_class.new(dyn.merge('database' => 'mydb').reject { |k, _| k == 'json_mapping' })
+      expect { kusto.register }.not_to raise_error
+      kusto.close
+    end
+
+    it 'accepts a valid static json_mapping' do
+      kusto = described_class.new(dyn.merge('database' => 'mydb', 'json_mapping' => 'my_mapping-1'))
+      expect { kusto.register }.not_to raise_error
+      kusto.close
+    end
+
   end
 
   describe 'dynamic routing - dead letter queue' do
