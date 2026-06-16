@@ -190,6 +190,21 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
+    it 'does not write outside the files root when a resolved value attempts path traversal' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, nil)
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'mydb')
+      event.set('[@metadata][table]', '../../../../tmp/evil')
+      event.set('[@metadata][mapping]', 'mymapping')
+      path = kusto.send(:event_path, event)
+      # Either the outside-root guard or the identifier allowlist rejects it;
+      # in both cases the event is treated as unroutable (dropped, DLQ disabled).
+      expect(path).to be_nil
+      kusto.close
+    end
+
     it 'never writes to the failure file in dynamic mode, even with create_if_deleted => false' do
       # A routable event whose temp file is reported deleted must not fall back to
       # the failure file in dynamic mode (it could not be ingested anyway); it is

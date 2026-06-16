@@ -126,6 +126,20 @@ Notes and caveats:
   validated at startup and the plugin fails fast on an empty or invalid value.
 - The `json_mapping` reference is optional: if it does not resolve, the event is
   still routed using `database`/`table` and columns are mapped by attribute name.
+- **Routing only validates the *format* of the target, not its *existence*.** A
+  syntactically valid but non-existent (e.g. mistyped) `database`/`table`/`json_mapping`
+  passes validation and the file is uploaded; because ingestion is asynchronous,
+  the failure then surfaces **inside Azure Data Explorer** (visible via
+  `.show ingestion failures`), not in Logstash. Double-check routing field values
+  against existing ADX objects.
+- **High-cardinality routing has an operational cost.** Dynamic mode keeps one
+  open temporary file per distinct *(time window × database × table × mapping)*
+  combination, so routing to many destinations means many concurrent file
+  descriptors (watch the OS `ulimit -n`) and many small ingestion calls. ADX
+  prefers batched ingestion, so rely on the server-side
+  [IngestionBatching policy](https://learn.microsoft.com/azure/data-explorer/kusto/management/batchingpolicy)
+  and tune `flush_interval` / `stale_cleanup_interval` rather than routing to an
+  unbounded number of tables per pipeline.
 
 
 ### Release Notes and versions

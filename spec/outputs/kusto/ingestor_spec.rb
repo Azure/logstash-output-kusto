@@ -151,6 +151,29 @@ describe LogStash::Outputs::Kusto::Ingestor do
     end
   end
 
+  describe '#ingestion_properties_for' do
+    let(:ingestor) do
+      described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, "%{db}", "%{table}", "%{mapping}", true, delete_local, proxy_host, proxy_port, proxy_protocol, logger)
+    end
+
+    after(:each) { ingestor.stop }
+
+    it 'returns nil for a file without a decodable routing target (upload is skipped)' do
+      expect(ingestor.ingestion_properties_for("/tmp/kusto/_filepath_failures")).to be_nil
+    end
+
+    it 'deletes an undecodable dynamic file on upload instead of leaving it for infinite retry' do
+      require 'tmpdir'
+      Dir.mktmpdir do |dir|
+        # Marker present but only one segment -> decode returns nil (unroutable).
+        path = File.join(dir, '2024-01-01.kusto~onlydb')
+        File.write(path, '{"a":1}')
+        ingestor.upload(path, true)
+        expect(File.exist?(path)).to be false
+      end
+    end
+  end
+
   # describe 'receiving events' do
 
   #   context 'with non-zero flush interval' do

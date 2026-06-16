@@ -278,12 +278,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     !value.nil? && value =~ FIELD_REF ? true : false
   end
 
-  # Returns the value unchanged when it carries a field reference (so Logstash
-  # sprintf resolves it per event), otherwise returns the static literal (or an
-  # empty string for nil, e.g. an absent mapping) for inclusion in the file name.
+  # Returns the value to embed in the routing marker: a field reference is left
+  # intact for Logstash sprintf to resolve per event, a literal is used as-is,
+  # and nil (e.g. an absent mapping) becomes an empty segment.
   def field_ref_or_literal(value)
-    return '' if value.nil?
-    value
+    value.nil? ? '' : value
   end
 
   # Validates a static (non-field-reference) database/table/mapping value used in

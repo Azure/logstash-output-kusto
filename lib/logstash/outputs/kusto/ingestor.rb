@@ -167,7 +167,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       if file_size > 0
         ingestion_properties = ingestion_properties_for(path)
         if ingestion_properties.nil?
-          @logger.warn("File #{path} does not carry a valid Kusto routing target and is not ingested.", path: path)
+          # The file carries no decodable routing target (e.g. a corrupt or
+          # foreign leftover). It can never be ingested, so do not leave it on
+          # disk: that would make recover_past_files re-attempt it on every
+          # restart forever. Delete it in normal operation; retain it only when
+          # the user has asked to keep temp files for debugging.
+          if delete_on_success
+            @logger.warn("File #{path} does not carry a valid Kusto routing target and cannot be ingested; deleting it to avoid repeated recovery attempts.", path: path)
+            File.delete(path)
+          else
+            @logger.warn("File #{path} does not carry a valid Kusto routing target and cannot be ingested; retained because delete_temp_files is false.", path: path)
+          end
           return
         end
         file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path); # 0 - let the sdk figure out the size of the file
