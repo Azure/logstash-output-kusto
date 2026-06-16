@@ -319,8 +319,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     # When the DLQ is disabled Logstash hands plugins a dummy writer that silently
     # discards everything. Depending on the Logstash version that dummy may be the
     # writer itself or wrapped behind `inner_writer`, so check BOTH. Treating a
-    # dummy as "enabled" would route unroutable events into a no-op (silent data
-    # loss) instead of the local failure-file fallback, so we are conservative.
+    # dummy as "enabled" would report events as DLQ-routed when they would in fact
+    # be discarded, bypassing the plugin's explicit drop-with-warning policy, so we
+    # are conservative and treat any dummy as disabled.
     return false if dummy_dlq_writer?(writer)
     return false if writer.respond_to?(:inner_writer) && dummy_dlq_writer?(writer.inner_writer)
 
