@@ -18,6 +18,14 @@ describe LogStash::Outputs::Kusto do
     "proxy_protocol" => "https"
   } }
 
+  # Shared dynamic-routing config (database/table/mapping are field references).
+  let(:dynamic_options) { options.merge(
+    'path' => './kusto_tst/%{+YYYY-MM-dd-HH-mm}',
+    'table' => '%{[@metadata][table]}',
+    'database' => '%{[@metadata][database]}',
+    'json_mapping' => '%{[@metadata][mapping]}'
+  ) }
+
   describe '#register' do
 
     it 'doesnt allow the path to start with a dynamic string' do
@@ -55,13 +63,6 @@ describe LogStash::Outputs::Kusto do
 
   describe 'dynamic routing' do
 
-    let(:dynamic_options) { options.merge(
-      'path' => './kusto_tst/%{+YYYY-MM-dd-HH-mm}',
-      'table' => '%{[@metadata][table]}',
-      'database' => '%{[@metadata][database]}',
-      'json_mapping' => '%{[@metadata][mapping]}'
-    ) }
-
     it 'registers without error when table/database are field references' do
       kusto = described_class.new(dynamic_options)
       expect { kusto.register }.not_to raise_error
@@ -81,24 +82,26 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
-    it 'routes an event missing the routing fields to the failure file' do
+    it 'drops an event missing the routing fields when the DLQ is disabled' do
       kusto = described_class.new(dynamic_options)
       kusto.register
+      kusto.instance_variable_set(:@dlq_writer, nil)
       event = LogStash::Event.new
       path = kusto.send(:event_path, event)
-      expect(path).to eq(kusto.failure_path)
+      expect(path).to be_nil # dropped: not written to any temp file
       kusto.close
     end
 
-    it 'routes an event whose resolved identifier is invalid to the failure file' do
+    it 'drops an event whose resolved identifier is invalid when the DLQ is disabled' do
       kusto = described_class.new(dynamic_options)
       kusto.register
+      kusto.instance_variable_set(:@dlq_writer, nil)
       event = LogStash::Event.new
       event.set('[@metadata][database]', 'mydb')
       event.set('[@metadata][table]', 'bad.table.name')
       event.set('[@metadata][mapping]', 'mymapping')
       path = kusto.send(:event_path, event)
-      expect(path).to eq(kusto.failure_path)
+      expect(path).to be_nil
       kusto.close
     end
 
@@ -143,13 +146,6 @@ describe LogStash::Outputs::Kusto do
 
   describe 'dynamic routing - dead letter queue' do
 
-    let(:dynamic_options) { options.merge(
-      'path' => './kusto_tst/%{+YYYY-MM-dd-HH-mm}',
-      'table' => '%{[@metadata][table]}',
-      'database' => '%{[@metadata][database]}',
-      'json_mapping' => '%{[@metadata][mapping]}'
-    ) }
-
     let(:dlq_writer) { double('dlq_writer') }
 
     it 'sends an unroutable event to the DLQ and writes nothing to disk when DLQ is enabled' do
@@ -165,23 +161,46 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
-    it 'falls back to the failure file when DLQ is disabled' do
+    it 'drops the event (returns nil) when the DLQ is disabled' do
       kusto = described_class.new(dynamic_options)
       kusto.register
       kusto.instance_variable_set(:@dlq_writer, nil)
 
       event = LogStash::Event.new
       path = kusto.send(:event_path, event)
-      expect(path).to eq(kusto.failure_path)
+      expect(path).to be_nil
       kusto.close
     end
 
-    it 'does not hand the failure file to the ingestor in dynamic mode' do
+    it 'never writes to the failure file in dynamic mode, even with create_if_deleted => false' do
+      # A routable event whose temp file is reported deleted must not fall back to
+      # the failure file in dynamic mode (it could not be ingested anyway); it is
+      # routed through the DLQ/drop handler instead.
+      kusto = described_class.new(dynamic_options.merge('create_if_deleted' => false))
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, nil)
+      allow(kusto).to receive(:deleted?).and_return(true)
+
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'mydb')
+      event.set('[@metadata][table]', 'mytable')
+      event.set('[@metadata][mapping]', 'mymapping')
+      path = kusto.send(:event_path, event)
+      expect(path).to be_nil
+      expect(path).not_to eq(kusto.failure_path)
+      kusto.close
+    end
+
+    it 'emits a DROPPED warning per batch when the DLQ is disabled' do
       kusto = described_class.new(dynamic_options)
       kusto.register
-      ingestor = kusto.instance_variable_get(:@ingestor)
-      expect(ingestor).not_to receive(:upload_async)
-      kusto.send(:kusto_send_file, kusto.failure_path)
+      kusto.instance_variable_set(:@dlq_writer, nil)
+      logger = spy('logger')
+      kusto.instance_variable_set(:@logger, logger)
+
+      events = Array.new(3) { [LogStash::Event.new, '{"a":1}'] } # all unroutable
+      kusto.multi_receive_encoded(events)
+      expect(logger).to have_received(:warn).with(/3 event\(s\).*DROPPED/).once
       kusto.close
     end
 
@@ -202,7 +221,7 @@ describe LogStash::Outputs::Kusto do
       expect(kusto.send(:dummy_dlq_writer?, real_writer)).to be false
 
       # A directly-supplied dummy must be detected as "disabled" so the plugin
-      # falls back to the failure file rather than dropping events into a no-op.
+      # drops events (and warns) rather than handing them to a no-op writer.
       ctx = double('execution_context', dlq_writer: direct_dummy)
       allow(kusto).to receive(:execution_context).and_return(ctx)
       expect(kusto.send(:dlq_enabled?)).to be false

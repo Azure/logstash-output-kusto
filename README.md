@@ -112,12 +112,16 @@ Notes and caveats:
   `[A-Za-z0-9_-]+` (letters, digits, underscore and hyphen only).
 - Events that cannot be routed — because the referenced field is missing or the
   resolved value is invalid — are **not** ingested into an unintended table.
-  Instead they are sent to Logstash's
+  When Logstash's
   [Dead Letter Queue](https://www.elastic.co/guide/en/logstash/current/dead-letter-queues.html)
-  when it is enabled in `logstash.yml`. When the DLQ is disabled, such events are
-  retained in the local failure file (`_filepath_failures` under the path root)
-  so that no data is lost; this file is not auto-drained and should be monitored
-  by the operator.
+  is enabled in `logstash.yml`, such events are sent there (where they can be
+  inspected and replayed via the `dead_letter_queue` input). When the DLQ is
+  **disabled, unroutable events are dropped** — this matches the elasticsearch
+  output and avoids an unbounded local file. The drop is never silent: the plugin
+  logs a warning at startup and a per-batch count of dropped events. **For
+  production, enable the dead letter queue** so unroutable events are captured.
+- A persistent per-batch "could not be routed" warning usually means an upstream
+  filter is not setting the routing field — fix the pipeline producing the events.
 - If a static `database`/`table` is combined with dynamic routing, it is
   validated at startup and the plugin fails fast on an empty or invalid value.
 - The `json_mapping` reference is optional: if it does not resolve, the event is
@@ -128,7 +132,7 @@ Notes and caveats:
 
 | Version | Release Date | Notes |
 | --- | --- | --- |
-| 2.2.0 | 2026-06-11 | - Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) to route events to different destinations from a single output. Unresolved or invalid targets are sent to the Dead Letter Queue when it is enabled, otherwise retained in the failure file rather than ingested.  |
+| 2.2.0 | 2026-06-11 | - Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) to route events to different destinations from a single output. Unroutable events are sent to the Dead Letter Queue when it is enabled, otherwise dropped (with startup and per-batch warnings) rather than ingested into an unintended table.  |
 | 2.0.8 | 2024-10-23 | - Fix library deprecations, fix issues in the Azure Identity library  |
 | 2.0.7 | 2024-01-01 | - Update Kusto JAVA SDK  |
 | 2.0.3 | 2023-12-12 | - Make JSON mapping field optional. If not provided logstash output JSON attribute names will be used for column resolution  |

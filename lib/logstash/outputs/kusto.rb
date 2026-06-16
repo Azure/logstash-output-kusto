@@ -139,8 +139,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # The following are the data settings that impact where events are written to
   # Database name. May contain Logstash field references (e.g. `%{[@metadata][db]}`)
   # to route each event to a different database. When a field reference is used,
-  # the resolved value must match #{IDENTIFIER_PATTERN.source} (letters, digits,
-  # underscore and hyphen only).
+  # the resolved value must contain only letters, digits, underscore and hyphen.
   config :database, validate: :string, required: true
   # Target table name. May contain Logstash field references (e.g. `%{table}`)
   # to route each event to a different table, subject to the same identifier
@@ -237,12 +236,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @failure_path = File.join(@file_root, @filename_failure)
 
     # Cache the native Logstash dead-letter-queue writer (when DLQ is enabled in
-    # logstash.yml). Unroutable dynamic events are sent here first; when DLQ is
-    # disabled we fall back to retaining them in the failure file (see
-    # handle_unroutable_event).
+    # logstash.yml). In dynamic mode, events that cannot be routed are sent here;
+    # when the DLQ is disabled they are dropped (see handle_unroutable_event).
     @dlq_writer = dlq_enabled? ? execution_context.dlq_writer : nil
     if @dynamic_routing
-      @logger.info("Dynamic event routing is enabled. Unroutable events will be sent to #{@dlq_writer ? 'the dead letter queue' : "the failure file (#{@failure_path})"}.")
+      if @dlq_writer
+        @logger.info('Dynamic event routing is enabled. Events that cannot be routed will be sent to the dead letter queue.')
+      else
+        @logger.warn('Dynamic event routing is enabled but the Logstash dead letter queue is disabled. Events that cannot be routed (e.g. a missing or invalid database/table field) will be DROPPED. Enable the dead letter queue (dead_letter_queue.enable: true in logstash.yml) to capture them.')
+      end
     end
 
     executor = Concurrent::ThreadPoolExecutor.new(min_threads: 1,
@@ -360,23 +362,22 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   public
   def multi_receive_encoded(events_and_encoded)
     encoded_by_path = Hash.new { |h, k| h[k] = [] }
-    unroutable_to_dlq = 0
-    unroutable_to_failure_file = 0
+    unroutable_count = 0
 
     events_and_encoded.each do |event, encoded|
       file_output_path = event_path(event)
-      # A nil path means the event was handled out-of-band (sent to the native
-      # dead-letter queue); it must not be written to any temp file.
+      # A nil path means the event was handled out-of-band (sent to the dead
+      # letter queue, or dropped when the DLQ is disabled); it is not written to
+      # any temp file.
       if file_output_path.nil?
-        unroutable_to_dlq += 1
+        unroutable_count += 1
         next
       end
-      unroutable_to_failure_file += 1 if @dynamic_routing && file_output_path == @failure_path
 
       encoded_by_path[file_output_path] << encoded
     end
 
-    log_unroutable_summary(unroutable_to_dlq, unroutable_to_failure_file)
+    log_unroutable_summary(unroutable_count)
 
     @io_mutex.synchronize do
       encoded_by_path.each do |path, chunks|
@@ -393,14 +394,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Emits a single aggregated warning per batch summarising how many events could
   # not be routed, instead of one log line per event. This keeps the logs usable
   # under high volume (mirrors the elasticsearch output's batched DLQ summary).
-  def log_unroutable_summary(dlq_count, failure_file_count)
-    return if dlq_count.zero? && failure_file_count.zero?
+  def log_unroutable_summary(count)
+    return if count.zero?
 
-    if dlq_count > 0
-      @logger.warn("#{dlq_count} event(s) in this batch could not be routed to a Kusto target and were sent to the dead letter queue.")
-    end
-    if failure_file_count > 0
-      @logger.warn("#{failure_file_count} event(s) in this batch could not be routed to a Kusto target and were written to the failure file (DLQ disabled).", filename: @failure_path)
+    if @dlq_writer
+      @logger.warn("#{count} event(s) in this batch could not be routed to a Kusto target and were sent to the dead letter queue.")
+    else
+      @logger.warn("#{count} event(s) in this batch could not be routed to a Kusto target and were DROPPED because the dead letter queue is disabled. Enable the Logstash dead letter queue to capture them.")
     end
   end
   private :log_unroutable_summary
@@ -439,14 +439,20 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     if path_with_field_ref? && !inside_file_root?(file_output_path)
       # The event resolved to a path outside the files root. In dynamic mode this
       # is just another unroutable event, so funnel it through the same handler
-      # (DLQ / failure file) for one coherent policy; in static mode keep the
-      # historical behaviour of writing to the failure file.
+      # (DLQ / drop) for one coherent policy; in static mode keep the historical
+      # behaviour of writing to the failure file.
       return handle_unroutable_event(event, 'tried to write outside the files root') if @dynamic_routing
       @logger.warn('The event tried to write outside the files root, writing the event to the failure file', event: event, filename: @failure_path)
       file_output_path = @failure_path
     elsif @dynamic_routing && !valid_routing_target?(file_output_path)
       return handle_unroutable_event(event, "did not resolve to a valid Kusto routing target (database/table must match #{IDENTIFIER_PATTERN_DESCRIPTION})")
     elsif !@create_if_deleted && deleted?(file_output_path)
+      # The temp file was deleted and we are told not to recreate it. In dynamic
+      # mode there is no usable failure file (it carries no routing target and
+      # cannot be ingested), so treat this as unroutable (DLQ / drop) to keep the
+      # invariant that dynamic mode never writes to @failure_path. Static mode
+      # keeps the historical failure-file behaviour.
+      return handle_unroutable_event(event, 'temporary file was deleted and create_if_deleted is false') if @dynamic_routing
       file_output_path = @failure_path
     end
     @logger.debug('Writing event to tmp file.', filename: file_output_path)
@@ -455,24 +461,21 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   # Handles a dynamic event that could not be routed to a Kusto destination.
-  # Prefers Logstash's native dead-letter queue (idiomatic, and replayable via
-  # the dead_letter_queue input). When the DLQ is disabled we fall back to
-  # retaining the event in the local failure file rather than dropping it (this
-  # is an ingestion connector; silent data loss is worse than a retained file an
-  # operator must drain). Per-event logging is intentionally at debug level; the
-  # batch emits a single aggregated warning (see multi_receive_encoded) to avoid
-  # flooding the logs under high volume. Returns nil when the event was sent to
-  # the DLQ (so the caller writes nothing to disk), or the failure file path.
+  # Sends it to Logstash's native dead letter queue when enabled (idiomatic, and
+  # replayable via the dead_letter_queue input). When the DLQ is disabled the
+  # event is dropped: this matches the elasticsearch output, avoids an unbounded
+  # local file, and is surfaced loudly (a startup warning plus the per-batch
+  # count) so it is never a silent loss. Always returns nil so the caller writes
+  # nothing to disk for this event.
   private
   def handle_unroutable_event(event, reason)
     if @dlq_writer
       @dlq_writer.write(event, "Event could not be routed to Kusto: #{reason}.")
       @logger.debug('Routed unroutable event to the dead letter queue.', event: event, reason: reason)
-      return nil
+    else
+      @logger.debug('Dropped unroutable event (dead letter queue disabled).', event: event, reason: reason)
     end
-
-    @logger.debug('Routed unroutable event to the failure file (DLQ disabled).', event: event, reason: reason, filename: @failure_path)
-    @failure_path
+    nil
   end
 
   # Validates the routing target encoded in a dynamically-generated file path.
@@ -597,15 +600,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   private
   def kusto_send_file(file_path)
-    # In dynamic mode the failure file holds unroutable events that, by
-    # definition, have no Kusto destination. Don't hand it to the ingestor: it
-    # cannot be ingested, would be retried/re-warned every cycle, and is retained
-    # on disk as a local dead-letter sink for the operator to drain.
-    if @dynamic_routing && File.expand_path(file_path) == File.expand_path(@failure_path)
-      @logger.debug('Skipping ingestion of dynamic-routing failure file; retained as a local dead-letter sink.', path: file_path)
-      return
-    end
-
     @ingestor.upload_async(file_path, delete_temp_files)
   end
 
