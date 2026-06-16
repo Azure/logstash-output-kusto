@@ -610,13 +610,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   def recover_past_files
     require 'find'
 
-    # we need to find the last "regular" part in the path before any dynamic vars
-    path_last_char = @path.length - 1
+    new_path = recovery_scan_dir
 
-    pattern_start = @path.index('%') || path_last_char
-    last_folder_before_pattern = @path.rindex('/', pattern_start) || path_last_char
-    new_path = path[0..last_folder_before_pattern]
-    
     begin
       return unless Dir.exist?(new_path)
       @logger.info("Going to recover old files in path #{new_path}")
@@ -638,6 +633,19 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     rescue Errno::ENOENT => e
       @logger.warn('No such file or directory', exception: e.class, message: e.message, path: new_path, backtrace: e.backtrace)
     end
+  end
+
+  # Computes the directory to scan for leftover temp files on startup: the fixed
+  # portion of the (already expanded) @path up to the first dynamic field. Both
+  # the index and the slice are taken from @path so relative configured paths
+  # resolve correctly (slicing the raw `path` here left `%{...}` in the result
+  # and broke recovery for relative paths).
+  private
+  def recovery_scan_dir
+    path_last_char = @path.length - 1
+    pattern_start = @path.index('%') || path_last_char
+    last_folder_before_pattern = @path.rindex('/', pattern_start) || path_last_char
+    @path[0..last_folder_before_pattern]
   end
 end
 

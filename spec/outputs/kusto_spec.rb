@@ -117,6 +117,49 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
+    it 'partitions one batch into a separate temp file per (database, table, mapping)' do
+      # The central issue #92 behaviour: two valid events resolving to different
+      # targets in a single batch must be written to two different temp files.
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      written_paths = []
+      writer = double('writer', write: nil, flush: nil)
+      allow(kusto).to receive(:open) { |p| written_paths << p; writer }
+
+      e1 = LogStash::Event.new
+      e1.set('[@metadata][database]', 'mydb')
+      e1.set('[@metadata][table]', 'orders')
+      e1.set('[@metadata][mapping]', 'mymap')
+      e2 = LogStash::Event.new
+      e2.set('[@metadata][database]', 'mydb')
+      e2.set('[@metadata][table]', 'clicks')
+      e2.set('[@metadata][mapping]', 'mymap')
+
+      kusto.multi_receive_encoded([[e1, '{"a":1}'], [e2, '{"b":2}']])
+
+      expect(written_paths.uniq.length).to eq(2)
+      expect(written_paths.any? { |p| p.include?('.kusto~mydb~orders~mymap') }).to be true
+      expect(written_paths.any? { |p| p.include?('.kusto~mydb~clicks~mymap') }).to be true
+      kusto.close
+    end
+
+  end
+
+  describe 'dynamic routing - crash recovery' do
+
+    it 'computes a recovery scan directory free of field references for a relative path' do
+      kusto = described_class.new(options.merge(
+        'path' => './kusto_tst/%{+YYYY-MM-dd-HH-mm}',
+        'table' => '%{[@metadata][table]}',
+        'database' => 'mydb'
+      ))
+      kusto.register
+      scan_dir = kusto.send(:recovery_scan_dir)
+      expect(scan_dir).not_to include('%')
+      expect(scan_dir.chomp('/')).to eq(File.expand_path('./kusto_tst'))
+      kusto.close
+    end
+
   end
 
   describe 'dynamic routing - register-time validation' do

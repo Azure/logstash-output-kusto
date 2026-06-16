@@ -109,23 +109,31 @@ class E2E
   def assert_data
     max_timeout = 10
     csv_data = CSV.read(@csv_file)
-    # @table_dynamic is fed by the dynamic-routing kusto output (issue #92): the
-    # table name is resolved per-event from [@metadata][kusto_table]. It uses the
-    # same mapping and receives the full dataset, so it is validated identically.
+    # Validate every table the pipeline wrote to, including the dynamic-routing
+    # table (issue #92), which is fed via [@metadata][kusto_table]. Each table is
+    # validated independently and retried until the full dataset has landed, so a
+    # failure (or missing rows) in any one table fails the test.
     Array[@table_with_mapping, @table_without_mapping, @table_dynamic].each { |tableop|
-      puts "Validating results for table  #{tableop}"    
+      puts "Validating results for table #{tableop}"
+      validated = false
       (0...max_timeout).each do |_|
+        sleep(5)
         begin
-          sleep(5)
           query = @query_client.executeQuery(@database, "#{tableop} | sort by rownumber asc")
           result = query.getPrimaryResults()
-          raise "Wrong count - expected #{csv_data.length}, got #{result.count()} in table #{tableop}" unless result.count() == csv_data.length
         rescue Exception => e
-          puts "Error: #{e}"
+          puts "Error querying #{tableop}: #{e}"
+          next
         end
+        # Ingestion is asynchronous; keep retrying until all rows have landed.
+        actual_count = result.count()
+        if actual_count != csv_data.length
+          puts "Waiting for #{tableop}: expected #{csv_data.length} rows, got #{actual_count}"
+          next
+        end
+        # Row-by-row validation against the source CSV.
         (0...csv_data.length).each do |i|
           result.next()
-          puts "Item #{i}"
           (0...@column_count).each do |j|
             csv_item = csv_data[i][j]
             result_item = result.getObject(j) == nil ? "null" : result.getString(j)
@@ -139,15 +147,14 @@ class E2E
             elsif j == 17 #null
               next
             end
-            puts "  csv[#{j}] = #{csv_item}"
-            puts "  result[#{j}] = #{result_item}"
-            raise "Result Doesn't match csv in table #{tableop}" unless csv_item == result_item
+            raise "Result Doesn't match csv in table #{tableop} at row #{i}, column #{j}" unless csv_item == result_item
           end
-          puts ""
         end
-        return
+        puts "Table #{tableop} validated successfully (#{csv_data.length} rows)"
+        validated = true
+        break
       end
-      raise "Failed after timeouts"
+      raise "Failed after timeouts validating table #{tableop}" unless validated
     }
   end
 

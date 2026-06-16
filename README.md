@@ -109,7 +109,12 @@ Notes and caveats:
   `json_mapping` contains a `%{...}` field reference. You can also force it on
   with `dynamic_event_routing => true`.
 - Resolved `database`, `table` and `json_mapping` values must match
-  `[A-Za-z0-9_-]+` (letters, digits, underscore and hyphen only).
+  `[A-Za-z0-9_-]+` (letters, digits, underscore and hyphen only). This is
+  stricter than ADX's own naming rules (which allow dots and spaces in quoted
+  names): the routing target is encoded into the temp file name, so characters
+  that are unsafe or ambiguous in a file name are not accepted. **A database,
+  table or mapping name containing a dot or space cannot be used with dynamic
+  routing** — keep that value static, or rename the ADX entity.
 - Events that cannot be routed — because the referenced field is missing or the
   resolved value is invalid — are **not** ingested into an unintended table.
   When Logstash's
