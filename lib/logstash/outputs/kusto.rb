@@ -3,6 +3,7 @@
 require 'logstash/outputs/base'
 require 'logstash/namespace'
 require 'logstash/errors'
+require 'digest'
 
 require 'logstash/outputs/kusto/ingestor'
 require 'logstash/outputs/kusto/interval'
@@ -26,6 +27,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # can ever appear inside a segment and decoding is always unambiguous.
   ROUTING_MARKER = '.kusto~'
 
+  # Tag inserted into the temp file name (immediately before ROUTING_MARKER) to
+  # stamp each dynamic temp file with a stable identifier for the output that
+  # wrote it (see register). Crash recovery resends only files carrying this
+  # output's identifier, so two Kusto outputs sharing a path root can never pick
+  # up each other's leftover files. It sits before the marker so the routing
+  # segments stay contiguous and decode_routing_target is unaffected.
+  ROUTING_OWNER_MARKER = '.kustoid-'
+
   # Characters left as-is in an encoded routing segment. Everything else
   # (including '.', ' ', '~', '/', '\\' and '%') is percent-encoded, which keeps
   # the encoded segment free of path separators and of the marker/separator
@@ -40,6 +49,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   # Human-readable description of ROUTING_VALUE_PATTERN for user-facing messages.
   ROUTING_VALUE_DESCRIPTION = 'letters, digits, spaces, dots, dashes and underscores'
+
+  # Maximum length (in characters) of a resolved database / table / mapping
+  # value. Azure Data Explorer entity names are limited to 1-1024 characters, so
+  # an overlong value is rejected up front (at register time for static literals,
+  # or as unroutable at decode time) instead of failing later on the ADX side.
+  ROUTING_VALUE_MAX_LENGTH = 1024
 
   # Percent-encodes a resolved routing value so it can be embedded as one segment
   # of the routing marker in a temp file name. Operates on bytes, so any value
@@ -88,18 +103,20 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     if mapping.nil? || mapping.empty? || mapping =~ FIELD_REF
       # Absent or unresolved mapping field reference -> route without a mapping.
       mapping = nil
-    elsif mapping !~ ROUTING_VALUE_PATTERN
-      # Decoded to a genuinely invalid value -> unroutable.
+    elsif mapping !~ ROUTING_VALUE_PATTERN || mapping.length > ROUTING_VALUE_MAX_LENGTH
+      # Decoded to a genuinely invalid (or overlong) value -> unroutable.
       return nil
     end
     { database: database, table: table, mapping: mapping }
   end
 
   # True when a decoded database/table value is missing, empty, an unresolved
-  # field reference (the event lacked the field) or outside ROUTING_VALUE_PATTERN.
+  # field reference (the event lacked the field), longer than
+  # ROUTING_VALUE_MAX_LENGTH, or outside ROUTING_VALUE_PATTERN.
   def self.unresolved_or_invalid_routing_value?(value)
     return true if value.nil? || value.empty?
     return true if value =~ FIELD_REF
+    return true if value.length > ROUTING_VALUE_MAX_LENGTH
     value !~ ROUTING_VALUE_PATTERN
   end
 
@@ -118,7 +135,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :path, validate: :string, required: true
 
   # Flush interval (in seconds) for flushing writes to files.
-  # 0 will flush on every message. Increase this value to recude IO calls but keep 
+  # 0 will flush on every message. Increase this value to reduce IO calls but keep 
   # in mind that events buffered before flush can be lost in case of abrupt failure.
   config :flush_interval, validate: :number, default: 2
 
@@ -158,7 +175,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # The Kusto endpoint for ingestion related communication. You can see it on the Azure Portal.
   config :ingest_url, validate: :string, required: true
 
-  # The following are the credentails used to connect to the Kusto service
+  # The following are the credentials used to connect to the Kusto service
   # application id 
   config :app_id, validate: :string, required: false
   # application key (secret)
@@ -178,10 +195,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # to route each event to a different table, subject to the same value
   # restrictions as `database`.
   config :table, validate: :string, required: true
-  # Mapping name - Used by Kusto to map each attribute from incoming event JSON strings to the appropriate column in the table.
-  # Note that this must be in JSON format, as this is the interface between Logstash and Kusto
-  # Make this optional as name resolution in the JSON mapping can be done based on attribute names in the incoming event JSON strings
-  # May also contain Logstash field references for dynamic routing.
+  # Name of a JSON ingestion mapping already defined on the target table. This is
+  # the mapping's reference/name, NOT the mapping JSON itself. Optional: when it
+  # is omitted, columns are resolved by the attribute names in the incoming event
+  # JSON. May also contain Logstash field references for dynamic routing.
   config :json_mapping, validate: :string, default: nil
 
   # Mapping name - deprecated, use json_mapping
@@ -198,6 +215,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # reference, so setting this flag explicitly is usually unnecessary.
   config :dynamic_event_routing, validate: :boolean, default: false
 
+  # Logs a warning when dynamic routing is holding at least this many temporary
+  # files open at once, as an early signal of high routing cardinality (each
+  # distinct time-window x database x table x mapping keeps its own open file and
+  # produces its own small ingestion calls). The warning is emitted once until the
+  # count drops back below the threshold. Only applies in dynamic mode; set to 0
+  # to disable.
+  config :dynamic_routing_open_files_warning_threshold, validate: :number, default: 100
+
   # Specify how many files can be uploaded concurrently
   config :upload_concurrent_count, validate: :number, default: 3
 
@@ -211,7 +236,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Port where the proxy runs , defaults to 80. Usually a value like 3128
   config :proxy_port, validate: :number, required: false , default: 80
 
-  # Check Proxy URL can be over http or https. Dowe need it this way or ignore this & remove this
+  # Proxy server protocol, one of `http` or `https`. Defaults to `http`.
   config :proxy_protocol, validate: :string, required: false , default: 'http'
 
   default :codec, 'json_lines'
@@ -257,6 +282,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @routing_table = table
       @routing_mapping = final_mapping
       @path = File.expand_path(path)
+      # Stamp every dynamic temp file with a stable identifier for this output so
+      # crash recovery only resends files this output wrote (see recover_past_files).
+      # The identifier is derived from the settings that define where this output
+      # sends data, so it is stable across restarts yet differs from any other
+      # output, even one sharing the same path root.
+      @routing_owner_tag = "#{ROUTING_OWNER_MARKER}#{routing_owner_id(final_mapping)}"
     else
       @path = File.expand_path("#{path}.#{database}.#{table}")
     end
@@ -294,6 +325,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     @last_stale_cleanup_cycle = Time.now
 
+    # Early-warning latch for high routing cardinality (dynamic mode only; 0 off).
+    @open_files_warning_threshold = @dynamic_routing ? dynamic_routing_open_files_warning_threshold : 0
+    @open_files_warning_active = false
+
     @flush_interval = @flush_interval.to_i
     if @flush_interval > 0
       @flusher = Interval.start(@flush_interval, -> { flush_pending_files })
@@ -309,6 +344,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # True when the value contains a Logstash field reference (e.g. `%{field}`).
   def value_dynamic?(value)
     !value.nil? && value =~ FIELD_REF ? true : false
+  end
+
+  # Stable per-output identifier embedded in dynamic temp file names so crash
+  # recovery only picks up files this output wrote. Derived from the settings that
+  # determine where this output sends data (endpoint + routing config + path), so
+  # it stays constant across restarts of the same configuration yet differs from
+  # any other output. Returns a short hex digest: filename-safe and free of the
+  # marker / separator characters.
+  def routing_owner_id(final_mapping)
+    identity = [ingest_url, path, database, table, (final_mapping || '')].join("\u0000")
+    Digest::SHA256.hexdigest(identity)[0, 16]
   end
 
   # Validates a static (non-field-reference) database/table/mapping value used in
@@ -329,6 +375,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     unless value =~ ROUTING_VALUE_PATTERN
       @logger.error("#{name} static value '#{value}' must contain only #{ROUTING_VALUE_DESCRIPTION} when dynamic routing is enabled.")
       raise LogStash::ConfigurationError.new("#{name} static value '#{value}' must contain only #{ROUTING_VALUE_DESCRIPTION} when dynamic routing is enabled.")
+    end
+
+    if value.length > ROUTING_VALUE_MAX_LENGTH
+      @logger.error("#{name} static value is #{value.length} characters; it must be #{ROUTING_VALUE_MAX_LENGTH} characters or fewer when dynamic routing is enabled.")
+      raise LogStash::ConfigurationError.new("#{name} static value is #{value.length} characters; it must be #{ROUTING_VALUE_MAX_LENGTH} characters or fewer when dynamic routing is enabled.")
     end
   end
 
@@ -417,7 +468,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         fd.flush unless @flusher && @flusher.alive?
       end
 
+      # Close any files that went stale in previous batches first, then warn on
+      # the files still open afterwards, so the high-cardinality signal reflects
+      # the genuinely-carried set rather than files about to be closed this batch.
       close_stale_files if @stale_cleanup_type == 'events'
+      warn_if_too_many_open_files
     end
   end
 
@@ -534,7 +589,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     database = self.class.encode_routing_segment(event.sprintf(@routing_database))
     table = self.class.encode_routing_segment(event.sprintf(@routing_table))
     mapping = self.class.encode_routing_segment(@routing_mapping.nil? ? '' : event.sprintf(@routing_mapping))
-    "#{prefix}#{ROUTING_MARKER}#{database}~#{table}~#{mapping}"
+    # @routing_owner_tag (before the marker) stamps the file as ours for recovery;
+    # the marker and its encoded segments stay contiguous so decoding is unchanged.
+    "#{prefix}#{@routing_owner_tag}#{ROUTING_MARKER}#{database}~#{table}~#{mapping}"
   end
 
   private
@@ -562,6 +619,26 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   rescue Exception => e
     # squash exceptions caught while flushing after logging them
     @logger.error('Exception flushing files', exception: e.message, backtrace: e.backtrace)
+  end
+
+  # Logs a warning (once, until the count recovers) when dynamic routing is
+  # holding many temp files open at the same time — an early signal of high
+  # routing cardinality (many open file descriptors and many small ingestion
+  # calls). Controlled by dynamic_routing_open_files_warning_threshold; a value of
+  # 0 (or static mode) disables it.
+  private
+  def warn_if_too_many_open_files
+    return if @open_files_warning_threshold.nil? || @open_files_warning_threshold <= 0
+
+    open_count = @files.size
+    if open_count >= @open_files_warning_threshold
+      unless @open_files_warning_active
+        @open_files_warning_active = true
+        @logger.warn("Dynamic routing currently has #{open_count} temporary files open (threshold #{@open_files_warning_threshold}). High routing cardinality increases open file descriptors and produces many small ingestion calls; consider reducing the number of distinct database/table/mapping targets or increasing flush_interval/stale_cleanup_interval.", open_files: open_count, threshold: @open_files_warning_threshold)
+      end
+    else
+      @open_files_warning_active = false
+    end
   end
 
   # every 10 seconds or so (triggered by events, but if there are no events there's no point closing files anyway)
@@ -651,14 +728,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       return unless Dir.exist?(new_path)
       @logger.info("Going to recover old files in path #{new_path}")
 
-      # In dynamic mode the database/table are not known up-front, so recover
-      # any leftover temp file carrying the routing marker. In static mode keep
-      # matching the exact `.database.table` suffix as before. database/table are
-      # Regexp.escaped so values with metacharacters (e.g. dots) match literally.
-      # Restrict to regular files so a directory whose name happens to match is
-      # never sent to ingest.
+      # In dynamic mode the database/table are not known up-front, so recover any
+      # leftover temp file stamped with this output's owner tag (see register). In
+      # static mode keep matching the exact `.database.table` suffix as before;
+      # database/table are Regexp.escaped so values with metacharacters (e.g. dots)
+      # match literally. Restrict to regular files so a directory whose name
+      # happens to match is never sent to ingest.
       old_files = if @dynamic_routing
-                    Find.find(new_path).select { |p| File.file?(p) && p.include?(ROUTING_MARKER) }
+                    # Only resend files this output wrote (owner-stamped), so a
+                    # shared path root never causes one output to pick up another's
+                    # leftover file (possibly bound for a different cluster/table).
+                    Find.find(new_path).select { |p| File.file?(p) && dynamic_temp_file_owned_by_this_output?(p) }
                   else
                     suffix = /\.#{Regexp.escape(database)}\.#{Regexp.escape(table)}\z/
                     Find.find(new_path).select { |p| File.file?(p) && p =~ suffix }
@@ -684,6 +764,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     pattern_start = @path.index('%') || path_last_char
     last_folder_before_pattern = @path.rindex('/', pattern_start) || path_last_char
     @path[0..last_folder_before_pattern]
+  end
+
+  # True when `path` is a dynamic temp file written by THIS output. It must carry
+  # this output's owner tag immediately followed by the routing marker, exactly
+  # as generate_filepath emits it. Requiring the full owner-tag + marker shape
+  # (not merely the tag substring) means a stray file that just happens to
+  # contain the tag is never queued for ingest — and so never deleted by the
+  # ingestor as an invalid routing file.
+  private
+  def dynamic_temp_file_owned_by_this_output?(path)
+    path.include?("#{@routing_owner_tag}#{ROUTING_MARKER}")
   end
 end
 

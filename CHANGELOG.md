@@ -6,6 +6,10 @@
 - Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) so a single output can route events to different Azure Data Explorer destinations. Resolved values may contain letters, digits, spaces, dots, dashes and underscores.
 - Unroutable events (missing routing field or a value containing unsupported characters such as a path separator) are sent to Logstash's native Dead Letter Queue when it is enabled, and otherwise dropped with startup and per-batch warnings (rather than mis-ingested into an unintended table). Enable the dead letter queue to capture them.
 - Fail fast at startup when a static `database`/`table` used alongside dynamic routing is empty or contains invalid characters.
+- Crash recovery is isolated per output: each dynamic temp file is stamped with a stable identifier derived from the output's `ingest_url`/`database`/`table`/`json_mapping`/`path`, and recovery only resends files carrying that identifier, so outputs sharing a `path` root never pick up each other's leftover files.
+- Enforce the Azure Data Explorer 1-1024 character entity-name limit for dynamic routing: resolved per-event `database`/`table`/`json_mapping` values that are too long are treated as unroutable (decode time), and static `database`/`table`/`json_mapping` literals used alongside dynamic routing are rejected at startup. (Pure static mode is unchanged.)
+- Add `dynamic_routing_open_files_warning_threshold` (default 100, set 0 to disable) to log a warning when dynamic routing holds many temporary files open at once, as an early signal of high routing cardinality.
+- Known limitation: routing validates only the *format* of `database`/`table`/`json_mapping`, not their *existence*. A syntactically valid but non-existent (e.g. mistyped) target passes validation and the file is uploaded; because ingestion is asynchronous, the failure then surfaces inside Azure Data Explorer (`.show ingestion failures`), not in Logstash.
 
 
 # 2.0.3

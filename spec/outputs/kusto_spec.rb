@@ -183,6 +183,25 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
+    it 'treats a decoded value longer than the ADX limit as unroutable' do
+      long = 'a' * (described_class::ROUTING_VALUE_MAX_LENGTH + 1)
+      path = "/tmp/x.kusto~#{long}~mytable~"
+      expect(described_class.decode_routing_target(path)).to be_nil
+    end
+
+    it 'drops an event whose resolved table exceeds the ADX length limit (DLQ disabled)' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, nil)
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'mydb')
+      event.set('[@metadata][table]', 'a' * (described_class::ROUTING_VALUE_MAX_LENGTH + 1))
+      event.set('[@metadata][mapping]', 'mymapping')
+      path = kusto.send(:event_path, event)
+      expect(path).to be_nil
+      kusto.close
+    end
+
   end
 
   describe 'dynamic routing - crash recovery' do
@@ -225,6 +244,39 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
+    it 'recovers only dynamic temp files carrying this output\'s owner tag and routing marker' do
+      require 'tmpdir'
+      Dir.mktmpdir do |dir|
+        kusto = described_class.new(options.merge(
+          'path' => "#{dir}/out-%{+YYYY-MM-dd-HH-mm}",
+          'table' => '%{[@metadata][table]}',
+          'database' => 'mydb',
+          'recovery' => false
+        ))
+        kusto.register
+        owner_tag = kusto.instance_variable_get(:@routing_owner_tag)
+        # A leftover file written by THIS output (carries our owner tag) and a
+        # foreign file written by a different output (different owner tag) that
+        # shares the same path root.
+        mine = File.join(dir, "out-2024#{owner_tag}.kusto~mydb~mytable~")
+        foreign = File.join(dir, 'out-2024.kustoid-deadbeefdeadbeef.kusto~mydb~mytable~')
+        # A stray file that merely contains our owner tag but NOT the routing
+        # marker right after it (e.g. an unrelated artefact). It must NOT be
+        # recovered, so the ingestor never deletes it as an invalid routing file.
+        tag_only = File.join(dir, "out-2024#{owner_tag}.log")
+        File.write(mine, '{}')
+        File.write(foreign, '{}')
+        File.write(tag_only, '{}')
+        sent = []
+        allow(kusto).to receive(:kusto_send_file) { |f| sent << f }
+        kusto.send(:recover_past_files)
+        expect(sent).to include(mine)
+        expect(sent).not_to include(foreign)
+        expect(sent).not_to include(tag_only)
+        kusto.close
+      end
+    end
+
   end
 
   describe '#inside_file_root?' do
@@ -245,6 +297,42 @@ describe LogStash::Outputs::Kusto do
       root = kusto.instance_variable_get(:@file_root)
       # "<root>-evil" shares the prefix but must not be considered inside.
       expect(kusto.send(:inside_file_root?, "#{root}-evil/file.txt")).to be false
+      kusto.close
+    end
+
+  end
+
+  describe '#warn_if_too_many_open_files' do
+
+    it 'warns once when the open file count crosses the threshold and re-arms after it recovers' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      logger = spy('logger')
+      kusto.instance_variable_set(:@logger, logger)
+      kusto.instance_variable_set(:@open_files_warning_threshold, 2)
+
+      kusto.instance_variable_set(:@files, { 'a' => 1, 'b' => 2 })
+      kusto.send(:warn_if_too_many_open_files)
+      kusto.send(:warn_if_too_many_open_files) # latched: must not warn again
+      expect(logger).to have_received(:warn).with(/temporary files open/, anything).once
+
+      kusto.instance_variable_set(:@files, {}) # drops below threshold -> re-arm
+      kusto.send(:warn_if_too_many_open_files)
+      kusto.instance_variable_set(:@files, { 'a' => 1, 'b' => 2 })
+      kusto.send(:warn_if_too_many_open_files)
+      expect(logger).to have_received(:warn).with(/temporary files open/, anything).twice
+      kusto.close
+    end
+
+    it 'does not warn when the threshold is 0 (disabled)' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      logger = spy('logger')
+      kusto.instance_variable_set(:@logger, logger)
+      kusto.instance_variable_set(:@open_files_warning_threshold, 0)
+      kusto.instance_variable_set(:@files, { 'a' => 1, 'b' => 2, 'c' => 3 })
+      kusto.send(:warn_if_too_many_open_files)
+      expect(logger).not_to have_received(:warn).with(/temporary files open/, anything)
       kusto.close
     end
 
@@ -293,6 +381,12 @@ describe LogStash::Outputs::Kusto do
     it 'accepts a valid static json_mapping' do
       kusto = described_class.new(dyn.merge('database' => 'mydb', 'json_mapping' => 'my_mapping-1'))
       expect { kusto.register }.not_to raise_error
+      kusto.close
+    end
+
+    it 'fails fast when a static database exceeds the 1024-character ADX limit' do
+      kusto = described_class.new(dyn.merge('database' => 'a' * (described_class::ROUTING_VALUE_MAX_LENGTH + 1)))
+      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /1024 characters or fewer/)
       kusto.close
     end
 
