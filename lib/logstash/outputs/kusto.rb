@@ -65,11 +65,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     value.to_s.b.gsub(ROUTING_SEGMENT_UNSAFE) { |byte| format('%%%02X', byte.ord) }
   end
 
-  # Reverses encode_routing_segment. Returns the decoded UTF-8 string, or nil if
-  # the bytes do not form valid UTF-8 (a corrupt or foreign file name).
+  # Reverses encode_routing_segment. Each `%XX` is decoded back to the raw byte
+  # it represents (reconstructing the original byte sequence), then the result is
+  # interpreted as UTF-8. Returns the decoded UTF-8 string, or nil if the bytes
+  # do not form valid UTF-8 (a corrupt or foreign file name).
   def self.decode_routing_segment(value)
     return '' if value.nil? || value.empty?
-    decoded = value.to_s.b.gsub(/%([0-9A-Fa-f]{2})/n) { Regexp.last_match(1).hex.chr }.force_encoding('UTF-8')
+    decoded = value.to_s.b.gsub(/%([0-9A-Fa-f]{2})/n) { [Regexp.last_match(1).hex].pack('C') }.force_encoding('UTF-8')
     decoded.valid_encoding? ? decoded : nil
   end
 
@@ -760,9 +762,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # and broke recovery for relative paths).
   private
   def recovery_scan_dir
-    path_last_char = @path.length - 1
-    pattern_start = @path.index('%') || path_last_char
-    last_folder_before_pattern = @path.rindex('/', pattern_start) || path_last_char
+    # Normalise separators (length-preserving) before locating the last directory
+    # boundary, so a backslash-style path (possible on some Windows/JRuby setups)
+    # is handled too. @path is sliced with the same index because tr does not
+    # change the string length.
+    normalized = @path.tr('\\', '/')
+    path_last_char = normalized.length - 1
+    pattern_start = normalized.index('%') || path_last_char
+    last_folder_before_pattern = normalized.rindex('/', pattern_start) || path_last_char
     @path[0..last_folder_before_pattern]
   end
 

@@ -173,6 +173,21 @@ describe LogStash::Outputs::Kusto::Ingestor do
       expect(target[:database]).to eq('a.kusto')
       expect(target[:table]).to eq('mytable')
     end
+
+    it 'round-trips non-ASCII (multi-byte UTF-8) database/table/mapping exactly' do
+      # Bytes >= 0x80 (e.g. é, Σ, 日) are percent-encoded per byte and must be
+      # reconstructed byte-for-byte on decode, not as UTF-8 codepoints.
+      database = "caf\u00E9_M\u00FCnchen"   # café_München
+      table    = "\u65E5\u672C\u8A9E"        # 日本語
+      mapping  = "\u03A3.Map"                # Σ.Map
+      db_enc = LogStash::Outputs::Kusto.encode_routing_segment(database)
+      tb_enc = LogStash::Outputs::Kusto.encode_routing_segment(table)
+      mp_enc = LogStash::Outputs::Kusto.encode_routing_segment(mapping)
+      target = ingestor.decode_routing_target("/tmp/2024-01-01.kusto~#{db_enc}~#{tb_enc}~#{mp_enc}")
+      expect(target[:database]).to eq(database)
+      expect(target[:table]).to eq(table)
+      expect(target[:mapping]).to eq(mapping)
+    end
   end
 
   describe '#ingestion_properties_for' do

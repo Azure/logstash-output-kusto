@@ -244,6 +244,22 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
+    it 'locates the scan directory even when the path uses backslash separators' do
+      kusto = described_class.new(options.merge(
+        'path' => './kusto_tst/%{+YYYY-MM-dd-HH-mm}',
+        'table' => '%{[@metadata][table]}',
+        'database' => 'mydb'
+      ))
+      kusto.register
+      # Force a backslash-style @path (as some Windows/JRuby setups could yield)
+      # and confirm the directory boundary before the field reference is still found.
+      kusto.instance_variable_set(:@path, 'C:\\logs\\kusto\\out-%{+YYYY-MM-dd-HH-mm}')
+      scan_dir = kusto.send(:recovery_scan_dir)
+      expect(scan_dir).not_to include('%')
+      expect(scan_dir).to eq('C:\\logs\\kusto\\')
+      kusto.close
+    end
+
     it 'recovers only dynamic temp files carrying this output\'s owner tag and routing marker' do
       require 'tmpdir'
       Dir.mktmpdir do |dir|
