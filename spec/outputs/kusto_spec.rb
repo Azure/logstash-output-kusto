@@ -160,9 +160,57 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
+    it 'writes the valid event and drops the unroutable one in a mixed batch (DLQ disabled)' do
+      # One bad route must not prevent valid events in the same batch from being
+      # written.
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, nil)
+      written_paths = []
+      writer = double('writer', write: nil, flush: nil)
+      allow(kusto).to receive(:open) { |p| written_paths << p; writer }
+
+      good = LogStash::Event.new
+      good.set('[@metadata][database]', 'mydb')
+      good.set('[@metadata][table]', 'orders')
+      good.set('[@metadata][mapping]', 'mymap')
+      bad = LogStash::Event.new # no routing fields -> unroutable -> dropped
+
+      kusto.multi_receive_encoded([[good, '{"a":1}'], [bad, '{"b":2}']])
+
+      expect(written_paths.uniq.length).to eq(1)
+      expect(written_paths.first).to include('.kusto~mydb~orders~mymap')
+      kusto.close
+    end
+
   end
 
   describe 'dynamic routing - crash recovery' do
+
+    it 'recovers static leftover files when database/table contain dots' do
+      require 'tmpdir'
+      Dir.mktmpdir do |dir|
+        kusto = described_class.new(options.merge(
+          'path' => "#{dir}/tmp%{+YYYY-MM-dd-HH-mm}",
+          'database' => 'Security.Events',
+          'table' => 'App.Logs',
+          'recovery' => false
+        ))
+        kusto.register
+        # A leftover file with the exact static suffix, and a decoy that would
+        # match if the dots were treated as regex wildcards.
+        match = File.join(dir, 'tmp2024.Security.Events.App.Logs')
+        decoy = File.join(dir, 'tmpXSecurityXEventsXAppXLogs')
+        File.write(match, '{}')
+        File.write(decoy, '{}')
+        sent = []
+        allow(kusto).to receive(:kusto_send_file) { |f| sent << f }
+        kusto.send(:recover_past_files)
+        expect(sent).to include(match)
+        expect(sent).not_to include(decoy)
+        kusto.close
+      end
+    end
 
     it 'computes a recovery scan directory free of field references for a relative path' do
       kusto = described_class.new(options.merge(

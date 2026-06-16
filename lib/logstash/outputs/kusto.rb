@@ -30,7 +30,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # (including '.', ' ', '~', '/', '\\' and '%') is percent-encoded, which keeps
   # the encoded segment free of path separators and of the marker/separator
   # characters, so the file name is always safe and unambiguous to decode.
-  ROUTING_SEGMENT_SAFE = /[A-Za-z0-9_-]/
+  ROUTING_SEGMENT_UNSAFE = /[^A-Za-z0-9_-]/n
 
   # Acceptable resolved database / table / mapping value (after decoding). This
   # follows Azure Data Explorer entity-naming: letters and digits (including
@@ -47,7 +47,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # through decode_routing_segment.
   def self.encode_routing_segment(value)
     return '' if value.nil?
-    value.to_s.b.gsub(/[^A-Za-z0-9_-]/n) { |byte| format('%%%02X', byte.ord) }
+    value.to_s.b.gsub(ROUTING_SEGMENT_UNSAFE) { |byte| format('%%%02X', byte.ord) }
   end
 
   # Reverses encode_routing_segment. Returns the decoded UTF-8 string, or nil if
@@ -171,11 +171,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :cli_auth, validate: :boolean, default: false
   # The following are the data settings that impact where events are written to
   # Database name. May contain Logstash field references (e.g. `%{[@metadata][db]}`)
-  # to route each event to a different database. When a field reference is used,
-  # the resolved value must contain only letters, digits, underscore and hyphen.
+  # to route each event to a different database. A resolved value may contain
+  # letters, digits, spaces, dots, dashes and underscores.
   config :database, validate: :string, required: true
   # Target table name. May contain Logstash field references (e.g. `%{table}`)
-  # to route each event to a different table, subject to the same identifier
+  # to route each event to a different table, subject to the same value
   # restrictions as `database`.
   config :table, validate: :string, required: true
   # Mapping name - Used by Kusto to map each attribute from incoming event JSON strings to the appropriate column in the table.
@@ -459,8 +459,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   private
   def inside_file_root?(log_path)
+    # Expand both sides so the comparison is independent of separator style
+    # (e.g. '\\' vs '/' on Windows/JRuby) and of any '.'/'..' segments. The path
+    # is inside the root when it is the root itself or sits beneath it.
     target_file = File.expand_path(log_path)
-    return target_file.start_with?("#{@file_root}/")
+    root = File.expand_path(@file_root)
+    target_file == root || target_file.start_with?("#{root}/")
   end
 
   private
@@ -654,12 +658,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
       # In dynamic mode the database/table are not known up-front, so recover
       # any leftover temp file carrying the routing marker. In static mode keep
-      # matching the exact `.database.table` suffix as before. Restrict to regular
-      # files so a directory whose name happens to match is never sent to ingest.
+      # matching the exact `.database.table` suffix as before. database/table are
+      # Regexp.escaped so values with metacharacters (e.g. dots) match literally.
+      # Restrict to regular files so a directory whose name happens to match is
+      # never sent to ingest.
       old_files = if @dynamic_routing
                     Find.find(new_path).select { |p| File.file?(p) && p.include?(ROUTING_MARKER) }
                   else
-                    Find.find(new_path).select { |p| File.file?(p) && /.*\.#{database}\.#{table}$/ =~ p }
+                    suffix = /\.#{Regexp.escape(database)}\.#{Regexp.escape(table)}\z/
+                    Find.find(new_path).select { |p| File.file?(p) && p =~ suffix }
                   end
       @logger.info("Found #{old_files.length} old file(s), sending them now...")
 
