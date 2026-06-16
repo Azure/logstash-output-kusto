@@ -92,16 +92,33 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
-    it 'drops an event whose resolved identifier is invalid when the DLQ is disabled' do
+    it 'drops an event whose resolved value is invalid (contains a path separator) when the DLQ is disabled' do
       kusto = described_class.new(dynamic_options)
       kusto.register
       kusto.instance_variable_set(:@dlq_writer, nil)
       event = LogStash::Event.new
       event.set('[@metadata][database]', 'mydb')
-      event.set('[@metadata][table]', 'bad.table.name')
+      event.set('[@metadata][table]', 'bad/table')
       event.set('[@metadata][mapping]', 'mymapping')
       path = kusto.send(:event_path, event)
       expect(path).to be_nil
+      kusto.close
+    end
+
+    it 'routes an event whose target contains dots and spaces (valid ADX names)' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'Security.Events')
+      event.set('[@metadata][table]', 'App Logs')
+      event.set('[@metadata][mapping]', 'My.Mapping')
+      path = kusto.send(:event_path, event)
+      expect(path).not_to be_nil
+      # The decoded target must round-trip back to the original ADX names.
+      target = described_class.decode_routing_target(path)
+      expect(target[:database]).to eq('Security.Events')
+      expect(target[:table]).to eq('App Logs')
+      expect(target[:mapping]).to eq('My.Mapping')
       kusto.close
     end
 
@@ -118,7 +135,7 @@ describe LogStash::Outputs::Kusto do
     end
 
     it 'partitions one batch into a separate temp file per (database, table, mapping)' do
-      # The central issue #92 behaviour: two valid events resolving to different
+      # The central dynamic-routing behaviour: two valid events resolving to different
       # targets in a single batch must be written to two different temp files.
       kusto = described_class.new(dynamic_options)
       kusto.register
@@ -172,10 +189,9 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
-    it 'fails fast when a static database contains characters outside the allowlist' do
-      kusto = described_class.new(dyn.merge('database' => 'bad.db.name'))
-      # The error must use the human-readable allowlist, not a raw regexp dump.
-      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /must match \[A-Za-z0-9_-\]\+/)
+    it 'fails fast when a static database contains a path separator' do
+      kusto = described_class.new(dyn.merge('database' => 'bad/db'))
+      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /must contain only/)
       kusto.close
     end
 
@@ -185,9 +201,15 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
-    it 'fails fast when a static json_mapping contains characters outside the allowlist' do
-      kusto = described_class.new(dyn.merge('database' => 'mydb', 'json_mapping' => 'bad.mapping'))
-      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /json_mapping static value.*must match/)
+    it 'accepts a static database containing dots (a valid ADX name)' do
+      kusto = described_class.new(dyn.merge('database' => 'Security.Events'))
+      expect { kusto.register }.not_to raise_error
+      kusto.close
+    end
+
+    it 'fails fast when a static json_mapping contains a path separator' do
+      kusto = described_class.new(dyn.merge('database' => 'mydb', 'json_mapping' => 'bad/mapping'))
+      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /json_mapping static value.*must contain only/)
       kusto.close
     end
 
@@ -242,8 +264,9 @@ describe LogStash::Outputs::Kusto do
       event.set('[@metadata][table]', '../../../../tmp/evil')
       event.set('[@metadata][mapping]', 'mymapping')
       path = kusto.send(:event_path, event)
-      # Either the outside-root guard or the identifier allowlist rejects it;
-      # in both cases the event is treated as unroutable (dropped, DLQ disabled).
+      # The path separators are percent-encoded in the file name (so no traversal
+      # can occur) and the decoded value fails routing validation, so the event is
+      # treated as unroutable (dropped, DLQ disabled).
       expect(path).to be_nil
       kusto.close
     end

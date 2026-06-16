@@ -108,29 +108,35 @@ Notes and caveats:
 - Dynamic routing turns on automatically when any of `database`, `table` or
   `json_mapping` contains a `%{...}` field reference. You can also force it on
   with `dynamic_event_routing => true`.
-- Resolved `database`, `table` and `json_mapping` values must match
-  `[A-Za-z0-9_-]+` (letters, digits, underscore and hyphen only). This is
-  stricter than ADX's own naming rules (which allow dots and spaces in quoted
-  names): the routing target is encoded into the temp file name, so characters
-  that are unsafe or ambiguous in a file name are not accepted. **A database,
-  table or mapping name containing a dot or space cannot be used with dynamic
-  routing** — keep that value static, or rename the ADX entity.
+- Resolved `database`, `table` and `json_mapping` values may contain letters,
+  digits, spaces, dots, dashes and underscores — the common Azure Data Explorer
+  entity-naming characters (e.g. `Security.Events`, `App Logs`). The value is
+  reversibly encoded into the temp file name, so dots and spaces are preserved.
+  Values containing other characters (for example a path separator `/`) are
+  treated as unroutable.
 - Events that cannot be routed — because the referenced field is missing or the
   resolved value is invalid — are **not** ingested into an unintended table.
   When Logstash's
   [Dead Letter Queue](https://www.elastic.co/guide/en/logstash/current/dead-letter-queues.html)
   is enabled in `logstash.yml`, such events are sent there (where they can be
   inspected and replayed via the `dead_letter_queue` input). When the DLQ is
-  **disabled, unroutable events are dropped** — this matches the elasticsearch
-  output and avoids an unbounded local file. The drop is never silent: the plugin
-  logs a warning at startup and a per-batch count of dropped events. **For
-  production, enable the dead letter queue** so unroutable events are captured.
+  **disabled, unroutable events are dropped**, which avoids an unbounded local
+  file. The drop is never silent: the plugin logs a warning at startup and a
+  per-batch count of dropped events. **For production, enable the dead letter
+  queue** so unroutable events are captured.
 - A persistent per-batch "could not be routed" warning usually means an upstream
   filter is not setting the routing field — fix the pipeline producing the events.
 - If a static `database`/`table` is combined with dynamic routing, it is
   validated at startup and the plugin fails fast on an empty or invalid value.
 - The `json_mapping` reference is optional: if it does not resolve, the event is
   still routed using `database`/`table` and columns are mapped by attribute name.
+  This means a **missing mapping field does not** send the event to the DLQ — if
+  a mapping is required for a table, make sure the field is always set upstream.
+- Crash recovery scans the temp-file root for leftover files to resend on
+  startup. If several Kusto outputs (or other plugins) share the same `path`
+  root, an output could pick up another's leftover dynamic temp file. Give each
+  dynamic output a **unique `path` root**, or set `recovery => false`, when more
+  than one output writes under the same directory.
 - **Routing only validates the *format* of the target, not its *existence*.** A
   syntactically valid but non-existent (e.g. mistyped) `database`/`table`/`json_mapping`
   passes validation and the file is uploaded; because ingestion is asynchronous,

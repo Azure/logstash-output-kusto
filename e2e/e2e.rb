@@ -53,7 +53,7 @@ class E2E
       table => "#{@table_without_mapping}"
     }
     # Dynamic routing: the destination table is resolved per-event from
-    # event metadata (issue #92). Database stays static, table is dynamic.
+    # event metadata. Database stays static, table is dynamic.
     kusto {
       path => "dyntmp%{+YYYY-MM-dd-HH-mm}.txt"
       cli_auth => true
@@ -110,7 +110,7 @@ class E2E
     max_timeout = 10
     csv_data = CSV.read(@csv_file)
     # Validate every table the pipeline wrote to, including the dynamic-routing
-    # table (issue #92), which is fed via [@metadata][kusto_table]. Each table is
+    # table, which is fed via [@metadata][kusto_table]. Each table is
     # validated independently and retried until the full dataset has landed, so a
     # failure (or missing rows) in any one table fails the test.
     Array[@table_with_mapping, @table_without_mapping, @table_dynamic].each { |tableop|

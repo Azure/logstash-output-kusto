@@ -20,21 +20,43 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   FIELD_REF = /%\{[^}]++\}/
 
   # Marker appended to the temp file name (after the user-provided path) to
-  # carry the per-event routing target when dynamic routing is active.
-  # The `~` separators can never appear inside a resolved identifier because
-  # IDENTIFIER_PATTERN forbids them, so decoding back to (database, table,
-  # mapping) is unambiguous regardless of dots in the user's path pattern.
+  # carry the per-event routing target when dynamic routing is active. Each of
+  # the three target segments (database, table, mapping) is percent-encoded
+  # (see encode_routing_segment), so neither the marker nor the `~` separators
+  # can ever appear inside a segment and decoding is always unambiguous.
   ROUTING_MARKER = '.kusto~'
 
-  # Allowlist for dynamically-resolved database / table / mapping identifiers.
-  # Restricting to these characters keeps the routing marker unambiguous and
-  # prevents path traversal (no '/', '\\', '.' or '~') in the temp file name.
-  IDENTIFIER_PATTERN = /\A[A-Za-z0-9_-]+\z/
+  # Characters left as-is in an encoded routing segment. Everything else
+  # (including '.', ' ', '~', '/', '\\' and '%') is percent-encoded, which keeps
+  # the encoded segment free of path separators and of the marker/separator
+  # characters, so the file name is always safe and unambiguous to decode.
+  ROUTING_SEGMENT_SAFE = /[A-Za-z0-9_-]/
 
-  # Human-readable description of IDENTIFIER_PATTERN for user-facing messages
-  # (config errors, DLQ reasons). Avoids leaking the raw Ruby regexp dump
-  # (e.g. `(?-mix:\A...)`) and matches the allowlist documented in the README.
-  IDENTIFIER_PATTERN_DESCRIPTION = '[A-Za-z0-9_-]+ (letters, digits, underscore and hyphen only)'
+  # Acceptable resolved database / table / mapping value (after decoding). This
+  # follows Azure Data Explorer entity-naming: letters and digits (including
+  # non-ASCII), spaces, dots, dashes and underscores. Values outside this set
+  # (e.g. containing path separators) are treated as unroutable.
+  ROUTING_VALUE_PATTERN = /\A[[:alnum:] ._-]+\z/
+
+  # Human-readable description of ROUTING_VALUE_PATTERN for user-facing messages.
+  ROUTING_VALUE_DESCRIPTION = 'letters, digits, spaces, dots, dashes and underscores'
+
+  # Percent-encodes a resolved routing value so it can be embedded as one segment
+  # of the routing marker in a temp file name. Operates on bytes, so any value
+  # (including non-ASCII and otherwise unsafe characters) round-trips exactly
+  # through decode_routing_segment.
+  def self.encode_routing_segment(value)
+    return '' if value.nil?
+    value.to_s.b.gsub(/[^A-Za-z0-9_-]/n) { |byte| format('%%%02X', byte.ord) }
+  end
+
+  # Reverses encode_routing_segment. Returns the decoded UTF-8 string, or nil if
+  # the bytes do not form valid UTF-8 (a corrupt or foreign file name).
+  def self.decode_routing_segment(value)
+    return '' if value.nil? || value.empty?
+    decoded = value.to_s.b.gsub(/%([0-9A-Fa-f]{2})/n) { Regexp.last_match(1).hex.chr }.force_encoding('UTF-8')
+    decoded.valid_encoding? ? decoded : nil
+  end
 
   # Decodes the (database, table, mapping) routing target encoded into a dynamic
   # temp file name by the output. This is the single source of truth shared by
@@ -42,12 +64,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # side (resolving the destination at upload time), so the two can never drift.
   #
   # Returns a hash { database:, table:, mapping: } when the marker is present and
-  # both database and table are valid identifiers, or nil otherwise. The mapping
+  # both database and table decode to valid values, or nil otherwise. The mapping
   # segment is optional: an empty value or an unresolved field reference
   # (e.g. `%{[@metadata][mapping]}`, left behind when the field is absent) is
-  # normalised to nil (route without a mapping), but a mapping that resolved to a
-  # genuinely invalid identifier makes the whole target unroutable so the event
-  # is dead-lettered instead of being silently ingested with the wrong mapping.
+  # normalised to nil (route without a mapping), while a mapping that decoded to a
+  # genuinely invalid value makes the whole target unroutable so the event is not
+  # silently ingested with the wrong mapping.
   def self.decode_routing_target(path)
     return nil if path.nil?
 
@@ -55,19 +77,30 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     return nil if marker_index.nil?
 
     encoded = path[(marker_index + ROUTING_MARKER.length)..-1]
-    database_value, table_value, mapping_value = encoded.split('~', 3)
+    database_enc, table_enc, mapping_enc = encoded.split('~', 3)
 
-    return nil if database_value.nil? || database_value !~ IDENTIFIER_PATTERN
-    return nil if table_value.nil? || table_value !~ IDENTIFIER_PATTERN
+    database = decode_routing_segment(database_enc)
+    table = decode_routing_segment(table_enc)
+    return nil if unresolved_or_invalid_routing_value?(database)
+    return nil if unresolved_or_invalid_routing_value?(table)
 
-    if mapping_value.nil? || mapping_value.empty? || mapping_value =~ FIELD_REF
+    mapping = decode_routing_segment(mapping_enc)
+    if mapping.nil? || mapping.empty? || mapping =~ FIELD_REF
       # Absent or unresolved mapping field reference -> route without a mapping.
-      mapping_value = nil
-    elsif mapping_value !~ IDENTIFIER_PATTERN
-      # Resolved to a genuinely invalid identifier -> unroutable.
+      mapping = nil
+    elsif mapping !~ ROUTING_VALUE_PATTERN
+      # Decoded to a genuinely invalid value -> unroutable.
       return nil
     end
-    { database: database_value, table: table_value, mapping: mapping_value }
+    { database: database, table: table, mapping: mapping }
+  end
+
+  # True when a decoded database/table value is missing, empty, an unresolved
+  # field reference (the event lacked the field) or outside ROUTING_VALUE_PATTERN.
+  def self.unresolved_or_invalid_routing_value?(value)
+    return true if value.nil? || value.empty?
+    return true if value =~ FIELD_REF
+    value !~ ROUTING_VALUE_PATTERN
   end
 
   attr_reader :failure_path
@@ -203,10 +236,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                        value_dynamic?(final_mapping)
 
     # Fail fast on statically-broken dynamic configs: a non-field-reference
-    # database/table/mapping is embedded verbatim into the routing marker, so an
+    # database/table is the routing target for every event, so an empty or
     # invalid literal would make every event unroutable at runtime. database and
     # table are required; json_mapping is optional but, when given as a literal,
-    # must still be a valid identifier.
+    # must still be a valid value.
     if @dynamic_routing
       validate_dynamic_literal('database', database)
       validate_dynamic_literal('table', table)
@@ -215,18 +248,18 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     # The temp file name carries the routing target so the ingestor knows where
     # to send each file. In static mode the (constant) database/table are simply
-    # appended as before. In dynamic mode we append a tilde-delimited marker
-    # built from the resolved field references; the tilde separators cannot
-    # collide with a resolved identifier (see IDENTIFIER_PATTERN) so the ingestor
-    # can decode it unambiguously even when `path` itself contains dots.
-    @path = if @dynamic_routing
-              database_ref = field_ref_or_literal(database)
-              table_ref = field_ref_or_literal(table)
-              mapping_ref = field_ref_or_literal(final_mapping)
-              File.expand_path("#{path}#{ROUTING_MARKER}#{database_ref}~#{table_ref}~#{mapping_ref}")
-            else
-              File.expand_path("#{path}.#{database}.#{table}")
-            end
+    # appended as before. In dynamic mode `@path` holds only the user path
+    # (resolved per event for time-based rotation); the routing marker is built
+    # and percent-encoded per event in generate_filepath, so the routing values
+    # are kept verbatim (they are not run through File.expand_path).
+    if @dynamic_routing
+      @routing_database = database
+      @routing_table = table
+      @routing_mapping = final_mapping
+      @path = File.expand_path(path)
+    else
+      @path = File.expand_path("#{path}.#{database}.#{table}")
+    end
 
     validate_path
 
@@ -278,20 +311,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     !value.nil? && value =~ FIELD_REF ? true : false
   end
 
-  # Returns the value to embed in the routing marker: a field reference is left
-  # intact for Logstash sprintf to resolve per event, a literal is used as-is,
-  # and nil (e.g. an absent mapping) becomes an empty segment.
-  def field_ref_or_literal(value)
-    value.nil? ? '' : value
-  end
-
   # Validates a static (non-field-reference) database/table/mapping value used in
-  # dynamic mode. Such literals are embedded verbatim into the routing marker, so
-  # they must match the identifier allowlist; otherwise every event would fail
-  # routing at runtime. Required values (database/table) must also be non-empty;
-  # an optional value (json_mapping) may be empty/nil (routed without a mapping).
+  # dynamic mode. Such literals are the routing target for every event, so an
+  # invalid value would make every event unroutable at runtime. Required values
+  # (database/table) must be non-empty; an optional value (json_mapping) may be
+  # empty/nil (routed without a mapping). Field references are validated per
+  # event at write time, so they are skipped here.
   def validate_dynamic_literal(name, value, optional: false)
-    return if value_dynamic?(value) # field reference: validated per event at write time
+    return if value_dynamic?(value)
 
     if value.nil? || value.empty?
       return if optional
@@ -299,17 +326,16 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       raise LogStash::ConfigurationError.new("#{name} must not be empty when dynamic routing is enabled.")
     end
 
-    unless value =~ IDENTIFIER_PATTERN
-      @logger.error("#{name} static value '#{value}' must match #{IDENTIFIER_PATTERN_DESCRIPTION} when dynamic routing is enabled.")
-      raise LogStash::ConfigurationError.new("#{name} static value '#{value}' must match #{IDENTIFIER_PATTERN_DESCRIPTION} when dynamic routing is enabled.")
+    unless value =~ ROUTING_VALUE_PATTERN
+      @logger.error("#{name} static value '#{value}' must contain only #{ROUTING_VALUE_DESCRIPTION} when dynamic routing is enabled.")
+      raise LogStash::ConfigurationError.new("#{name} static value '#{value}' must contain only #{ROUTING_VALUE_DESCRIPTION} when dynamic routing is enabled.")
     end
   end
 
   # True when Logstash's native dead-letter queue is enabled for this pipeline.
-  # Mirrors the approach used by the official elasticsearch output: Logstash
-  # hands plugins a "dummy" writer when the DLQ is disabled in logstash.yml.
-  # Defensive (rescues and treats DLQ as disabled) since we are a third-party
-  # plugin and the internal writer classes are Logstash-version dependent.
+  # When the DLQ is disabled Logstash hands plugins a "dummy" no-op writer. This
+  # is defensive (rescues and treats the DLQ as disabled) because the internal
+  # writer classes vary by Logstash version and may not be loadable here.
   def dlq_enabled?
     return false unless respond_to?(:execution_context) && execution_context.respond_to?(:dlq_writer)
 
@@ -396,8 +422,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   # Emits a single aggregated warning per batch summarising how many events could
-  # not be routed, instead of one log line per event. This keeps the logs usable
-  # under high volume (mirrors the elasticsearch output's batched DLQ summary).
+  # not be routed, instead of one log line per event, to keep the logs usable
+  # under high volume.
   def log_unroutable_summary(count)
     return if count.zero?
 
@@ -449,7 +475,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.warn('The event tried to write outside the files root, writing the event to the failure file', event: event, filename: @failure_path)
       file_output_path = @failure_path
     elsif @dynamic_routing && !valid_routing_target?(file_output_path)
-      return handle_unroutable_event(event, "did not resolve to a valid Kusto routing target (database/table must match #{IDENTIFIER_PATTERN_DESCRIPTION})")
+      return handle_unroutable_event(event, "did not resolve to a valid Kusto routing target (database/table must contain only #{ROUTING_VALUE_DESCRIPTION})")
     elsif !@create_if_deleted && deleted?(file_output_path)
       # The temp file was deleted and we are told not to recreate it. In dynamic
       # mode there is no usable failure file (it carries no routing target and
@@ -465,12 +491,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   # Handles a dynamic event that could not be routed to a Kusto destination.
-  # Sends it to Logstash's native dead letter queue when enabled (idiomatic, and
-  # replayable via the dead_letter_queue input). When the DLQ is disabled the
-  # event is dropped: this matches the elasticsearch output, avoids an unbounded
-  # local file, and is surfaced loudly (a startup warning plus the per-batch
-  # count) so it is never a silent loss. Always returns nil so the caller writes
-  # nothing to disk for this event.
+  # Sends it to Logstash's native dead letter queue when enabled (where it can be
+  # inspected and replayed). When the DLQ is disabled the event is dropped to
+  # avoid an unbounded local file; the drop is surfaced loudly (a startup warning
+  # plus the per-batch count) so it is never a silent loss. Always returns nil so
+  # the caller writes nothing to disk for this event.
   private
   def handle_unroutable_event(event, reason)
     if @dlq_writer
@@ -494,7 +519,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   private
   def generate_filepath(event)
-    event.sprintf(@path)
+    return event.sprintf(@path) unless @dynamic_routing
+
+    # Resolve the user path (for time-based rotation) and each routing target
+    # separately, then percent-encode each target so the file name is safe and
+    # the marker decodes unambiguously. Unresolved field references survive as a
+    # literal `%{...}` and are rejected later by decode_routing_target.
+    prefix = event.sprintf(@path)
+    database = self.class.encode_routing_segment(event.sprintf(@routing_database))
+    table = self.class.encode_routing_segment(event.sprintf(@routing_table))
+    mapping = self.class.encode_routing_segment(@routing_mapping.nil? ? '' : event.sprintf(@routing_mapping))
+    "#{prefix}#{ROUTING_MARKER}#{database}~#{table}~#{mapping}"
   end
 
   private

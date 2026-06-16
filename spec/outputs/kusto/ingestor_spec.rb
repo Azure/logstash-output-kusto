@@ -144,10 +144,34 @@ describe LogStash::Outputs::Kusto::Ingestor do
       expect(target[:mapping]).to be_nil
     end
 
-    it 'returns nil when the mapping resolved to a genuinely invalid identifier' do
-      # A resolved-but-invalid mapping must not be silently dropped: the event is
-      # unroutable so it is dead-lettered rather than ingested with the wrong mapping.
-      expect(ingestor.decode_routing_target("/tmp/kusto/2024-01-01.kusto~mydb~mytable~bad mapping")).to be_nil
+    it 'returns nil when the mapping decoded to a genuinely invalid value' do
+      # A resolved-but-invalid mapping (here a path separator) must not be silently
+      # dropped: the event is unroutable rather than ingested with the wrong mapping.
+      expect(ingestor.decode_routing_target("/tmp/kusto/2024-01-01.kusto~mydb~mytable~bad%2Fmapping")).to be_nil
+    end
+
+    it 'round-trips database/table/mapping containing dots and spaces' do
+      db = LogStash::Outputs::Kusto.encode_routing_segment('Security.Events')
+      table = LogStash::Outputs::Kusto.encode_routing_segment('App Logs')
+      mapping = LogStash::Outputs::Kusto.encode_routing_segment('My.Mapping')
+      # Encoded segments contain no '.', '~' or '/'.
+      [db, table, mapping].each do |seg|
+        expect(seg).not_to include('.')
+        expect(seg).not_to include('~')
+        expect(seg).not_to include('/')
+      end
+      target = ingestor.decode_routing_target("/tmp/a.b.c-12.34.kusto~#{db}~#{table}~#{mapping}")
+      expect(target[:database]).to eq('Security.Events')
+      expect(target[:table]).to eq('App Logs')
+      expect(target[:mapping]).to eq('My.Mapping')
+    end
+
+    it 'is not fooled by a database value that itself ends in the marker text' do
+      # "a.kusto" must not create a spurious marker; encoding removes the dot.
+      seg = LogStash::Outputs::Kusto.encode_routing_segment('a.kusto')
+      target = ingestor.decode_routing_target("/tmp/2024-01-01.kusto~#{seg}~mytable~")
+      expect(target[:database]).to eq('a.kusto')
+      expect(target[:table]).to eq('mytable')
     end
   end
 

@@ -3,7 +3,7 @@
 
 # 2.2.0
 
-- Add dynamic event routing (issue #92): `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) so a single output can route events to different Azure Data Explorer destinations.
+- Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) so a single output can route events to different Azure Data Explorer destinations.
 - Unroutable events (missing routing field or a value outside `[A-Za-z0-9_-]+`) are sent to Logstash's native Dead Letter Queue when it is enabled, and otherwise dropped with startup and per-batch warnings (rather than mis-ingested into an unintended table). Enable the dead letter queue to capture them.
 - Fail fast at startup when a static `database`/`table` used alongside dynamic routing is empty or contains invalid characters.
 
