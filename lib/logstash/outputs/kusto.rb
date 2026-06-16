@@ -459,11 +459,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   private
   def inside_file_root?(log_path)
-    # Expand both sides so the comparison is independent of separator style
-    # (e.g. '\\' vs '/' on Windows/JRuby) and of any '.'/'..' segments. The path
-    # is inside the root when it is the root itself or sits beneath it.
-    target_file = File.expand_path(log_path)
-    root = File.expand_path(@file_root)
+    # Expand both sides and normalise any backslashes to '/' so the containment
+    # check is independent of separator style (Windows/JRuby may produce either)
+    # and of '.'/'..' segments. The path is inside the root when it is the root
+    # itself or sits beneath it.
+    target_file = File.expand_path(log_path).tr('\\', '/')
+    root = File.expand_path(@file_root).tr('\\', '/')
     target_file == root || target_file.start_with?("#{root}/")
   end
 
@@ -632,12 +633,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
           else
             File.new(path, 'a+')
           end
-          # fd = if @file_mode != -1
-          #         File.new(path, 'a+', @file_mode)
-          #       else
-          #         File.new(path, 'a+')
-          #       end
-        #  end
     @files[path] = IOWriter.new(fd)
   end
 

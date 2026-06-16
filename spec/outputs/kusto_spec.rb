@@ -227,6 +227,29 @@ describe LogStash::Outputs::Kusto do
 
   end
 
+  describe '#inside_file_root?' do
+
+    it 'treats a path inside the root as inside regardless of separator style' do
+      kusto = described_class.new(options.merge('path' => '/tmp/kusto/%{+YYYY-MM-dd-HH-mm}'))
+      kusto.register
+      root = kusto.instance_variable_get(:@file_root)
+      expect(kusto.send(:inside_file_root?, "#{root}/sub/file.txt")).to be true
+      # A backslash-separated variant of the same in-root path is still inside.
+      expect(kusto.send(:inside_file_root?, "#{root}\\sub\\file.txt")).to be true
+      kusto.close
+    end
+
+    it 'treats a sibling directory sharing a name prefix as outside the root' do
+      kusto = described_class.new(options.merge('path' => '/tmp/kustoroot/%{+YYYY-MM-dd-HH-mm}'))
+      kusto.register
+      root = kusto.instance_variable_get(:@file_root)
+      # "<root>-evil" shares the prefix but must not be considered inside.
+      expect(kusto.send(:inside_file_root?, "#{root}-evil/file.txt")).to be false
+      kusto.close
+    end
+
+  end
+
   describe 'dynamic routing - register-time validation' do
 
     let(:dyn) { options.merge('path' => './kusto_tst/%{+YYYY-MM-dd-HH-mm}', 'table' => '%{[@metadata][table]}') }
