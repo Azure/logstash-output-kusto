@@ -56,6 +56,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # or as unroutable at decode time) instead of failing later on the ADX side.
   ROUTING_VALUE_MAX_LENGTH = 1024
 
+  # Maximum length (in bytes) of the encoded routing basename (time prefix +
+  # owner-tag + routing marker + encoded segments). In dynamic mode this basename
+  # is the complete, final filename — no suffix is appended afterward — so 255,
+  # the NAME_MAX limit on ext4/xfs/btrfs/APFS/NTFS, is the precise filesystem
+  # ceiling rather than an arbitrary margin. A value over this is treated as
+  # unroutable (DLQ/drop) before File.new is attempted, avoiding
+  # Errno::ENAMETOOLONG and batch aborts. Filesystems with a smaller NAME_MAX
+  # (e.g. eCryptfs home directories, ~143 bytes) are caught defensively by the
+  # rescue in multi_receive_encoded.
+  ROUTING_ENCODED_BASENAME_MAX_BYTES = 255
+
   # Percent-encodes a resolved routing value so it can be embedded as one segment
   # of the routing marker in a temp file name. Operates on bytes, so any value
   # (including non-ASCII and otherwise unsafe characters) round-trips exactly
@@ -102,9 +113,22 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     return nil if unresolved_or_invalid_routing_value?(table)
 
     mapping = decode_routing_segment(mapping_enc)
-    if mapping.nil? || mapping.empty? || mapping =~ FIELD_REF
-      # Absent or unresolved mapping field reference -> route without a mapping.
+    if mapping.nil? || mapping.empty?
+      # Absent mapping -> route without a mapping.
       mapping = nil
+    elsif mapping =~ FIELD_REF
+      # An exact, unresolved field reference like %{[@metadata][mapping]}
+      # (left when the field is absent) -> route without a mapping. But a
+      # composite like "prefix_%{...}" with unresolved refs is inconsistent
+      # with database/table behavior and would silent-fail, so treat it as
+      # unroutable.
+      if mapping =~ /\A%\{[^}]++\}\z/
+        # Exact single field reference -> route without mapping.
+        mapping = nil
+      else
+        # Composite-unresolved -> unroutable.
+        return nil
+      end
     elsif mapping !~ ROUTING_VALUE_PATTERN || mapping.length > ROUTING_VALUE_MAX_LENGTH
       # Decoded to a genuinely invalid (or overlong) value -> unroutable.
       return nil
@@ -464,10 +488,26 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     @io_mutex.synchronize do
       encoded_by_path.each do |path, chunks|
-        fd = open(path)
-        # append to the file
-        chunks.each { |chunk| fd.write(chunk) }
-        fd.flush unless @flusher && @flusher.alive?
+        begin
+          fd = open(path)
+          # append to the file
+          chunks.each { |chunk| fd.write(chunk) }
+          fd.flush unless @flusher && @flusher.alive?
+        rescue Errno::ENAMETOOLONG => e
+          # Last-resort backstop: the basename passed the 255-byte NAME_MAX check
+          # in valid_routing_target?, but this filesystem's NAME_MAX is lower
+          # (e.g. eCryptfs ~143). Only the encoded chunks are available here, not
+          # the original events, so these cannot be re-routed to the dead letter
+          # queue at this stage; they are dropped and logged. Isolate this path so
+          # the other paths in the batch still proceed.
+          @logger.error("Could not open routing target file; filename exceeds this filesystem's limit. Dropping events for this target (cannot be sent to the dead letter queue at this stage).", path: path, exception: e.class, message: e.message)
+        rescue Errno::ENOENT => e
+          # Path directory was deleted; isolate and log.
+          @logger.error('Could not open routing target file; parent directory missing.', path: path, exception: e.class, message: e.message)
+        rescue => e
+          # Other file-open errors; isolate and log.
+          @logger.error('Could not open routing target file.', path: path, exception: e.class, message: e.message)
+        end
       end
 
       # Close any files that went stale in previous batches first, then warn on
@@ -574,9 +614,25 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # lock-step. Returns false when database/table did not resolve to valid
   # identifiers (e.g. the field reference was missing, leaving a literal
   # `%{...}`). The mapping segment is optional and not required here.
+  # Also checks that the encoded routing basename doesn't exceed the filesystem
+  # filename byte limit to prevent Errno::ENAMETOOLONG.
   private
   def valid_routing_target?(file_output_path)
-    !self.class.decode_routing_target(file_output_path).nil?
+    target = self.class.decode_routing_target(file_output_path)
+    return false if target.nil?
+
+    # The basename is the complete final filename, so guard it against the
+    # filesystem NAME_MAX (255 bytes). Percent-encoding can expand a value up to
+    # ~6× (a 1024-char value could encode to ~6144 bytes), so an ADX-valid value
+    # may still overflow the name; such targets are treated as unroutable
+    # (DLQ/drop) here rather than failing later in File.new.
+    basename = File.basename(file_output_path)
+    if basename.bytesize > ROUTING_ENCODED_BASENAME_MAX_BYTES
+      @logger.debug('Routing target encoded to basename exceeding filesystem limit.', basename_bytes: basename.bytesize, limit: ROUTING_ENCODED_BASENAME_MAX_BYTES)
+      return false
+    end
+
+    true
   end
 
   private
@@ -773,15 +829,16 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @path[0..last_folder_before_pattern]
   end
 
-  # True when `path` is a dynamic temp file written by THIS output. It must carry
-  # this output's owner tag immediately followed by the routing marker, exactly
-  # as generate_filepath emits it. Requiring the full owner-tag + marker shape
-  # (not merely the tag substring) means a stray file that just happens to
-  # contain the tag is never queued for ingest — and so never deleted by the
-  # ingestor as an invalid routing file.
+  # True when the *basename* of `path` is a dynamic temp file written by THIS
+  # output. Checks only the filename (not parent directories) for the owner-tag +
+  # marker pattern, so a directory name containing the pattern is not confused
+  # with ownership. Requiring the exact tag + marker shape (not merely the tag)
+  # means a stray file with the tag in its name is never queued for ingest — and
+  # so never deleted by the ingestor as an invalid routing file.
   private
   def dynamic_temp_file_owned_by_this_output?(path)
-    path.include?("#{@routing_owner_tag}#{ROUTING_MARKER}")
+    basename = File.basename(path)
+    basename.include?("#{@routing_owner_tag}#{ROUTING_MARKER}")
   end
 end
 

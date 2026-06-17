@@ -541,6 +541,97 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
+    it 'treats an over-long encoded basename as unroutable (drop or DLQ)' do
+      # When a routing value encodes to exceed the filesystem 255-byte filename
+      # limit, it should be treated as unroutable instead of attempting File.new
+      # and crashing the batch with Errno::ENAMETOOLONG.
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+      allow(dlq_writer).to receive(:write)
+
+      # A 1024-char UTF-8 value (at max length) encodes to ~6144 bytes when
+      # percent-encoded, far exceeding the 200-byte basename limit. This event
+      # should be routed to DLQ, not attempt to open an overlong filename.
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'db')
+      event.set('[@metadata][table]', 'a' * 1024)  # encodes to ~1540 bytes
+      event.set('[@metadata][mapping]', 'mymapping')
+      path = kusto.send(:event_path, event)
+      # Path should be nil because the basename exceeds the filesystem limit.
+      expect(path).to be_nil
+      # Event should be routed to DLQ (not written to a temp file).
+      expect(dlq_writer).to have_received(:write).with(event, kind_of(String)).once
+      kusto.close
+    end
+
+    it 'matches owner-tag in basename only (not in directory names)' do
+      # Ensure that a file sitting under a directory whose name contains the
+      # owner-tag + marker substring is not mistakenly treated as owned by this
+      # output. We test this via the dynamic_temp_file_owned_by_this_output?
+      # predicate.
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+
+      owner_tag = kusto.instance_variable_get(:@routing_owner_tag)
+      marker = described_class::ROUTING_MARKER
+      fake_owned_substring = "#{owner_tag}#{marker}"
+
+      # File in a directory whose name contains owner_tag + marker.
+      # Should NOT be considered owned by this output (only basename matters).
+      directory_with_tag = "./kusto_tst/prefix_#{fake_owned_substring}_suffix"
+      file_under_tagged_dir = File.join(directory_with_tag, 'somefile.txt')
+      result = kusto.send(:dynamic_temp_file_owned_by_this_output?, file_under_tagged_dir)
+      expect(result).to be false
+
+      # A file whose basename actually contains the tag + marker should be owned.
+      owned_file = "./kusto_tst/prefix_#{fake_owned_substring}_suffix.txt"
+      result = kusto.send(:dynamic_temp_file_owned_by_this_output?, owned_file)
+      expect(result).to be true
+
+      kusto.close
+    end
+
+    it 'treats composite-unresolved mapping (e.g. prefix_%{...}) as unroutable' do
+      # When a mapping field reference is part of a composite value (e.g.
+      # "prefix_%{missing_field}") and the field is missing, the resolved value
+      # contains a literal "%{...}". Unlike an exact single field reference (which
+      # routes without mapping), a composite unresolved should be unroutable to
+      # avoid silent data loss (ingesting without the intended mapping).
+      kusto = described_class.new(dynamic_options.merge('json_mapping' => 'prefix_%{[@metadata][custom_mapping]}'))
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+      allow(dlq_writer).to receive(:write)
+
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'mydb')
+      event.set('[@metadata][table]', 'mytable')
+      # Intentionally do NOT set [@metadata][custom_mapping], so it remains unresolved.
+      path = kusto.send(:event_path, event)
+      # Should be treated as unroutable (sent to DLQ or dropped).
+      expect(path).to be_nil
+      expect(dlq_writer).to have_received(:write).with(event, kind_of(String)).once
+      kusto.close
+    end
+
+    it 'routes without mapping when an exact single field reference is unresolved' do
+      # An exact field reference like json_mapping => "%{[@metadata][mapping]}"
+      # with a missing field should route without mapping (mapping = nil), which
+      # is the existing intended behavior. We verify this is unchanged by the fix.
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'mydb')
+      event.set('[@metadata][table]', 'mytable')
+      # Do NOT set mapping, so %{[@metadata][mapping]} resolves to the literal "%{...}".
+      path = kusto.send(:event_path, event)
+      # Should be routable (exact unresolved field reference -> mapping = nil).
+      expect(path).not_to be_nil
+      expect(path).to include('mydb~mytable~')
+      kusto.close
+    end
+
   end
 
 end
