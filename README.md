@@ -65,6 +65,8 @@ More information about configuring Logstash can be found in the [logstash config
 | **json_mapping** | The **name** of a JSON ingestion mapping already defined on the target table (a mapping reference/name, not the mapping JSON itself). When omitted, columns are resolved by attribute names in the event JSON. Supports Logstash field references for dynamic routing. | Optional |
 | **dynamic_event_routing** | Forces dynamic routing even when `database`/`table`/`json_mapping` contain no field reference. Dynamic routing is enabled automatically whenever any of those values contains a `%{...}` field reference, so this flag is usually not needed. Defaults to false. | Optional |
 | **dynamic_routing_open_files_warning_threshold** | In dynamic mode, logs a warning when this many temporary files are held open at once, as an early signal of high routing cardinality. Emitted once until the count drops back below the threshold. Defaults to 100; set to 0 to disable. | Optional |
+| **dynamic_routing_max_open_files** | In dynamic mode, an optional hard cap on the number of temporary files held open at once. When the cap is reached, events whose route would open another file are sent to the dead letter queue (or dropped, with a warning, when it is disabled) instead of risking file-descriptor exhaustion (`EMFILE`). Defaults to 0 (no cap). **Recommended production hardening:** set this below the process descriptor limit (`ulimit -n`) and enable the dead letter queue so capped events are captured. | Optional |
+| **recovery_owner_id** | In dynamic mode, an optional stable identifier that participates in the per-output crash-recovery owner tag. Two outputs identical in `ingest_url`/`path`/`database`/`table`/`json_mapping` otherwise share recovery files; set a distinct `recovery_owner_id` on each (e.g. when they differ only by credentials or a pipeline conditional) to keep their crash recovery separate without using different `path` roots. Logstash's auto-generated `id` is deliberately not used because it changes between runs and would break recovery. | Optional |
 | **recovery** | If set to true (default), plugin will attempt to resend pre-existing temp files found in the path upon startup | |
 | **delete_temp_files** | Determines if temp files will be deleted after a successful upload (true is default; set false for debug purposes only)| |
 | **flush_interval** | The time (in seconds) for flushing writes to temporary files. Default is 2 seconds, 0 will flush on every event. Increase this value to reduce IO calls but keep in mind that events in the buffer will be lost in case of abrupt failure.| |
@@ -114,7 +116,16 @@ Notes and caveats:
   entity-naming characters (e.g. `Security.Events`, `App Logs`). The value is
   reversibly encoded into the temp file name, so dots and spaces are preserved.
   Values containing other characters (for example a path separator `/`) are
-  treated as unroutable.
+  treated as unroutable. **By design, dynamic mode is stricter than legacy static
+  mode:** in pure legacy static mode (no dynamic routing active) a
+  `database`/`table`/`json_mapping` literal is passed through to Azure Data
+  Explorer as-is, whereas once dynamic routing is active a per-event resolved
+  value is validated against this character/length format *before* upload and
+  treated as unroutable if it does not match (so a bad per-event value is never
+  mis-ingested into an unintended target). Note that a static literal used
+  *alongside* dynamic routing (including when forced with
+  `dynamic_event_routing => true`) is also validated against this format, but at
+  startup — the plugin fails fast rather than treating it as unroutable.
 - **Length / filename budget.** Azure Data Explorer entity names may be up to
   1024 characters, but in dynamic mode the resolved `database`, `table` and
   `json_mapping` are encoded together into a single temp **file name**, which the
@@ -159,6 +170,14 @@ Notes and caveats:
   any of those settings also changes the identifier, so temp files written under
   a previous configuration are not auto-recovered; reprocess them with the old
   configuration or resend manually.)
+- **Upgrade caveat (static → dynamic).** Dynamic recovery only resends temp files
+  carrying this output's dynamic owner tag; legacy static temp files use a
+  `.database.table` suffix instead. If you switch an existing output from static
+  to dynamic routing while static temp files are still on disk (for example a
+  deploy during a backlog), those leftover static files are **not** auto-recovered
+  by the now-dynamic output. Drain the pipeline before switching, or briefly
+  redeploy the previous static configuration to flush them, or resend them
+  manually.
 - **Routing only validates the *format* of the target, not its *existence*.** A
   syntactically valid but non-existent (e.g. mistyped) `database`/`table`/`json_mapping`
   passes validation and the file is uploaded; because ingestion is asynchronous,

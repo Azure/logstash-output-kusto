@@ -12,6 +12,7 @@
 - Add `dynamic_routing_max_open_files` (default 0 = no cap) as an optional hard limit on concurrently-open dynamic temp files: once reached, events whose route would open another file are sent to the dead letter queue (or dropped with a warning when it is disabled) while the event is still in hand, instead of risking file-descriptor exhaustion (`EMFILE`) deeper in the write path where the original event can no longer be dead-lettered.
 - Add `recovery_owner_id` (optional) so two outputs with otherwise-identical routing configuration (e.g. differing only by credentials or pipeline conditionals) can be given distinct crash-recovery ownership without needing different `path` roots. Logstash's auto-generated `id` is intentionally not used because it changes between runs and would break recovery.
 - Known limitation: routing validates only the *format* of `database`/`table`/`json_mapping`, not their *existence*. A syntactically valid but non-existent (e.g. mistyped) target passes validation and the file is uploaded; because ingestion is asynchronous, the failure then surfaces inside Azure Data Explorer (`.show ingestion failures`), not in Logstash.
+- Upgrade caveat: switching an existing output from static to dynamic routing does not auto-recover legacy static temp files (`.database.table` suffix) still on disk, because dynamic recovery only resends files carrying the output's dynamic owner tag. Drain the pipeline before switching, briefly redeploy the previous static configuration to flush them, or resend them manually.
 
 
 # 2.0.3
