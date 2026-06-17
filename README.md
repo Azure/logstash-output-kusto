@@ -150,11 +150,23 @@ Notes and caveats:
   with `dynamic_event_routing => true`.
 - Resolved `database`, `table` and `json_mapping` values may contain letters,
   digits, spaces, dots, dashes and underscores — the common Azure Data Explorer
-  entity-naming characters (e.g. `Security.Events`, `App Logs`) — and must be
-  1-1024 characters long (the Azure Data Explorer entity-name limit). The value
-  is reversibly encoded into the temp file name, so dots and spaces are
-  preserved. Values containing other characters (for example a path separator
-  `/`) or exceeding the length limit are treated as unroutable.
+  entity-naming characters (e.g. `Security.Events`, `App Logs`). The value is
+  reversibly encoded into the temp file name, so dots and spaces are preserved.
+  Values containing other characters (for example a path separator `/`) are
+  treated as unroutable.
+- **Length / filename budget.** Azure Data Explorer entity names may be up to
+  1024 characters, but in dynamic mode the resolved `database`, `table` and
+  `json_mapping` are encoded together into a single temp **file name**, which the
+  filesystem caps at 255 bytes. The practical per-event budget is therefore
+  smaller than 1024 and is *shared* across the time-based `path` prefix plus the
+  three encoded values. Note that percent-encoding makes non-ASCII and special
+  characters cost several bytes each (e.g. `é` → 2 bytes → 6 encoded bytes), so
+  the byte length can exceed the character length. As a rule of thumb keep the
+  combined `database` + `table` + `json_mapping` comfortably under ~150 bytes for
+  a typical short time-prefixed path. A value that is individually over the ADX
+  1024-character limit, or whose encoded file name would exceed the filesystem
+  limit, is treated as unroutable (sent to the DLQ or dropped) — the DLQ reason
+  states which condition was hit.
 - Events that cannot be routed — because the referenced field is missing or the
   resolved value is invalid — are **not** ingested into an unintended table.
   When Logstash's
@@ -177,11 +189,14 @@ Notes and caveats:
   startup. Each dynamic temp file is stamped with a stable identifier derived
   from this output's `ingest_url`, `database`, `table`, `json_mapping` and
   `path`, and recovery only resends files carrying **this** output's identifier.
-  This prevents one Kusto output from picking up another's leftover files even
-  when several outputs share the same `path` root. (Changing any of those
-  settings changes the identifier, so temp files written under a previous
-  configuration are not auto-recovered; reprocess them with the old
-  configuration or resend manually.)
+  This keeps outputs with **different** routing configuration from picking up
+  each other's leftover files even when they share the same `path` root. Two
+  outputs that are identical in all of those settings (for example differing only
+  by credentials, or selected by different upstream pipeline conditionals) share
+  the same identifier; give them distinct `path` roots if they must not recover
+  each other's files. (Changing any of those settings also changes the
+  identifier, so temp files written under a previous configuration are not
+  auto-recovered; reprocess them with the old configuration or resend manually.)
 - **Routing only validates the *format* of the target, not its *existence*.** A
   syntactically valid but non-existent (e.g. mistyped) `database`/`table`/`json_mapping`
   passes validation and the file is uploaded; because ingestion is asynchronous,
@@ -204,7 +219,7 @@ Notes and caveats:
 
 | Version | Release Date | Notes |
 | --- | --- | --- |
-| Unreleased | — | - Add dynamic event routing for queued ingestion: `database`, `table` and `json_mapping` accept Logstash field references. Unroutable events go to the Dead Letter Queue when enabled, otherwise are dropped with warnings. Recovery is isolated per output and high routing cardinality is reported. |
+| Unreleased | — | - Add dynamic event routing for queued ingestion: `database`, `table` and `json_mapping` accept Logstash field references. Unroutable events go to the Dead Letter Queue when enabled, otherwise are dropped with warnings. Recovery is isolated between outputs with different routing configuration. The encoded filename must fit the filesystem's 255-byte limit. High routing cardinality is reported. See the dynamic routing section for full caveats. |
 | 2.2.0 | 2026-07-16 | - Add opt-in Kusto streaming ingestion with byte-bounded requests, automatic queued fallback, durable restart recovery, bounded backpressure, secure local spooling, streaming metrics, and production stress coverage. Queued ingestion remains the default. |
 | 2.0.8 | 2024-10-23 | - Fix library deprecations, fix issues in the Azure Identity library  |
 | 2.0.7 | 2024-01-01 | - Update Kusto JAVA SDK  |
