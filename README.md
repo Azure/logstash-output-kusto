@@ -154,10 +154,11 @@ Notes and caveats:
   each other's leftover files even when they share the same `path` root. Two
   outputs that are identical in all of those settings (for example differing only
   by credentials, or selected by different upstream pipeline conditionals) share
-  the same identifier; give them distinct `path` roots if they must not recover
-  each other's files. (Changing any of those settings also changes the
-  identifier, so temp files written under a previous configuration are not
-  auto-recovered; reprocess them with the old configuration or resend manually.)
+  the same identifier; set a distinct `recovery_owner_id` on each (or give them
+  distinct `path` roots) if they must not recover each other's files. (Changing
+  any of those settings also changes the identifier, so temp files written under
+  a previous configuration are not auto-recovered; reprocess them with the old
+  configuration or resend manually.)
 - **Routing only validates the *format* of the target, not its *existence*.** A
   syntactically valid but non-existent (e.g. mistyped) `database`/`table`/`json_mapping`
   passes validation and the file is uploaded; because ingestion is asynchronous,
@@ -173,14 +174,25 @@ Notes and caveats:
   and tune `flush_interval` / `stale_cleanup_interval` rather than routing to an
   unbounded number of tables per pipeline. As an early signal, the plugin logs a
   warning when the number of open temporary files crosses
-  `dynamic_routing_open_files_warning_threshold` (default 100).
+  `dynamic_routing_open_files_warning_threshold` (default 100). For a hard limit,
+  set `dynamic_routing_max_open_files` (default 0 = no cap): once that many temp
+  files are open, events whose route would open another are sent to the dead
+  letter queue (or dropped, with a warning, when it is disabled) instead of
+  risking file-descriptor exhaustion. The cap is **off by default** (warning
+  only), because a default cap combined with the default-disabled dead letter
+  queue would silently drop events for a legitimately high-cardinality pipeline.
+  **For production, setting `dynamic_routing_max_open_files` together with an
+  enabled dead letter queue is recommended hardening:** keep the cap below the
+  process descriptor limit (`ulimit -n`, leaving headroom for other
+  inputs/outputs) so capped events are captured in the DLQ rather than risking
+  file-descriptor exhaustion.
 
 
 ### Release Notes and versions
 
 | Version | Release Date | Notes |
 | --- | --- | --- |
-| 2.2.0 | 2026-06-11 | - Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) to route events to different destinations from a single output. Unroutable events are sent to the Dead Letter Queue when it is enabled, otherwise dropped (with startup and per-batch warnings) rather than ingested into an unintended table. Crash recovery is isolated between outputs with *different* routing configuration (outputs identical in `ingest_url`/`path`/`database`/`table`/`json_mapping` share an owner id — give them distinct `path` roots). Resolved entity names are validated against the Azure Data Explorer 1-1024 character limit, but because they are encoded together into the temp **file name** the practical per-event budget is the filesystem's 255-byte name limit; over-budget values are treated as unroutable. A warning is logged on high routing cardinality. See the dynamic routing section above for full caveats.  |
+| 2.2.0 | 2026-06-11 | - Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) to route events to different destinations from a single output. Unroutable events are sent to the Dead Letter Queue when it is enabled, otherwise dropped (with startup and per-batch warnings) rather than ingested into an unintended table. Crash recovery is isolated between outputs with *different* routing configuration; outputs identical in `ingest_url`/`path`/`database`/`table`/`json_mapping` share an owner id — set a distinct `recovery_owner_id` (or distinct `path` roots) to separate them. Resolved entity names are validated against the Azure Data Explorer 1-1024 character limit, but because they are encoded together into the temp **file name** the practical per-event budget is the filesystem's 255-byte name limit; over-budget values are treated as unroutable. A warning is logged on high routing cardinality, and an optional `dynamic_routing_max_open_files` cap (off by default) can dead-letter excess routes to bound open file descriptors. See the dynamic routing section above for full caveats.  |
 | 2.0.8 | 2024-10-23 | - Fix library deprecations, fix issues in the Azure Identity library  |
 | 2.0.7 | 2024-01-01 | - Update Kusto JAVA SDK  |
 | 2.0.3 | 2023-12-12 | - Make JSON mapping field optional. If not provided logstash output JSON attribute names will be used for column resolution  |

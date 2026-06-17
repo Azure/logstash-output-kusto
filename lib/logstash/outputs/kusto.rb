@@ -262,6 +262,33 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # to disable.
   config :dynamic_routing_open_files_warning_threshold, validate: :number, default: 100
 
+  # Hard cap on the number of temporary files dynamic routing keeps open at once
+  # (opt-in; 0, the default, disables the cap and preserves the previous
+  # behaviour). When set, an event whose route would require opening a new file
+  # beyond this many concurrently-open files is sent to the dead letter queue (or
+  # dropped, with a warning, when the DLQ is disabled) instead of risking
+  # file-descriptor exhaustion (EMFILE) deeper in the write path — where only the
+  # encoded bytes remain and the original event can no longer be dead-lettered.
+  # The cap is enforced while the event object is still available, so capped
+  # events are never silently lost. Only applies in dynamic mode. Set it below the
+  # process file-descriptor limit (ulimit -n), leaving headroom for other
+  # inputs/outputs, and pair it with the dead letter queue so capped events are
+  # captured. Unblock a hit cap by reducing routing cardinality or shortening
+  # flush_interval / stale_cleanup_interval so files close sooner.
+  config :dynamic_routing_max_open_files, validate: :number, default: 0
+
+  # Optional stable identifier that participates in the per-output crash-recovery
+  # owner tag (see the dynamic routing notes in the README). The owner tag is
+  # otherwise derived from ingest_url / path / database / table / json_mapping, so
+  # two outputs identical in all of those settings share recovery files. Set a
+  # distinct recovery_owner_id on each such output (for example when they differ
+  # only by credentials or by an upstream pipeline conditional) to keep their
+  # crash recovery separate without having to give them different `path` roots.
+  # Leave unset to preserve the previous behaviour. Logstash's auto-generated `id`
+  # is deliberately not used for this because it changes between runs and would
+  # make files written before a restart unrecoverable.
+  config :recovery_owner_id, validate: :string, default: nil
+
   # Specify how many files can be uploaded concurrently
   config :upload_concurrent_count, validate: :number, default: 3
 
@@ -285,6 +312,19 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     @files = {}
     @io_mutex = Mutex.new
+
+    # Reject nonsensical negative tuning values up front. Both are gated by `> 0`
+    # / `<= 0` checks at runtime, so a negative value would otherwise be silently
+    # treated as "disabled", hiding a misconfiguration from a user who believes
+    # they set a limit.
+    if dynamic_routing_max_open_files < 0
+      @logger.error('dynamic_routing_max_open_files must be 0 (no cap) or a positive number.', value: dynamic_routing_max_open_files)
+      raise LogStash::ConfigurationError.new("dynamic_routing_max_open_files must be 0 (no cap) or a positive number, got #{dynamic_routing_max_open_files}.")
+    end
+    if dynamic_routing_open_files_warning_threshold < 0
+      @logger.error('dynamic_routing_open_files_warning_threshold must be 0 (disabled) or a positive number.', value: dynamic_routing_open_files_warning_threshold)
+      raise LogStash::ConfigurationError.new("dynamic_routing_open_files_warning_threshold must be 0 (disabled) or a positive number, got #{dynamic_routing_open_files_warning_threshold}.")
+    end
 
     final_mapping = json_mapping
     if final_mapping.nil? || final_mapping.empty?
@@ -370,6 +410,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     # Early-warning latch for high routing cardinality (dynamic mode only; 0 off).
     @open_files_warning_threshold = @dynamic_routing ? dynamic_routing_open_files_warning_threshold : 0
     @open_files_warning_active = false
+    # Optional hard cap on concurrent open temp files (dynamic mode only; 0 off).
+    # Enforced in multi_receive_encoded while events are still available.
+    @open_files_max = @dynamic_routing ? dynamic_routing_max_open_files.to_i : 0
 
     @flush_interval = @flush_interval.to_i
     if @flush_interval > 0
@@ -390,15 +433,16 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   # Stable per-output identifier embedded in dynamic temp file names so crash
   # recovery only picks up files this output wrote. Derived from the settings that
-  # determine where this output sends data (endpoint + routing config + path), so
-  # it stays constant across restarts of the same configuration and differs from
-  # any output configured with a different endpoint/path/database/table/mapping.
-  # Two outputs identical in all of those (e.g. differing only by credentials or a
-  # pipeline conditional) produce the same id, so give them distinct `path` roots
-  # if they share a temp directory. Returns a short hex digest: filename-safe and
-  # free of the marker / separator characters.
+  # determine where this output sends data (endpoint + routing config + path) plus
+  # the optional recovery_owner_id, so it stays constant across restarts of the
+  # same configuration and differs from any output configured with a different
+  # endpoint/path/database/table/mapping. Two outputs identical in all of those
+  # (e.g. differing only by credentials or a pipeline conditional) produce the
+  # same id unless they set distinct recovery_owner_id values (or distinct `path`
+  # roots). Returns a short hex digest: filename-safe and free of the marker /
+  # separator characters.
   def routing_owner_id(final_mapping)
-    identity = [ingest_url, path, database, table, (final_mapping || '')].join("\u0000")
+    identity = [ingest_url, path, database, table, (final_mapping || ''), (recovery_owner_id || '')].join("\u0000")
     Digest::SHA256.hexdigest(identity)[0, 16]
   end
 
@@ -493,19 +537,51 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     # filesystem limit") instead of only a total. Populated via event_path.
     unroutable_reasons = Hash.new(0)
 
-    events_and_encoded.each do |event, encoded|
-      file_output_path = event_path(event, unroutable_reasons)
-      # A nil path means the event was handled out-of-band (sent to the dead
-      # letter queue, or dropped when the DLQ is disabled); it is not written to
-      # any temp file.
-      next if file_output_path.nil?
-
-      encoded_by_path[file_output_path] << encoded
-    end
-
-    log_unroutable_summary(unroutable_reasons)
-
+    # Everything runs under @io_mutex. This output declares `concurrency :shared`,
+    # so several pipeline worker threads can call this method at once; holding the
+    # lock across route planning, the open-file cap decision, and the actual file
+    # opens makes the cap a GLOBAL invariant (two threads cannot each accept new
+    # routes under the cap and together exceed it) and keeps @files reads and
+    # writes consistent. The file I/O below was already serialized here.
     @io_mutex.synchronize do
+      # Optional hard cap on concurrently-open temp files. Free capacity first by
+      # running any due stale-file cleanup, then snapshot the files that will
+      # remain open, so a new route is only rejected when the cap is genuinely
+      # full — not merely full of files that this cleanup would have closed.
+      # planned_open stays nil while the cap is disabled (the default), which
+      # skips all cap accounting below and preserves existing behaviour.
+      planned_open = nil
+      if @open_files_max > 0
+        close_stale_files_locked if @stale_cleanup_type == 'events'
+        planned_open = {}
+        @files.each_key { |open_path| planned_open[open_path] = true }
+      end
+
+      events_and_encoded.each do |event, encoded|
+        file_output_path = event_path(event, unroutable_reasons)
+        # A nil path means the event was handled out-of-band (sent to the dead
+        # letter queue, or dropped when the DLQ is disabled); it is not written to
+        # any temp file.
+        next if file_output_path.nil?
+
+        # Enforce the cap while the event object is still available, so an event
+        # for a route we cannot open goes to the dead letter queue rather than
+        # failing later in open() with EMFILE (where only the encoded bytes
+        # remain and the original event can no longer be dead-lettered).
+        if planned_open && !planned_open.key?(file_output_path)
+          if planned_open.size >= @open_files_max
+            handle_unroutable_event(event, "open temporary file limit (#{@open_files_max}) reached; routing to a new database/table/mapping target would exceed it (raise dynamic_routing_max_open_files, reduce routing cardinality, or shorten flush_interval/stale_cleanup_interval)")
+            unroutable_reasons['open file limit reached'] += 1
+            next
+          end
+          planned_open[file_output_path] = true
+        end
+
+        encoded_by_path[file_output_path] << encoded
+      end
+
+      log_unroutable_summary(unroutable_reasons)
+
       encoded_by_path.each do |path, chunks|
         begin
           fd = open(path)
@@ -529,10 +605,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         end
       end
 
-      # Close any files that went stale in previous batches first, then warn on
-      # the files still open afterwards, so the high-cardinality signal reflects
-      # the genuinely-carried set rather than files about to be closed this batch.
-      close_stale_files if @stale_cleanup_type == 'events'
+      # Close any files that went stale in previous batches, then warn on the
+      # files still open afterwards, so the high-cardinality signal reflects the
+      # genuinely-carried set rather than files about to be closed this batch.
+      close_stale_files_locked if @stale_cleanup_type == 'events'
       warn_if_too_many_open_files
     end
   end
@@ -742,9 +818,24 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
   end
 
-  # every 10 seconds or so (triggered by events, but if there are no events there's no point closing files anyway)
+  # Closes temp files that have gone stale and queues them for ingestion. This is
+  # the entry point for the interval cleaner thread (stale_cleanup_type =>
+  # 'interval'), which runs concurrently with the pipeline worker threads under
+  # `concurrency :shared`. It acquires @io_mutex so its @files mutation is
+  # serialized with route planning, the open-file cap snapshot, and writes in
+  # multi_receive_encoded. Ruby's Mutex is NOT reentrant, so callers that already
+  # hold @io_mutex (the event-driven path in multi_receive_encoded) must call
+  # close_stale_files_locked instead.
   private
   def close_stale_files
+    @io_mutex.synchronize { close_stale_files_locked }
+  end
+
+  # The actual stale-file cleanup. Assumes the caller already holds @io_mutex (it
+  # reads and mutates @files). every 10 seconds or so (triggered by events, but
+  # if there are no events there's no point closing files anyway)
+  private
+  def close_stale_files_locked
     now = Time.now
     return unless now - @last_stale_cleanup_cycle >= @stale_cleanup_interval
 

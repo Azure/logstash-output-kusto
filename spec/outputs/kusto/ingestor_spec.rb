@@ -201,6 +201,22 @@ describe LogStash::Outputs::Kusto::Ingestor do
       expect(ingestor.ingestion_properties_for("/tmp/kusto/_filepath_failures")).to be_nil
     end
 
+    it 'builds ingestion properties from the route decoded from each file name' do
+      # The core dynamic contract: the destination passed to the Java SDK must be
+      # the database/table/mapping decoded from the file name, per file.
+      props = double('ingestion_properties')
+      expect(ingestor).to receive(:build_ingestion_properties).with('routedb', 'routetable', 'routemap').and_return(props)
+      result = ingestor.ingestion_properties_for("/tmp/kusto/2024-01-01.kusto~routedb~routetable~routemap")
+      expect(result).to eq(props)
+    end
+
+    it 'builds ingestion properties without a mapping when the mapping segment is empty' do
+      props = double('ingestion_properties')
+      expect(ingestor).to receive(:build_ingestion_properties).with('routedb', 'routetable', nil).and_return(props)
+      result = ingestor.ingestion_properties_for("/tmp/kusto/2024-01-01.kusto~routedb~routetable~")
+      expect(result).to eq(props)
+    end
+
     it 'deletes an undecodable dynamic file on upload instead of leaving it for infinite retry' do
       require 'tmpdir'
       Dir.mktmpdir do |dir|

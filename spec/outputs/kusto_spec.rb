@@ -406,6 +406,18 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
+    it 'rejects a negative dynamic_routing_max_open_files at register time' do
+      kusto = described_class.new(dyn.merge('dynamic_routing_max_open_files' => -1))
+      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /dynamic_routing_max_open_files must be 0/)
+      kusto.close
+    end
+
+    it 'rejects a negative dynamic_routing_open_files_warning_threshold at register time' do
+      kusto = described_class.new(dyn.merge('dynamic_routing_open_files_warning_threshold' => -5))
+      expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /dynamic_routing_open_files_warning_threshold must be 0/)
+      kusto.close
+    end
+
   end
 
   describe 'dynamic routing - dead letter queue' do
@@ -711,6 +723,160 @@ describe LogStash::Outputs::Kusto do
       expect(dlq_writer).to receive(:write).with(event, /filesystem limit/)
       kusto.send(:event_path, event)
       kusto.close
+    end
+
+    it 'isolates an open failure (e.g. EMFILE) to the affected route and continues the batch' do
+      # When opening one route's temp file fails (here simulated EMFILE), the
+      # other routes in the batch must still be written and the batch must not
+      # abort (which would re-write the good routes on Logstash's retry).
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      logger = spy('logger')
+      kusto.instance_variable_set(:@logger, logger)
+
+      good = LogStash::Event.new
+      good.set('[@metadata][database]', 'db'); good.set('[@metadata][table]', 'good'); good.set('[@metadata][mapping]', 'm')
+      bad = LogStash::Event.new
+      bad.set('[@metadata][database]', 'db'); bad.set('[@metadata][table]', 'bad'); bad.set('[@metadata][mapping]', 'm')
+
+      good_path = kusto.send(:generate_filepath, good)
+      bad_path = kusto.send(:generate_filepath, bad)
+      good_writer = double('writer', write: nil, flush: nil)
+      allow(kusto).to receive(:open).with(good_path).and_return(good_writer)
+      allow(kusto).to receive(:open).with(bad_path).and_raise(Errno::EMFILE)
+
+      expect { kusto.multi_receive_encoded([[good, '{"a":1}'], [bad, '{"a":1}']]) }.not_to raise_error
+      expect(good_writer).to have_received(:write).with('{"a":1}')
+      expect(logger).to have_received(:error).with(/Could not open routing target file/, hash_including(:path)).at_least(:once)
+      kusto.close
+    end
+
+    it 'caps concurrent open files and routes events for excess routes to the DLQ' do
+      # With a cap of 2, only the first two distinct routes in the batch are
+      # accepted; events for further new routes are dead-lettered (while still in
+      # hand) rather than risking file-descriptor exhaustion.
+      kusto = described_class.new(dynamic_options.merge('dynamic_routing_max_open_files' => 2))
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+      allow(dlq_writer).to receive(:write)
+      allow(kusto).to receive(:open).and_return(double('writer', write: nil, flush: nil))
+
+      events = %w[t1 t2 t3 t4].map do |t|
+        e = LogStash::Event.new
+        e.set('[@metadata][database]', 'db'); e.set('[@metadata][table]', t); e.set('[@metadata][mapping]', 'm')
+        [e, '{"a":1}']
+      end
+      kusto.multi_receive_encoded(events)
+      # 4 distinct routes, cap 2 -> two accepted, two sent to the DLQ.
+      expect(dlq_writer).to have_received(:write).with(anything, /open temporary file limit \(2\) reached/).twice
+      kusto.close
+    end
+
+    it 'counts files already open from earlier batches against the cap (global invariant)' do
+      # The cap must be global across batches (and, by extension, across shared
+      # worker threads), not per-call: a route already open from a previous batch
+      # consumes capacity. With one file already open and a cap of 1, a NEW route
+      # in this batch must be dead-lettered while the already-open route still
+      # writes. The accounting and the open happen under one @io_mutex section.
+      kusto = described_class.new(dynamic_options.merge('dynamic_routing_max_open_files' => 1))
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+      allow(dlq_writer).to receive(:write)
+      writer = double('writer', write: nil, flush: nil)
+      allow(kusto).to receive(:open).and_return(writer)
+
+      existing = LogStash::Event.new
+      existing.set('[@metadata][database]', 'db'); existing.set('[@metadata][table]', 'existing'); existing.set('[@metadata][mapping]', 'm')
+      existing_path = kusto.send(:generate_filepath, existing)
+      # Simulate a file already open from a prior batch.
+      kusto.instance_variable_get(:@files)[existing_path] = writer
+
+      fresh = LogStash::Event.new
+      fresh.set('[@metadata][database]', 'db'); fresh.set('[@metadata][table]', 'fresh'); fresh.set('[@metadata][mapping]', 'm')
+
+      kusto.multi_receive_encoded([[fresh, '{"a":1}']])
+      # Cap already full (1 open) -> the fresh route is dead-lettered.
+      expect(dlq_writer).to have_received(:write).with(fresh, /open temporary file limit \(1\) reached/).once
+      kusto.close
+    end
+
+    it 'does not enforce the open-file cap when it is left at the default (0 = disabled)' do
+      kusto = described_class.new(dynamic_options) # no dynamic_routing_max_open_files
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+      allow(kusto).to receive(:open).and_return(double('writer', write: nil, flush: nil))
+
+      events = %w[t1 t2 t3 t4 t5].map do |t|
+        e = LogStash::Event.new
+        e.set('[@metadata][database]', 'db'); e.set('[@metadata][table]', t); e.set('[@metadata][mapping]', 'm')
+        [e, '{"a":1}']
+      end
+      # No event should be dead-lettered for an open-file cap when it is disabled.
+      expect(dlq_writer).not_to receive(:write).with(anything, /open temporary file limit/)
+      kusto.multi_receive_encoded(events)
+      kusto.close
+    end
+
+    it 'runs interval stale cleanup under @io_mutex so the cleaner thread never mutates @files unlocked' do
+      # With stale_cleanup_type => "interval" the cleaner runs on its own thread,
+      # concurrently with worker threads under `concurrency :shared`. Its @files
+      # mutation must be serialized through @io_mutex; the interval entry point
+      # (close_stale_files) must acquire the lock, while the in-mutex callers use
+      # close_stale_files_locked (Ruby Mutex is not reentrant).
+      kusto = described_class.new(dynamic_options.merge('stale_cleanup_type' => 'interval', 'stale_cleanup_interval' => 1))
+      kusto.register
+      mutex = kusto.instance_variable_get(:@io_mutex)
+      allow(mutex).to receive(:synchronize).and_call_original
+
+      # A stale (inactive) file the cycle should close, queue for ingest, and
+      # remove from @files — all under the lock.
+      fd = double('writer')
+      allow(fd).to receive(:active).and_return(false)
+      allow(fd).to receive(:active=)
+      allow(fd).to receive(:close)
+      files = kusto.instance_variable_get(:@files)
+      files['/tmp/kusto/stale.kusto~db~t~m'] = fd
+      kusto.instance_variable_set(:@last_stale_cleanup_cycle, Time.now - 3600)
+      allow(kusto).to receive(:kusto_send_file)
+
+      kusto.send(:close_stale_files) # the interval-thread entry point
+
+      expect(mutex).to have_received(:synchronize).at_least(:once)
+      expect(files).not_to have_key('/tmp/kusto/stale.kusto~db~t~m')
+      expect(kusto).to have_received(:kusto_send_file).with('/tmp/kusto/stale.kusto~db~t~m')
+      kusto.close
+    end
+
+    it 'gives outputs distinct owner tags when recovery_owner_id differs, and identical tags otherwise' do
+      base = dynamic_options
+      k1 = described_class.new(base.merge('recovery_owner_id' => 'one')); k1.register
+      k2 = described_class.new(base.merge('recovery_owner_id' => 'two')); k2.register
+      # Distinct recovery_owner_id -> distinct recovery ownership.
+      expect(k1.instance_variable_get(:@routing_owner_tag)).not_to eq(k2.instance_variable_get(:@routing_owner_tag))
+
+      # Identical routing config and no recovery_owner_id -> same tag (documented).
+      k3 = described_class.new(base); k3.register
+      k4 = described_class.new(base); k4.register
+      expect(k3.instance_variable_get(:@routing_owner_tag)).to eq(k4.instance_variable_get(:@routing_owner_tag))
+      [k1, k2, k3, k4].each(&:close)
+    end
+
+    it 'does not recover dynamic temp files written under a different routing configuration' do
+      kusto_a = described_class.new(dynamic_options)
+      kusto_a.register
+      tag_a = kusto_a.instance_variable_get(:@routing_owner_tag)
+
+      # Change a routing setting -> different owner id -> different temp-file tag.
+      kusto_b = described_class.new(dynamic_options.merge('database' => 'other_%{[@metadata][database]}'))
+      kusto_b.register
+      tag_b = kusto_b.instance_variable_get(:@routing_owner_tag)
+      expect(tag_a).not_to eq(tag_b)
+
+      # A file owned by A is not recognised as owned by B, so B will not recover it.
+      a_file = "x#{tag_a}#{described_class::ROUTING_MARKER}db~t~m"
+      expect(kusto_b.send(:dynamic_temp_file_owned_by_this_output?, a_file)).to be false
+      kusto_a.close
+      kusto_b.close
     end
 
   end
