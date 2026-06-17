@@ -18,12 +18,16 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       fallback_policy: :caller_runs
     )
     LOW_QUEUE_LENGTH = 3
-    FIELD_REF = /%\{[^}]+\}/
+    # Possessive quantifier (`++`) prevents catastrophic/quadratic backtracking
+    # when scanning attacker- or config-supplied strings such as `%{%{%{...`
+    # (CodeQL rb/polynomial-redos). Match semantics are identical to `[^}]+`.
+    FIELD_REF = /%\{[^}]++\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
+    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, dynamic_routing, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
       @workers_pool = threadpool
       @logger = logger
-      validate_config(database, table, json_mapping,proxy_protocol,app_id, app_key, managed_identity_id,cli_auth)
+      @dynamic_routing = dynamic_routing
+      validate_config(database, table, json_mapping, dynamic_routing, proxy_protocol, app_id, app_key, managed_identity_id, cli_auth)
       @logger.info('Preparing Kusto resources.')
 
       kusto_java = Java::com.microsoft.azure.kusto
@@ -31,7 +35,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # kusto_connection_string = kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
       # If there is managed identity, use it. This means the AppId and AppKey are empty/nil
       # If there is CLI Auth, use that instead of managed identity
-      is_managed_identity = (app_id.nil? && app_key.nil? && !cli_auth)
+      # Blank (empty/whitespace) app credentials are treated as absent so an
+      # empty app_id/app_key routes to managed identity rather than attempting an
+      # app-credentials connection with an empty value (which validate_config
+      # already rejects up front).
+      is_managed_identity = (blank?(app_id) && blank?(app_key) && !cli_auth)
       # If it is system managed identity, propagate the system identity
       is_system_assigned_managed_identity = is_managed_identity && 0 == "system".casecmp(managed_identity_id)
       # Is it direct connection
@@ -77,47 +85,73 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         end
       end
 
-      @ingestion_properties = kusto_java.ingest.IngestionProperties.new(database, table)
-      is_mapping_ref_provided = !(json_mapping.nil? || json_mapping.empty?)
-      if is_mapping_ref_provided
-        @logger.debug('Using mapping reference.', json_mapping)
-        @ingestion_properties.setIngestionMapping(json_mapping, kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
-        @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
-      else
-        @logger.debug('No mapping reference provided. Columns will be mapped by names in the logstash output')
-        @ingestion_properties.setDataFormat(kusto_java.ingest.IngestionProperties::DataFormat::JSON)
+      @kusto_java = kusto_java
+      # In static routing the destination is fixed, so build the ingestion
+      # properties once and reuse them for every file. In dynamic routing the
+      # destination varies per file and is decoded from the file name at upload
+      # time, so we skip building shared properties here.
+      unless @dynamic_routing
+        @ingestion_properties = build_ingestion_properties(database, table, json_mapping)
       end
       @delete_local = delete_local
       @logger.debug('Kusto resources are ready.')
     end
 
-    def validate_config(database, table, json_mapping, proxy_protocol, app_id, app_key, managed_identity_id,cli_auth)
-      # Add an additional validation and fail this upfront
-      if app_id.nil? && app_key.nil? && managed_identity_id.nil?
-        if cli_auth
-          @logger.info('Using CLI Auth, this is only for dev-test scenarios. This is ***NOT RECOMMENDED*** for production')
-        else
-          @logger.error('managed_identity_id is not provided and app_id/app_key is empty.')
-          raise LogStash::ConfigurationError.new('managed_identity_id is not provided and app_id/app_key is empty.')
+    # Builds Kusto ingestion properties for a destination. When a mapping
+    # reference is supplied it is applied, otherwise columns are resolved by the
+    # attribute names in the Logstash output JSON.
+    def build_ingestion_properties(database, table, json_mapping)
+      ingestion_properties = @kusto_java.ingest.IngestionProperties.new(database, table)
+      is_mapping_ref_provided = !(json_mapping.nil? || json_mapping.empty?)
+      if is_mapping_ref_provided
+        @logger.debug('Using mapping reference.', json_mapping: json_mapping)
+        ingestion_properties.setIngestionMapping(json_mapping, @kusto_java.ingest.IngestionMapping::IngestionMappingKind::JSON)
+        ingestion_properties.setDataFormat(@kusto_java.ingest.IngestionProperties::DataFormat::JSON)
+      else
+        @logger.debug('No mapping reference provided. Columns will be mapped by names in the logstash output')
+        ingestion_properties.setDataFormat(@kusto_java.ingest.IngestionProperties::DataFormat::JSON)
+      end
+      ingestion_properties
+    end
+
+    def validate_config(database, table, json_mapping, dynamic_routing, proxy_protocol, app_id, app_key, managed_identity_id, cli_auth)
+      # Authentication must resolve to exactly one usable path. Treat blank
+      # (nil, empty, or whitespace-only) values as missing so a config such as
+      # app_id => "", or an app_id provided with an empty app_key, fails fast
+      # here with an actionable message instead of surfacing a cryptic AAD/Java
+      # error when the connection is first attempted. Require a managed identity,
+      # or BOTH app_id and app_key, unless CLI auth (dev/test only) is enabled.
+      if cli_auth
+        @logger.info('Using CLI Auth, this is only for dev-test scenarios. This is ***NOT RECOMMENDED*** for production')
+      else
+        has_managed_identity = !blank?(managed_identity_id)
+        has_app_credentials = !blank?(app_id) && !blank?(app_key)
+        unless has_managed_identity || has_app_credentials
+          @logger.error('No valid authentication configured. Provide managed_identity, or both app_id and app_key, or enable cli_auth.')
+          raise LogStash::ConfigurationError.new('No valid authentication configured. Provide managed_identity, or both app_id and app_key, or enable cli_auth.')
         end
-      end      
-      if database =~ FIELD_REF
-        @logger.error('database config value should not be dynamic.', database)
-        raise LogStash::ConfigurationError.new('database config value should not be dynamic.')
       end
+      # Field references in database/table/json_mapping are only permitted when
+      # dynamic routing is enabled. In static mode they must be literal values.
+      unless dynamic_routing
+        if database =~ FIELD_REF
+          @logger.error('database config value should not be dynamic.', database: database)
+          raise LogStash::ConfigurationError.new('database config value should not be dynamic.')
+        end
 
-      if table =~ FIELD_REF
-        @logger.error('table config value should not be dynamic.', table)
-        raise LogStash::ConfigurationError.new('table config value should not be dynamic.')
-      end
+        if table =~ FIELD_REF
+          @logger.error('table config value should not be dynamic.', table: table)
+          raise LogStash::ConfigurationError.new('table config value should not be dynamic.')
+        end
 
-      if json_mapping =~ FIELD_REF
-        @logger.error('json_mapping config value should not be dynamic.', json_mapping)
-        raise LogStash::ConfigurationError.new('json_mapping config value should not be dynamic.')
+        if json_mapping =~ FIELD_REF
+          @logger.error('json_mapping config value should not be dynamic.', json_mapping: json_mapping)
+          raise LogStash::ConfigurationError.new('json_mapping config value should not be dynamic.')
+        end
       end
 
       if not(["https", "http"].include? proxy_protocol)
-        @logger.error('proxy_protocol has to be http or https.', proxy_protocol)
+        @logger.error('proxy_protocol has to be http or https.', proxy_protocol: proxy_protocol)
         raise LogStash::ConfigurationError.new('proxy_protocol has to be http or https.')
       end
 
@@ -141,23 +175,24 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       file_size = File.size(path)
       @logger.debug("Sending file to kusto: #{path}. size: #{file_size}")
 
-      # TODO: dynamic routing
-      # file_metadata = path.partition('.kusto.').last
-      # file_metadata_parts = file_metadata.split('.')
-
-      # if file_metadata_parts.length == 3
-      #   # this is the number we expect - database, table, json_mapping
-      #   database = file_metadata_parts[0]
-      #   table = file_metadata_parts[1]
-      #   json_mapping = file_metadata_parts[2]
-
-      #   local_ingestion_properties = Java::KustoIngestionProperties.new(database, table)
-      #   local_ingestion_properties.addJsonMappingName(json_mapping)
-      # end
-
       if file_size > 0
+        ingestion_properties = ingestion_properties_for(path)
+        if ingestion_properties.nil?
+          # The file carries no decodable routing target (e.g. a corrupt or
+          # foreign leftover). It can never be ingested, so do not leave it on
+          # disk: that would make recover_past_files re-attempt it on every
+          # restart forever. Delete it in normal operation; retain it only when
+          # the user has asked to keep temp files for debugging.
+          if delete_on_success
+            @logger.warn("File #{path} does not carry a valid Kusto routing target and cannot be ingested; deleting it to avoid repeated recovery attempts.", path: path)
+            File.delete(path)
+          else
+            @logger.warn("File #{path} does not carry a valid Kusto routing target and cannot be ingested; retained because delete_temp_files is false.", path: path)
+          end
+          return
+        end
         file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path); # 0 - let the sdk figure out the size of the file
-        @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
+        @kusto_client.ingestFromFile(file_source_info, ingestion_properties)
       else
         @logger.warn("File #{path} is an empty file and is not ingested.")
       end
@@ -177,9 +212,42 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       retry
     end
 
+    # Returns the Kusto ingestion properties to use for a given temp file. In
+    # static routing this is the shared, pre-built instance. In dynamic routing
+    # the destination is decoded from the file name; returns nil when the file
+    # carries no valid routing marker (e.g. a dead-letter/failure file), so the
+    # caller can skip it instead of ingesting into the wrong table.
+    def ingestion_properties_for(path)
+      return @ingestion_properties unless @dynamic_routing
+
+      target = decode_routing_target(path)
+      return nil if target.nil?
+
+      @logger.debug('Resolved dynamic routing target from file.', database: target[:database], table: target[:table], json_mapping: target[:mapping])
+      build_ingestion_properties(target[:database], target[:table], target[:mapping])
+    end
+
+    # Decodes the (database, table, mapping) target encoded into a dynamic temp
+    # file name by the output plugin. Delegates to the shared decoder on the
+    # output class so the writer and ingestor sides can never drift. Returns nil
+    # when the marker is absent or database/table are missing/invalid.
+    def decode_routing_target(path)
+      LogStash::Outputs::Kusto.decode_routing_target(path)
+    end
+
     def stop
       @workers_pool.shutdown
       @workers_pool.wait_for_termination(nil) # block until its done
+    end
+
+    private
+
+    # True when a config value is nil, empty, or whitespace-only. Handles
+    # LogStash::Util::Password (app_key) by inspecting its wrapped value, so a
+    # blank secret is treated as "not provided" rather than as a usable credential.
+    def blank?(value)
+      v = value.respond_to?(:value) ? value.value : value
+      v.nil? || v.to_s.strip.empty?
     end
   end
 end

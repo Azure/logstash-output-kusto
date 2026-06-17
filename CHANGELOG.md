@@ -1,6 +1,20 @@
 # Changelog
 
 
+# 2.2.0
+
+- Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) so a single output can route events to different Azure Data Explorer destinations. Resolved values may contain letters, digits, spaces, dots, dashes and underscores.
+- Unroutable events (missing routing field or a value containing unsupported characters such as a path separator) are sent to Logstash's native Dead Letter Queue when it is enabled, and otherwise dropped with startup and per-batch warnings (rather than mis-ingested into an unintended table). Enable the dead letter queue to capture them.
+- Fail fast at startup when a static `database`/`table` used alongside dynamic routing is empty or contains invalid characters.
+- Crash recovery is isolated per output: each dynamic temp file is stamped with a stable identifier derived from the output's `ingest_url`/`database`/`table`/`json_mapping`/`path`, and recovery only resends files carrying that identifier, so outputs with a *different* routing configuration sharing a `path` root never pick up each other's leftover files. Outputs identical in all of those settings (e.g. differing only by credentials or pipeline conditionals) share an identifier — give them distinct `path` roots if they must not recover each other's files.
+- Enforce the Azure Data Explorer 1-1024 character entity-name limit for dynamic routing: resolved per-event `database`/`table`/`json_mapping` values that are too long are treated as unroutable (decode time), and static `database`/`table`/`json_mapping` literals used alongside dynamic routing are rejected at startup. In addition, because the resolved values are encoded together into the temp **file name**, the practical per-event budget is the filesystem's 255-byte name limit (shared with the `path` prefix), which is smaller than 1024; values whose encoded file name would exceed it are treated as unroutable. (Pure static mode is unchanged.)
+- Add `dynamic_routing_open_files_warning_threshold` (default 100, set 0 to disable) to log a warning when dynamic routing holds many temporary files open at once, as an early signal of high routing cardinality.
+- Add `dynamic_routing_max_open_files` (default 0 = no cap) as an optional hard limit on concurrently-open dynamic temp files: once reached, events whose route would open another file are sent to the dead letter queue (or dropped with a warning when it is disabled) while the event is still in hand, instead of risking file-descriptor exhaustion (`EMFILE`) deeper in the write path where the original event can no longer be dead-lettered.
+- Add `recovery_owner_id` (optional) so two outputs with otherwise-identical routing configuration (e.g. differing only by credentials or pipeline conditionals) can be given distinct crash-recovery ownership without needing different `path` roots. Logstash's auto-generated `id` is intentionally not used because it changes between runs and would break recovery.
+- Known limitation: routing validates only the *format* of `database`/`table`/`json_mapping`, not their *existence*. A syntactically valid but non-existent (e.g. mistyped) target passes validation and the file is uploaded; because ingestion is asynchronous, the failure then surfaces inside Azure Data Explorer (`.show ingestion failures`), not in Logstash.
+- Upgrade caveat: switching an existing output from static to dynamic routing does not auto-recover legacy static temp files (`.database.table` suffix) still on disk, because dynamic recovery only resends files carrying the output's dynamic owner tag. Drain the pipeline before switching, briefly redeploy the previous static configuration to flush them, or resend them manually.
+
+
 # 2.0.3
 
 - Make JSON mapping optional
