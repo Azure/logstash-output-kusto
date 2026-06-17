@@ -35,7 +35,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # kusto_connection_string = kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
       # If there is managed identity, use it. This means the AppId and AppKey are empty/nil
       # If there is CLI Auth, use that instead of managed identity
-      is_managed_identity = (app_id.nil? && app_key.nil? && !cli_auth)
+      # Blank (empty/whitespace) app credentials are treated as absent so an
+      # empty app_id/app_key routes to managed identity rather than attempting an
+      # app-credentials connection with an empty value (which validate_config
+      # already rejects up front).
+      is_managed_identity = (blank?(app_id) && blank?(app_key) && !cli_auth)
       # If it is system managed identity, propagate the system identity
       is_system_assigned_managed_identity = is_managed_identity && 0 == "system".casecmp(managed_identity_id)
       # Is it direct connection
@@ -111,13 +115,20 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
 
     def validate_config(database, table, json_mapping, dynamic_routing, proxy_protocol, app_id, app_key, managed_identity_id, cli_auth)
-      # Add an additional validation and fail this upfront
-      if app_id.nil? && app_key.nil? && managed_identity_id.nil?
-        if cli_auth
-          @logger.info('Using CLI Auth, this is only for dev-test scenarios. This is ***NOT RECOMMENDED*** for production')
-        else
-          @logger.error('managed_identity_id is not provided and app_id/app_key is empty.')
-          raise LogStash::ConfigurationError.new('managed_identity_id is not provided and app_id/app_key is empty.')
+      # Authentication must resolve to exactly one usable path. Treat blank
+      # (nil, empty, or whitespace-only) values as missing so a config such as
+      # app_id => "", or an app_id provided with an empty app_key, fails fast
+      # here with an actionable message instead of surfacing a cryptic AAD/Java
+      # error when the connection is first attempted. Require a managed identity,
+      # or BOTH app_id and app_key, unless CLI auth (dev/test only) is enabled.
+      if cli_auth
+        @logger.info('Using CLI Auth, this is only for dev-test scenarios. This is ***NOT RECOMMENDED*** for production')
+      else
+        has_managed_identity = !blank?(managed_identity_id)
+        has_app_credentials = !blank?(app_id) && !blank?(app_key)
+        unless has_managed_identity || has_app_credentials
+          @logger.error('No valid authentication configured. Provide managed_identity, or both app_id and app_key, or enable cli_auth.')
+          raise LogStash::ConfigurationError.new('No valid authentication configured. Provide managed_identity, or both app_id and app_key, or enable cli_auth.')
         end
       end
       # Field references in database/table/json_mapping are only permitted when
@@ -227,6 +238,16 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     def stop
       @workers_pool.shutdown
       @workers_pool.wait_for_termination(nil) # block until its done
+    end
+
+    private
+
+    # True when a config value is nil, empty, or whitespace-only. Handles
+    # LogStash::Util::Password (app_key) by inspecting its wrapped value, so a
+    # blank secret is treated as "not provided" rather than as a usable credential.
+    def blank?(value)
+      v = value.respond_to?(:value) ? value.value : value
+      v.nil? || v.to_s.strip.empty?
     end
   end
 end
