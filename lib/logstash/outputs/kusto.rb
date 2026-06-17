@@ -30,8 +30,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Tag inserted into the temp file name (immediately before ROUTING_MARKER) to
   # stamp each dynamic temp file with a stable identifier for the output that
   # wrote it (see register). Crash recovery resends only files carrying this
-  # output's identifier, so two Kusto outputs sharing a path root can never pick
-  # up each other's leftover files. It sits before the marker so the routing
+  # output's identifier, so a Kusto output does not pick up the leftover files of
+  # another output with a *different* routing configuration sharing the same path
+  # root. (Outputs identical in ingest_url/path/database/table/json_mapping share
+  # an identifier; see routing_owner_id.) It sits before the marker so the routing
   # segments stay contiguous and decode_routing_target is unaffected.
   ROUTING_OWNER_MARKER = '.kustoid-'
 
@@ -99,41 +101,52 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # genuinely invalid value makes the whole target unroutable so the event is not
   # silently ingested with the wrong mapping.
   def self.decode_routing_target(path)
-    return nil if path.nil?
+    target, _reason, _category = classify_routing_target(path)
+    target
+  end
+
+  # Single source of truth behind decode_routing_target. Returns a three-element
+  # array: [target_hash, nil, nil] when the path carries a valid routing target,
+  # or [nil, reason, category] when it does not. `reason` is a specific,
+  # operator-friendly message (used verbatim in the dead-letter-queue entry);
+  # `category` is a short, stable label (no variable content) used to aggregate a
+  # per-batch breakdown in the warning log. The writer uses all three; the
+  # ingestor uses decode_routing_target (the hash-or-nil view), so the two stay
+  # in lock-step.
+  def self.classify_routing_target(path)
+    return [nil, 'generated file name carried no routing marker', 'no routing marker'] if path.nil?
 
     marker_index = path.rindex(ROUTING_MARKER)
-    return nil if marker_index.nil?
+    return [nil, 'generated file name carried no routing marker', 'no routing marker'] if marker_index.nil?
 
     encoded = path[(marker_index + ROUTING_MARKER.length)..-1]
     database_enc, table_enc, mapping_enc = encoded.split('~', 3)
 
     database = decode_routing_segment(database_enc)
+    return [nil, "database field is missing, unresolved, or invalid (allowed: #{ROUTING_VALUE_DESCRIPTION}; 1-#{ROUTING_VALUE_MAX_LENGTH} characters)", 'missing or invalid database'] if unresolved_or_invalid_routing_value?(database)
+
     table = decode_routing_segment(table_enc)
-    return nil if unresolved_or_invalid_routing_value?(database)
-    return nil if unresolved_or_invalid_routing_value?(table)
+    return [nil, "table field is missing, unresolved, or invalid (allowed: #{ROUTING_VALUE_DESCRIPTION}; 1-#{ROUTING_VALUE_MAX_LENGTH} characters)", 'missing or invalid table'] if unresolved_or_invalid_routing_value?(table)
 
     mapping = decode_routing_segment(mapping_enc)
     if mapping.nil? || mapping.empty?
       # Absent mapping -> route without a mapping.
       mapping = nil
     elsif mapping =~ FIELD_REF
-      # An exact, unresolved field reference like %{[@metadata][mapping]}
-      # (left when the field is absent) -> route without a mapping. But a
-      # composite like "prefix_%{...}" with unresolved refs is inconsistent
-      # with database/table behavior and would silent-fail, so treat it as
-      # unroutable.
+      # An exact, unresolved field reference like %{[@metadata][mapping]} (left
+      # when the field is absent) -> route without a mapping. A composite such as
+      # "prefix_%{...}" that is still unresolved is treated as unroutable so the
+      # event is not silently ingested without its intended mapping.
       if mapping =~ /\A%\{[^}]++\}\z/
-        # Exact single field reference -> route without mapping.
         mapping = nil
       else
-        # Composite-unresolved -> unroutable.
-        return nil
+        return [nil, 'json_mapping resolved to a composite value that still contains an unresolved field reference', 'invalid json_mapping']
       end
     elsif mapping !~ ROUTING_VALUE_PATTERN || mapping.length > ROUTING_VALUE_MAX_LENGTH
-      # Decoded to a genuinely invalid (or overlong) value -> unroutable.
-      return nil
+      return [nil, "json_mapping is invalid or too long (allowed: #{ROUTING_VALUE_DESCRIPTION}; 1-#{ROUTING_VALUE_MAX_LENGTH} characters)", 'invalid json_mapping']
     end
-    { database: database, table: table, mapping: mapping }
+
+    [{ database: database, table: table, mapping: mapping }, nil, nil]
   end
 
   # True when a decoded database/table value is missing, empty, an unresolved
@@ -311,8 +324,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # Stamp every dynamic temp file with a stable identifier for this output so
       # crash recovery only resends files this output wrote (see recover_past_files).
       # The identifier is derived from the settings that define where this output
-      # sends data, so it is stable across restarts yet differs from any other
-      # output, even one sharing the same path root.
+      # sends data (ingest_url/path/database/table/json_mapping), so it is stable
+      # across restarts yet differs from any output with a different one of those.
+      # Outputs that are identical in all of them (e.g. differing only by
+      # credentials or by an upstream pipeline conditional) share a tag; give such
+      # outputs distinct `path` roots if they must not recover each other's files.
       @routing_owner_tag = "#{ROUTING_OWNER_MARKER}#{routing_owner_id(final_mapping)}"
     else
       @path = File.expand_path("#{path}.#{database}.#{table}")
@@ -375,9 +391,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Stable per-output identifier embedded in dynamic temp file names so crash
   # recovery only picks up files this output wrote. Derived from the settings that
   # determine where this output sends data (endpoint + routing config + path), so
-  # it stays constant across restarts of the same configuration yet differs from
-  # any other output. Returns a short hex digest: filename-safe and free of the
-  # marker / separator characters.
+  # it stays constant across restarts of the same configuration and differs from
+  # any output configured with a different endpoint/path/database/table/mapping.
+  # Two outputs identical in all of those (e.g. differing only by credentials or a
+  # pipeline conditional) produce the same id, so give them distinct `path` roots
+  # if they share a temp directory. Returns a short hex digest: filename-safe and
+  # free of the marker / separator characters.
   def routing_owner_id(final_mapping)
     identity = [ingest_url, path, database, table, (final_mapping || '')].join("\u0000")
     Digest::SHA256.hexdigest(identity)[0, 16]
@@ -469,22 +488,22 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   public
   def multi_receive_encoded(events_and_encoded)
     encoded_by_path = Hash.new { |h, k| h[k] = [] }
-    unroutable_count = 0
+    # Tally unroutable events by short, stable category so the per-batch warning
+    # can show a breakdown (e.g. "2 missing or invalid table, 1 filename over
+    # filesystem limit") instead of only a total. Populated via event_path.
+    unroutable_reasons = Hash.new(0)
 
     events_and_encoded.each do |event, encoded|
-      file_output_path = event_path(event)
+      file_output_path = event_path(event, unroutable_reasons)
       # A nil path means the event was handled out-of-band (sent to the dead
       # letter queue, or dropped when the DLQ is disabled); it is not written to
       # any temp file.
-      if file_output_path.nil?
-        unroutable_count += 1
-        next
-      end
+      next if file_output_path.nil?
 
       encoded_by_path[file_output_path] << encoded
     end
 
-    log_unroutable_summary(unroutable_count)
+    log_unroutable_summary(unroutable_reasons)
 
     @io_mutex.synchronize do
       encoded_by_path.each do |path, chunks|
@@ -519,15 +538,20 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   # Emits a single aggregated warning per batch summarising how many events could
-  # not be routed, instead of one log line per event, to keep the logs usable
-  # under high volume.
-  def log_unroutable_summary(count)
-    return if count.zero?
+  # not be routed and a breakdown by category (instead of one log line per
+  # event), to keep the logs usable under high volume while still pointing at the
+  # field(s) to fix even when the dead letter queue is disabled.
+  def log_unroutable_summary(reasons)
+    total = reasons.values.inject(0, :+)
+    return if total.zero?
 
+    breakdown = reasons.sort_by { |_category, count| -count }
+                       .map { |category, count| "#{count} #{category}" }
+                       .join(', ')
     if @dlq_writer
-      @logger.warn("#{count} event(s) in this batch could not be routed to a Kusto target and were sent to the dead letter queue.")
+      @logger.warn("#{total} event(s) in this batch could not be routed to a Kusto target and were sent to the dead letter queue (#{breakdown}).")
     else
-      @logger.warn("#{count} event(s) in this batch could not be routed to a Kusto target and were DROPPED because the dead letter queue is disabled. Enable the Logstash dead letter queue to capture them.")
+      @logger.warn("#{total} event(s) in this batch could not be routed to a Kusto target and were DROPPED because the dead letter queue is disabled (#{breakdown}). Enable the Logstash dead letter queue to capture them.")
     end
   end
   private :log_unroutable_summary
@@ -566,30 +590,42 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   private
-  def event_path(event)
+  def event_path(event, reasons = nil)
     file_output_path = generate_filepath(event)
     if path_with_field_ref? && !inside_file_root?(file_output_path)
       # The event resolved to a path outside the files root. In dynamic mode this
       # is just another unroutable event, so funnel it through the same handler
       # (DLQ / drop) for one coherent policy; in static mode keep the historical
       # behaviour of writing to the failure file.
-      return handle_unroutable_event(event, 'tried to write outside the files root') if @dynamic_routing
+      return record_unroutable(event, 'tried to write outside the files root', 'outside files root', reasons) if @dynamic_routing
       @logger.warn('The event tried to write outside the files root, writing the event to the failure file', event: event, filename: @failure_path)
       file_output_path = @failure_path
-    elsif @dynamic_routing && !valid_routing_target?(file_output_path)
-      return handle_unroutable_event(event, "did not resolve to a valid Kusto routing target (database/table must contain only #{ROUTING_VALUE_DESCRIPTION})")
+    elsif @dynamic_routing && (unroutable = unroutable_reason(file_output_path))
+      reason, category = unroutable
+      return record_unroutable(event, reason, category, reasons)
     elsif !@create_if_deleted && deleted?(file_output_path)
       # The temp file was deleted and we are told not to recreate it. In dynamic
       # mode there is no usable failure file (it carries no routing target and
       # cannot be ingested), so treat this as unroutable (DLQ / drop) to keep the
       # invariant that dynamic mode never writes to @failure_path. Static mode
       # keeps the historical failure-file behaviour.
-      return handle_unroutable_event(event, 'temporary file was deleted and create_if_deleted is false') if @dynamic_routing
+      return record_unroutable(event, 'temporary file was deleted and create_if_deleted is false', 'temp file deleted', reasons) if @dynamic_routing
       file_output_path = @failure_path
     end
     @logger.debug('Writing event to tmp file.', filename: file_output_path)
 
     file_output_path
+  end
+
+  # Routes one unroutable event to the dead letter queue (or drops it) with its
+  # specific reason, and tallies its short category into the optional per-batch
+  # accumulator so log_unroutable_summary can show a breakdown. Always returns
+  # nil so the caller writes nothing to disk for this event.
+  private
+  def record_unroutable(event, reason, category, reasons)
+    handle_unroutable_event(event, reason)
+    reasons[category] += 1 if reasons
+    nil
   end
 
   # Handles a dynamic event that could not be routed to a Kusto destination.
@@ -609,17 +645,25 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     nil
   end
 
-  # Validates the routing target encoded in a dynamically-generated file path.
-  # Delegates to the shared decoder so the writer and ingestor sides stay in
-  # lock-step. Returns false when database/table did not resolve to valid
-  # identifiers (e.g. the field reference was missing, leaving a literal
-  # `%{...}`). The mapping segment is optional and not required here.
-  # Also checks that the encoded routing basename doesn't exceed the filesystem
-  # filename byte limit to prevent Errno::ENAMETOOLONG.
+  # True when the routing target encoded in a dynamically-generated file path is
+  # valid and its encoded file name fits the filesystem limit. Thin predicate
+  # over unroutable_reason (which carries the specific cause for DLQ/logs).
   private
   def valid_routing_target?(file_output_path)
-    target = self.class.decode_routing_target(file_output_path)
-    return false if target.nil?
+    unroutable_reason(file_output_path).nil?
+  end
+
+  # Returns nil when the path is a valid routing target, otherwise a two-element
+  # [reason, category] array describing why it is not: a missing/invalid database
+  # or table, an unresolved/invalid json_mapping, or an encoded file name over the
+  # filesystem limit. `reason` is the specific message used in the dead-letter
+  # entry; `category` is a short stable label aggregated into the per-batch
+  # warning, so high-volume environments can triage which field to fix instead of
+  # seeing one generic "invalid routing target" bucket.
+  private
+  def unroutable_reason(file_output_path)
+    _target, reason, category = self.class.classify_routing_target(file_output_path)
+    return [reason, category] if reason
 
     # The basename is the complete final filename, so guard it against the
     # filesystem NAME_MAX (255 bytes). Percent-encoding can expand a value up to
@@ -628,11 +672,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     # (DLQ/drop) here rather than failing later in File.new.
     basename = File.basename(file_output_path)
     if basename.bytesize > ROUTING_ENCODED_BASENAME_MAX_BYTES
-      @logger.debug('Routing target encoded to basename exceeding filesystem limit.', basename_bytes: basename.bytesize, limit: ROUTING_ENCODED_BASENAME_MAX_BYTES)
-      return false
+      return ["encoded routing file name is #{basename.bytesize} bytes, over the #{ROUTING_ENCODED_BASENAME_MAX_BYTES}-byte filesystem limit (shorten database/table/json_mapping or the path prefix)", 'filename over filesystem limit']
     end
 
-    true
+    nil
   end
 
   private
@@ -794,8 +837,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # happens to match is never sent to ingest.
       old_files = if @dynamic_routing
                     # Only resend files this output wrote (owner-stamped), so a
-                    # shared path root never causes one output to pick up another's
-                    # leftover file (possibly bound for a different cluster/table).
+                    # shared path root does not cause an output to pick up the
+                    # leftover file of another output with a different routing
+                    # configuration (possibly bound for a different cluster/table).
                     Find.find(new_path).select { |p| File.file?(p) && dynamic_temp_file_owned_by_this_output?(p) }
                   else
                     suffix = /\.#{Regexp.escape(database)}\.#{Regexp.escape(table)}\z/

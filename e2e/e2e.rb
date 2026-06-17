@@ -40,6 +40,8 @@ class E2E
       code => "
         rn = event.get('rownumber').to_i
         event.set('[@metadata][kusto_table]', rn.odd? ? '#{@table_dynamic_odd}' : '#{@table_dynamic_even}')
+        event.set('[@metadata][kusto_database]', '#{@database}')
+        event.set('[@metadata][kusto_mapping]', '#{@mapping_name}')
       "
     }
   }
@@ -61,15 +63,17 @@ class E2E
       database => "#{@database}"
       table => "#{@table_without_mapping}"
     }
-    # Dynamic routing: a single output fans events out to two ADX tables, with
-    # the destination table resolved per event from [@metadata][kusto_table].
+    # Dynamic routing: a single output resolves database, table AND json_mapping
+    # per event from event metadata, fanning events out to two ADX tables by
+    # odd/even rownumber. This proves all three dynamic dimensions end to end
+    # (dynamic database + table + mapping), not just the table.
     kusto {
       path => "dyntmp%{+YYYY-MM-dd-HH-mm}.txt"
       cli_auth => true
       ingest_url => "#{@ingest_url}"
-      database => "#{@database}"
+      database => "%{[@metadata][kusto_database]}"
       table => "%{[@metadata][kusto_table]}"
-      json_mapping => "#{@mapping_name}"
+      json_mapping => "%{[@metadata][kusto_mapping]}"
     }
   }
 }
@@ -105,7 +109,9 @@ class E2E
     File.write(@input_file, "")
     lscommand = "#{@lslocalpath} -f #{logstashpath}"
     puts "Running logstash from config path #{logstashpath} and final command #{lscommand}"
-    spawn(lscommand)
+    # Keep the child PID so the process can be terminated during cleanup (see
+    # stop_logstash); otherwise a failed validation would leave Logstash running.
+    @logstash_pid = spawn(lscommand)
     sleep(60)
     data = File.read(@csv_file)
     f = File.open(@input_file, "a")
@@ -113,6 +119,45 @@ class E2E
     f.close
     sleep(60)
     puts File.read(@output_file)
+  end
+
+  # Terminate the spawned Logstash process if it is still running. Safe to call
+  # multiple times and when no process was started. Sends TERM, waits a bounded
+  # time for a graceful exit, then escalates to KILL so a Logstash that ignores
+  # TERM cannot hang the e2e cleanup (and the table drop that follows it).
+  def stop_logstash
+    return if @logstash_pid.nil?
+    begin
+      Process.kill('TERM', @logstash_pid)
+      reaped = wait_for_exit(@logstash_pid, 30)
+      unless reaped
+        puts "Logstash (pid #{@logstash_pid}) did not exit after TERM; sending KILL."
+        Process.kill('KILL', @logstash_pid)
+        wait_for_exit(@logstash_pid, 10)
+      end
+    rescue Errno::ESRCH, Errno::ECHILD
+      # Already exited / already reaped.
+    rescue => e
+      puts "Error stopping logstash (pid #{@logstash_pid}): #{e}"
+    ensure
+      @logstash_pid = nil
+    end
+  end
+
+  # Polls for the child process to be reaped, up to timeout_seconds. Returns true
+  # if it exited within the window, false otherwise. Uses a non-blocking wait so a
+  # process that ignores TERM cannot block cleanup indefinitely.
+  def wait_for_exit(pid, timeout_seconds)
+    deadline = Time.now + timeout_seconds
+    loop do
+      begin
+        return true if Process.waitpid(pid, Process::WNOHANG)
+      rescue Errno::ECHILD
+        return true # already reaped
+      end
+      return false if Time.now >= deadline
+      sleep(0.5)
+    end
   end
 
   def assert_data
@@ -179,11 +224,18 @@ class E2E
 
   def start
     @query_client = $kusto_java.data.ClientFactory.createClient($kusto_java.data.auth.ConnectionStringBuilder::createWithAzureCli(@engine_url))
-    create_table_and_mapping
-    run_logstash
-    assert_data
-    drop_and_cleanup    
-  end  
+    begin
+      create_table_and_mapping
+      run_logstash
+      assert_data
+    ensure
+      # Always stop the spawned Logstash process and drop the test tables, even
+      # if validation raised, so a failed run leaks neither a process nor ADX
+      # tables.
+      stop_logstash
+      drop_and_cleanup
+    end
+  end
 end
 
 E2E::new().start

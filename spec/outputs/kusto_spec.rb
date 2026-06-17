@@ -541,6 +541,35 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
+    it 'includes a per-category breakdown of unroutable reasons in the batch warning' do
+      # The per-batch warning must show WHICH field(s) failed (not just a total)
+      # so operators can triage even when the DLQ is disabled. Build a mixed batch:
+      # two events missing the table field and one whose table is ADX-valid but
+      # encodes over the filesystem name limit.
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, nil) # disabled -> DROPPED path
+      logger = spy('logger')
+      kusto.instance_variable_set(:@logger, logger)
+
+      missing_table = Array.new(2) do
+        e = LogStash::Event.new
+        e.set('[@metadata][database]', 'mydb') # table unset -> missing table
+        [e, '{"a":1}']
+      end
+      long_name = LogStash::Event.new
+      long_name.set('[@metadata][database]', 'mydb')
+      long_name.set('[@metadata][table]', 'a' * 1024) # over filesystem name limit
+      long_name.set('[@metadata][mapping]', 'mymapping')
+
+      kusto.multi_receive_encoded(missing_table + [[long_name, '{"a":1}']])
+
+      expect(logger).to have_received(:warn).with(
+        /3 event\(s\).*DROPPED.*2 missing or invalid table.*1 filename over filesystem limit/
+      ).once
+      kusto.close
+    end
+
     it 'treats an over-long encoded basename as unroutable (drop or DLQ)' do
       # When a routing value encodes to exceed the filesystem 255-byte filename
       # limit, it should be treated as unroutable instead of attempting File.new
@@ -551,7 +580,7 @@ describe LogStash::Outputs::Kusto do
       allow(dlq_writer).to receive(:write)
 
       # A 1024-char UTF-8 value (at max length) encodes to ~6144 bytes when
-      # percent-encoded, far exceeding the 200-byte basename limit. This event
+      # percent-encoded, far exceeding the 255-byte basename limit. This event
       # should be routed to DLQ, not attempt to open an overlong filename.
       event = LogStash::Event.new
       event.set('[@metadata][database]', 'db')
@@ -629,6 +658,58 @@ describe LogStash::Outputs::Kusto do
       # Should be routable (exact unresolved field reference -> mapping = nil).
       expect(path).not_to be_nil
       expect(path).to include('mydb~mytable~')
+      kusto.close
+    end
+
+    it 'reports a database-specific reason to the DLQ when the database field is missing' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+
+      event = LogStash::Event.new # no routing fields at all
+      event.set('[@metadata][table]', 'mytable')
+      expect(dlq_writer).to receive(:write).with(event, /database field is missing/)
+      kusto.send(:event_path, event)
+      kusto.close
+    end
+
+    it 'reports a table-specific reason to the DLQ when only the table field is missing' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'mydb') # database resolves, table does not
+      expect(dlq_writer).to receive(:write).with(event, /table field is missing/)
+      kusto.send(:event_path, event)
+      kusto.close
+    end
+
+    it 'reports a json_mapping-specific reason to the DLQ for a composite-unresolved mapping' do
+      kusto = described_class.new(dynamic_options.merge('json_mapping' => 'prefix_%{[@metadata][custom_mapping]}'))
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'mydb')
+      event.set('[@metadata][table]', 'mytable')
+      # custom_mapping intentionally unset -> composite "prefix_%{...}" remains.
+      expect(dlq_writer).to receive(:write).with(event, /json_mapping/)
+      kusto.send(:event_path, event)
+      kusto.close
+    end
+
+    it 'reports a filesystem-limit reason to the DLQ when the encoded file name is too long' do
+      kusto = described_class.new(dynamic_options)
+      kusto.register
+      kusto.instance_variable_set(:@dlq_writer, dlq_writer)
+
+      event = LogStash::Event.new
+      event.set('[@metadata][database]', 'db')
+      event.set('[@metadata][table]', 'a' * 1024) # ADX-valid but encodes over the byte limit
+      event.set('[@metadata][mapping]', 'mymapping')
+      expect(dlq_writer).to receive(:write).with(event, /filesystem limit/)
+      kusto.send(:event_path, event)
       kusto.close
     end
 
