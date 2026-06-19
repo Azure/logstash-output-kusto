@@ -66,6 +66,7 @@ More information about configuring Logstash can be found in the [logstash config
 | **recovery** | If set to true (default), plugin will attempt to resend pre-existing temp files found in the path upon startup | |
 | **delete_temp_files** | Determines if temp files will be deleted after a successful upload (true is default; set false for debug purposes only)| |
 | **flush_interval** | The time (in seconds) for flushing writes to temporary files. Default is 2 seconds, 0 will flush on every event. Increase this value to reduce IO calls but keep in mind that events in the buffer will be lost in case of abrupt failure.| |
+| **rotate_by** | Selects which clock resolves the time pattern in `path` (e.g. `%{+YYYY-MM-dd-HH-mm}`) for temporary-file rotation: `event` (default) uses each event's `@timestamp` (event time); `processing` uses the wall-clock time at which the batch is processed (processing time). `processing` is **recommended for Kusto** - it avoids creating many small files (and many small, costly ingestion operations) when event timestamps are skewed or delayed. The default will change from `event` to `processing` in the next major version. | Optional, default `event` |
 | **proxy_host** | The proxy hostname for redirecting traffic to Kusto.| |
 | **proxy_port** | The proxy port for the proxy. Defaults to 80.| |
 | **proxy_protocol** | The proxy server protocol , is one of http or https.| |
@@ -81,6 +82,7 @@ export  LS_JAVA_OPTS="-Dhttp.proxyHost=1.2.34 -Dhttp.proxyPort=8989 -Dhttps.prox
 
 | Version | Release Date | Notes |
 | --- | --- | --- |
+| 2.2.0 | 2026-06-19 | - Add the `rotate_by` option to rotate temporary files by `processing` (wall-clock) time instead of `event` time, avoiding many small files when event timestamps are skewed or delayed. Default remains `event` for backward compatibility and is scheduled to change to `processing` in the next major version. Resolves [#44](https://github.com/Azure/logstash-output-kusto/issues/44).  |
 | 2.0.8 | 2024-10-23 | - Fix library deprecations, fix issues in the Azure Identity library  |
 | 2.0.7 | 2024-01-01 | - Update Kusto JAVA SDK  |
 | 2.0.3 | 2023-12-12 | - Make JSON mapping field optional. If not provided logstash output JSON attribute names will be used for column resolution  |

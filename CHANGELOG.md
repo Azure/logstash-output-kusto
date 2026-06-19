@@ -1,6 +1,16 @@
 # Changelog
 
 
+# 2.2.0
+
+- Add the `rotate_by` option to choose between `event` (default) and `processing` (wall-clock) time when
+  resolving the time pattern in `path` for temporary-file rotation. Rotating by `processing` time groups
+  events that arrive in the same window into a single file, avoiding many small files - and many small,
+  costly ingestion operations - when event timestamps are skewed or delayed. The default remains `event`
+  for backward compatibility and is scheduled to change to `processing` in the next major version.
+  Resolves #44.
+
+
 # 2.0.3
 
 - Make JSON mapping optional

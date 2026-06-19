@@ -30,6 +30,27 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # E.g: `/%{myfield}/`, `/test-%{myfield}/` are not valid paths
   config :path, validate: :string, required: true
 
+  # Selects which clock is used to resolve the time pattern in `path`
+  # (for example `%{+YYYY-MM-dd-HH-mm}`) when rotating the temporary files
+  # that are uploaded to Kusto.
+  #
+  #   * `event` (default) - resolve the time pattern from each event's own
+  #     `@timestamp` (event time). This is the historical behavior, inherited
+  #     from the upstream `logstash-output-file` plugin.
+  #   * `processing` - resolve the time pattern from the wall-clock time at
+  #     which Logstash processes the batch (processing time). Events processed
+  #     in the same window share the same time-based file name.
+  #
+  # The temporary file is only a transient buffer: its name is never seen by
+  # Azure Data Explorer (event time is stored in a column via `json_mapping`).
+  # Rotating by `processing` time therefore avoids creating many tiny files -
+  # and many small, costly ingestion operations - when event timestamps are
+  # skewed or arrive late. `processing` is recommended for most pipelines.
+  #
+  # NOTE: the default is scheduled to change from `event` to `processing` in
+  # the next major version of this plugin.
+  config :rotate_by, validate: %w[event processing], default: 'event'
+
   # Flush interval (in seconds) for flushing writes to files.
   # 0 will flush on every message. Increase this value to recude IO calls but keep 
   # in mind that events buffered before flush can be lost in case of abrupt failure.
@@ -143,6 +164,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     validate_path
 
+    warn_about_default_rotate_by
+
     @file_root = if path_with_field_ref?
                    extract_file_root
                  else
@@ -185,6 +208,23 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
   end
 
+  # Emit a one-time recommendation at startup when the user has not explicitly
+  # chosen a `rotate_by` value, so existing pipelines keep their current
+  # (event-time) behavior but are informed about the recommended setting and
+  # the upcoming default change.
+  private
+  def warn_about_default_rotate_by
+    return if original_params.include?('rotate_by')
+
+    @logger.warn('`rotate_by` is not set and currently defaults to "event", which rotates temporary ' \
+                 'files using each event\'s @timestamp. For Azure Data Explorer we recommend ' \
+                 '`rotate_by => "processing"`, which rotates by processing (wall-clock) time and avoids ' \
+                 'creating many small files - and many small, costly ingestion operations - when event ' \
+                 'timestamps are skewed or delayed. The default will change from "event" to "processing" ' \
+                 'in the next major version; set `rotate_by` explicitly to lock in the behavior you want ' \
+                 'and silence this message.')
+  end
+
   private 
   def root_directory
     parts = @path.split(File::SEPARATOR).reject(&:empty?)
@@ -200,8 +240,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   def multi_receive_encoded(events_and_encoded)
     encoded_by_path = Hash.new { |h, k| h[k] = [] }
 
+    # Capture a single processing-time (wall-clock) timestamp for the whole
+    # batch. When `rotate_by => processing` this is used to resolve the time
+    # pattern in `path`, so every event in the batch lands in the same
+    # time-based file regardless of its own (possibly skewed or late)
+    # `@timestamp`. It is ignored when `rotate_by => event`.
+    batch_processing_time = LogStash::Timestamp.new(Time.now)
+
     events_and_encoded.each do |event, encoded|
-      file_output_path = event_path(event)
+      file_output_path = event_path(event, batch_processing_time)
       encoded_by_path[file_output_path] << encoded
     end
 
@@ -245,8 +292,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   private
-  def event_path(event)
-    file_output_path = generate_filepath(event)
+  def event_path(event, batch_processing_time)
+    file_output_path = generate_filepath(event, batch_processing_time)
     if path_with_field_ref? && !inside_file_root?(file_output_path)
       @logger.warn('The event tried to write outside the files root, writing the event to the failure file', event: event, filename: @failure_path)
       file_output_path = @failure_path
@@ -259,8 +306,39 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   private
-  def generate_filepath(event)
-    event.sprintf(@path)
+  def generate_filepath(event, batch_processing_time)
+    return event.sprintf(@path) unless @rotate_by == 'processing'
+
+    # Resolve the time pattern in `@path` (e.g. %{+YYYY-MM-dd-HH-mm}) against the
+    # batch processing time instead of the event's own @timestamp, while still
+    # resolving any %{field} references (including dynamic-routing metadata) from
+    # the event itself.
+    #
+    # The @timestamp field is swapped only for the duration of the sprintf call
+    # and always restored in the ensure block. This is safe and free of visible
+    # side effects because:
+    #   * the event's encoded payload was produced by the codec *before* this
+    #     method runs, so the bytes written to the file are unaffected;
+    #   * the same event instance can be shared with other outputs in the
+    #     pipeline, so we restore @timestamp to its exact original state
+    #     (including the case where it was absent) before returning.
+    #
+    # The field accessors (`get`/`set`/`remove`) are used rather than the typed
+    # `event.timestamp` accessor on purpose: `get` returns nil for an event whose
+    # @timestamp was removed (e.g. by a filter), whereas `event.timestamp` raises.
+    # This keeps processing-time rotation working for such events instead of
+    # failing the batch.
+    original_timestamp = event.get(LogStash::Event::TIMESTAMP)
+    begin
+      event.set(LogStash::Event::TIMESTAMP, batch_processing_time)
+      event.sprintf(@path)
+    ensure
+      if original_timestamp.nil?
+        event.remove(LogStash::Event::TIMESTAMP)
+      else
+        event.set(LogStash::Event::TIMESTAMP, original_timestamp)
+      end
+    end
   end
 
   private
