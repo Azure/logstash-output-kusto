@@ -310,9 +310,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     return event.sprintf(@path) unless @rotate_by == 'processing'
 
     # Resolve the time pattern in `@path` (e.g. %{+YYYY-MM-dd-HH-mm}) against the
-    # batch processing time instead of the event's own @timestamp, while still
-    # resolving any %{field} references (including dynamic-routing metadata) from
-    # the event itself.
+    # batch processing time instead of the event's own @timestamp. All other
+    # %{field} references (including dynamic-routing metadata) still resolve from
+    # the event itself; only @timestamp-derived tokens change.
+    #
+    # Caveat: because the @timestamp field is what we swap, a literal
+    # `%{[@timestamp]}` reference in `path` also resolves from the processing
+    # time here, not the original event time. This only affects the transient
+    # temp file name (never seen by Kusto), so it is harmless, but it is the one
+    # field reference that does not reflect the original event value.
     #
     # The @timestamp field is swapped only for the duration of the sprintf call
     # and always restored in the ensure block. This is safe and free of visible
