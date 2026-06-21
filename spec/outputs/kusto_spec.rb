@@ -134,9 +134,7 @@ describe LogStash::Outputs::Kusto do
       end
 
       it 'resolves a literal %{[@timestamp]} reference from processing time (documented caveat)' do
-        # Because @timestamp is what gets swapped, a literal %{[@timestamp]} in the
-        # path reflects the processing time, not the original event time. This only
-        # affects the transient temp file name, which is never seen by Kusto.
+        # See generate_filepath: %{[@timestamp]} reflects the swapped processing time.
         kusto.instance_variable_set(:@path, './kusto_tst/%{[@timestamp]}')
         path = kusto.send(:generate_filepath, old_event, batch_time)
         expect(path).to include('2024-06-15')
