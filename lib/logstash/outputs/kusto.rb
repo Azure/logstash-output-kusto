@@ -324,9 +324,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     # side effects because:
     #   * the event's encoded payload was produced by the codec *before* this
     #     method runs, so the bytes written to the file are unaffected;
-    #   * the same event instance can be shared with other outputs in the
-    #     pipeline, so we restore @timestamp to its exact original state
-    #     (including the case where it was absent) before returning.
+    #   * Logstash invokes a pipeline's outputs sequentially for a given batch
+    #     and each event is owned by a single worker at a time, so no other
+    #     output or thread observes the event during this synchronous swap; we
+    #     still restore @timestamp to its exact original state (including the
+    #     absent case) before returning, so any later output sees the original.
     #
     # The field accessors (`get`/`set`/`remove`) are used rather than the typed
     # `event.timestamp` accessor on purpose: `get` returns nil for an event whose

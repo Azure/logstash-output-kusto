@@ -3,6 +3,7 @@ require_relative "../spec_helpers.rb"
 require 'logstash/outputs/kusto'
 require 'logstash/codecs/plain'
 require 'logstash/event'
+require 'fileutils'
 
 describe LogStash::Outputs::Kusto do
 
@@ -18,6 +19,16 @@ describe LogStash::Outputs::Kusto do
     "proxy_port" => 3128,
     "proxy_protocol" => "https"
   } }
+
+  # Registers the plugin without constructing a real Java Kusto client (no
+  # cluster contact in unit tests). Returns the plugin; its @ingestor is a stub
+  # that records upload_async/stop as no-ops.
+  def register_without_client(kusto)
+    allow(LogStash::Outputs::Kusto::Ingestor).to receive(:new)
+      .and_return(double('ingestor', upload_async: nil, stop: nil))
+    kusto.register
+    kusto
+  end
 
   describe '#register' do
 
@@ -156,6 +167,66 @@ describe LogStash::Outputs::Kusto do
         kusto.send(:generate_filepath, event, batch_time)
         expect(event.get(LogStash::Event::TIMESTAMP)).to be_nil
       end
+    end
+
+  end
+
+  describe 'rotate_by startup recommendation' do
+
+    it 'warns when rotate_by is not explicitly set' do
+      kusto = described_class.new(options)
+      logger = spy('logger')
+      kusto.instance_variable_set(:@logger, logger)
+      register_without_client(kusto)
+      expect(logger).to have_received(:warn).with(/rotate_by/)
+      kusto.close
+    end
+
+    it 'does not warn when rotate_by is explicitly set' do
+      kusto = described_class.new(options.merge({'rotate_by' => 'event'}))
+      logger = spy('logger')
+      kusto.instance_variable_set(:@logger, logger)
+      register_without_client(kusto)
+      expect(logger).not_to have_received(:warn).with(/rotate_by/)
+      kusto.close
+    end
+
+  end
+
+  describe '#multi_receive_encoded' do
+
+    let(:mre_path) { './kusto_tst_mre/%{+YYYY-MM-dd-HH-mm}' }
+
+    after { FileUtils.rm_rf('./kusto_tst_mre') }
+
+    def receiving_kusto(rotate_by)
+      kusto = described_class.new(options.merge({'rotate_by' => rotate_by, 'path' => mre_path}))
+      register_without_client(kusto)
+    end
+
+    def event_at(utc_time)
+      event = LogStash::Event.new('message' => 'hello')
+      event.timestamp = LogStash::Timestamp.new(utc_time)
+      event
+    end
+
+    let(:skewed_batch) do
+      [[event_at(Time.utc(2018, 1, 1, 0, 0, 0)), "a\n"],
+       [event_at(Time.utc(2030, 12, 31, 23, 59, 0)), "b\n"]]
+    end
+
+    it 'writes skewed events in one batch to a single file when rotate_by is processing' do
+      kusto = receiving_kusto('processing')
+      kusto.multi_receive_encoded(skewed_batch)
+      expect(kusto.instance_variable_get(:@files).keys.size).to eq(1)
+      kusto.close
+    end
+
+    it 'writes skewed events in one batch to separate files when rotate_by is event' do
+      kusto = receiving_kusto('event')
+      kusto.multi_receive_encoded(skewed_batch)
+      expect(kusto.instance_variable_get(:@files).keys.size).to eq(2)
+      kusto.close
     end
 
   end

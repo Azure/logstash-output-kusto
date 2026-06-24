@@ -37,6 +37,7 @@ Perform configuration before sending events from Logstash to Azure Data Explorer
 output {
 	kusto {
             path => "/tmp/kusto/%{+YYYY-MM-dd-HH-mm}.txt"
+            rotate_by => "processing"            # recommended; default is "event" (see table below)
             ingest_url => "https://ingest-<cluster-name>.kusto.windows.net/"
             app_id => "<application id>"
             app_key => "<application key/secret>"
