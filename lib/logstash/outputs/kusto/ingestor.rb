@@ -314,7 +314,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       end
 
       @logger.debug(
-        'Managed streaming request accepted.',
+        "Managed streaming request accepted. status=#{status} bytes=#{file_size}",
         status: status,
         bytes: file_size,
         database: @ingestion_properties.getDatabaseName,

@@ -179,15 +179,15 @@ class StreamingE2E
       raise "No managed streaming success was logged\n#{output}"
     end
 
-    unless output.match?(/status=>"?Succeeded"?/)
+    unless output.match?(/status(?:=>|=)"?Succeeded"?/)
       raise "No request completed through streaming ingestion\n#{output}"
     end
 
-    unless output.match?(/status=>"?Queued"?/)
+    unless output.match?(/status(?:=>|=)"?Queued"?/)
       raise "The oversized event did not exercise managed queued fallback\n#{output}"
     end
 
-    request_sizes = output.scan(/bytes=>(\d+)/).flatten.map(&:to_i)
+    request_sizes = output.scan(/bytes(?:=>|=)(\d+)/).flatten.map(&:to_i)
     unless request_sizes.any? { |bytes| bytes > REQUEST_LIMIT }
       raise "The single event above the connector threshold was not sent intact: #{request_sizes}"
     end
