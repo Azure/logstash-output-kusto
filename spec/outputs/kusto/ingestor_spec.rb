@@ -357,6 +357,19 @@ describe LogStash::Outputs::Kusto::Ingestor do
       expect(streaming_metric).to have_received(:increment).with(:failures)
     end
 
+    it 'logs a missing spool file without allowing the error to escape the upload task' do
+      file = Tempfile.new(['missing-kusto-streaming', '.json'])
+      path = file.path
+      file.close!
+
+      expect(streaming_client).not_to receive(:ingestFromFile)
+      expect { ingestor.upload(path, true) }.not_to raise_error
+      expect(logger).to have_received(:error).with(
+        "File doesn't exist! Unrecoverable error.",
+        hash_including(exception: Errno::ENOENT, path: path)
+      )
+    end
+
     it 'ingests synchronously when the streaming executor rejects a committed spool file' do
       allow(threadpool).to receive(:remaining_capacity).and_return(10)
       allow(threadpool).to receive(:post).and_raise(Concurrent::RejectedExecutionError)

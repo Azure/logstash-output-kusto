@@ -237,19 +237,19 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     private
     def upload_streaming(path, delete_on_success)
-      file_size = File.size(path)
-      if file_size <= 0
-        @logger.warn("File #{path} is an empty file and is not ingested.")
-        File.delete(path) if delete_on_success
-        return
-      end
-
-      source_id = source_id_for(path)
-      file_source_info =
-        Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, source_id)
       attempts = 0
 
       begin
+        file_size = File.size(path)
+        if file_size <= 0
+          @logger.warn("File #{path} is an empty file and is not ingested.")
+          File.delete(path) if delete_on_success
+          return
+        end
+
+        source_id = source_id_for(path)
+        file_source_info =
+          Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path, source_id)
         result = @kusto_client.ingestFromFile(file_source_info, @ingestion_properties)
         status = validate_streaming_result(result, file_size)
         if FINAL_STREAMING_STATUSES.include?(status)
