@@ -63,7 +63,7 @@ class StreamingE2E
     @query_client.executeMgmt(
       @database,
       ".alter table #{@table} policy ingestionbatching " \
-      "@'{\"MaximumBatchingTimeSpan\":\"00:00:01\", \"MaximumNumberOfItems\":1, " \
+      "@'{\"MaximumBatchingTimeSpan\":\"00:00:10\", \"MaximumNumberOfItems\":1, " \
       "\"MaximumRawDataSizeMB\":100}'"
     )
     sleep 5
