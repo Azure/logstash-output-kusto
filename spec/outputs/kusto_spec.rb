@@ -20,6 +20,17 @@ describe LogStash::Outputs::Kusto do
   } }
 
   describe '#register' do
+    it 'defaults ingestion mode to queued' do
+      kusto = described_class.new(options)
+
+      expect(kusto.ingestion_mode).to eq('queued')
+    end
+
+    it 'requires the explicit streaming mode name' do
+      expect do
+        described_class.new(options.merge('ingestion_mode' => 'managed_streaming'))
+      end.to raise_error(LogStash::ConfigurationError)
+    end
 
     it 'doesnt allow the path to start with a dynamic string' do
       kusto = described_class.new(options.merge( {'path' => '/%{name}'} ))
@@ -59,12 +70,12 @@ describe LogStash::Outputs::Kusto do
       expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /path/)
     end
 
-    it 'does not require path for managed streaming ingestion' do
+    it 'does not require path for streaming ingestion' do
       Dir.mktmpdir('kusto-streaming') do |directory|
         streaming_options = options
           .reject { |key, _| key == 'path' }
           .merge(
-            'ingestion_mode' => 'managed_streaming',
+            'ingestion_mode' => 'streaming',
             'streaming_temp_directory' => directory
           )
         ingestor = instance_double(LogStash::Outputs::Kusto::Ingestor, stop: nil)
@@ -84,7 +95,7 @@ describe LogStash::Outputs::Kusto do
         allow(LogStash::Outputs::Kusto::Ingestor).to receive(:new).and_return(ingestor)
         kusto = described_class.new(
           options.reject { |key, _| key == 'path' }.merge(
-            'ingestion_mode' => 'managed_streaming'
+            'ingestion_mode' => 'streaming'
           )
         )
 
@@ -97,14 +108,14 @@ describe LogStash::Outputs::Kusto do
       end
     end
 
-    it 'rejects unsafe managed streaming file and directory modes' do
+    it 'rejects unsafe streaming file and directory modes' do
       {
         'dir_mode' => 0o777,
         'file_mode' => 0o666
       }.each do |setting, mode|
         Dir.mktmpdir('kusto-unsafe-mode') do |directory|
           kusto = described_class.new(options.merge(
-            'ingestion_mode' => 'managed_streaming',
+            'ingestion_mode' => 'streaming',
             'streaming_temp_directory' => directory,
             setting => mode
           ))
@@ -114,7 +125,7 @@ describe LogStash::Outputs::Kusto do
       end
     end
 
-    it 'rejects a symlink as the managed streaming spool directory' do
+    it 'rejects a symlink as the streaming spool directory' do
       skip 'Windows symlink creation requires elevated privileges' if Gem.win_platform?
 
       Dir.mktmpdir('kusto-streaming-symlink') do |directory|
@@ -123,7 +134,7 @@ describe LogStash::Outputs::Kusto do
         Dir.mkdir(target)
         File.symlink(target, link)
         kusto = described_class.new(options.merge(
-          'ingestion_mode' => 'managed_streaming',
+          'ingestion_mode' => 'streaming',
           'streaming_temp_directory' => link
         ))
 
@@ -140,7 +151,7 @@ describe LogStash::Outputs::Kusto do
         File.chmod(0o777, unsafe_parent)
         spool = File.join(unsafe_parent, 'spool')
         kusto = described_class.new(options.merge(
-          'ingestion_mode' => 'managed_streaming',
+          'ingestion_mode' => 'streaming',
           'streaming_temp_directory' => spool
         ))
 
@@ -159,7 +170,7 @@ describe LogStash::Outputs::Kusto do
       expect { output.send(:fsync_directory, 'C:/spool') }.not_to raise_error
     end
 
-    it 'recovers managed streaming spool files after restart' do
+    it 'recovers streaming spool files after restart' do
       Dir.mktmpdir('kusto-streaming-recovery') do |directory|
         batch_directory = File.join(directory, 'batch-existing.ready')
         FileUtils.mkdir_p(batch_directory)
@@ -175,7 +186,7 @@ describe LogStash::Outputs::Kusto do
         )
         allow(LogStash::Outputs::Kusto::Ingestor).to receive(:new).and_return(ingestor)
         kusto = described_class.new(options.merge(
-          'ingestion_mode' => 'managed_streaming',
+          'ingestion_mode' => 'streaming',
           'streaming_temp_directory' => directory
         ))
 
@@ -185,7 +196,7 @@ describe LogStash::Outputs::Kusto do
       end
     end
 
-    it 'discards incomplete managed streaming batches during recovery' do
+    it 'discards incomplete streaming batches during recovery' do
       Dir.mktmpdir('kusto-streaming-recovery') do |directory|
         incomplete_directory = File.join(directory, '.batch-incomplete.tmp')
         FileUtils.mkdir_p(incomplete_directory)
@@ -197,7 +208,7 @@ describe LogStash::Outputs::Kusto do
         )
         allow(LogStash::Outputs::Kusto::Ingestor).to receive(:new).and_return(ingestor)
         kusto = described_class.new(options.merge(
-          'ingestion_mode' => 'managed_streaming',
+          'ingestion_mode' => 'streaming',
           'streaming_temp_directory' => directory
         ))
 
@@ -209,16 +220,16 @@ describe LogStash::Outputs::Kusto do
       end
     end
 
-    it 'prevents multiple outputs from sharing one managed streaming spool' do
+    it 'prevents multiple outputs from sharing one streaming spool' do
       Dir.mktmpdir('kusto-streaming-lock') do |directory|
         ingestor = instance_double(LogStash::Outputs::Kusto::Ingestor, stop: nil)
         allow(LogStash::Outputs::Kusto::Ingestor).to receive(:new).and_return(ingestor)
         first = described_class.new(options.merge(
-          'ingestion_mode' => 'managed_streaming',
+          'ingestion_mode' => 'streaming',
           'streaming_temp_directory' => directory
         ))
         second = described_class.new(options.merge(
-          'ingestion_mode' => 'managed_streaming',
+          'ingestion_mode' => 'streaming',
           'streaming_temp_directory' => directory
         ))
 
@@ -228,7 +239,7 @@ describe LogStash::Outputs::Kusto do
       end
     end
 
-    it 'rejects unsafe files during managed streaming recovery' do
+    it 'rejects unsafe files during streaming recovery' do
       skip 'Windows symlink creation requires elevated privileges' if Gem.win_platform?
 
       Dir.mktmpdir('kusto-streaming-recovery') do |directory|
@@ -244,7 +255,7 @@ describe LogStash::Outputs::Kusto do
         ingestor = instance_double(LogStash::Outputs::Kusto::Ingestor, stop: nil)
         allow(LogStash::Outputs::Kusto::Ingestor).to receive(:new).and_return(ingestor)
         kusto = described_class.new(options.merge(
-          'ingestion_mode' => 'managed_streaming',
+          'ingestion_mode' => 'streaming',
           'streaming_temp_directory' => directory
         ))
 
@@ -254,7 +265,7 @@ describe LogStash::Outputs::Kusto do
 
     it 'rejects a non-positive streaming request size' do
       kusto = described_class.new(options.merge(
-        'ingestion_mode' => 'managed_streaming',
+        'ingestion_mode' => 'streaming',
         'streaming_max_request_bytes' => 0
       ))
 
@@ -268,7 +279,7 @@ describe LogStash::Outputs::Kusto do
     }.each do |setting, value|
       it "rejects invalid #{setting}" do
         kusto = described_class.new(options.merge(
-          'ingestion_mode' => 'managed_streaming',
+          'ingestion_mode' => 'streaming',
           setting => value
         ))
 
@@ -278,11 +289,11 @@ describe LogStash::Outputs::Kusto do
 
   end
 
-  describe '#multi_receive_encoded with managed streaming' do
+  describe '#multi_receive_encoded with streaming' do
     let(:streaming_temp_directory) { Dir.mktmpdir('kusto-streaming-spec') }
     let(:streaming_options) do
       options.reject { |key, _| key == 'path' }.merge(
-        'ingestion_mode' => 'managed_streaming',
+        'ingestion_mode' => 'streaming',
         'streaming_max_request_bytes' => 10,
         'streaming_temp_directory' => streaming_temp_directory,
         'delete_temp_files' => false

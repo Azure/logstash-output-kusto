@@ -88,16 +88,16 @@ class StreamingE2E
     )
     policy_fallback = event(
       small_events.length + 1,
-      'managed_policy_fallback',
+      'streaming_policy_fallback',
       'p' * POLICY_FALLBACK_PAYLOAD_BYTES
     )
-    managed_fallback = event(
+    hard_fallback = event(
       small_events.length + 2,
-      'managed_hard_fallback',
+      'streaming_hard_fallback',
       'l' * FALLBACK_PAYLOAD_BYTES
     )
 
-    small_events + [above_connector_limit, policy_fallback, managed_fallback]
+    small_events + [above_connector_limit, policy_fallback, hard_fallback]
   end
 
   def event(sequence, scenario, payload)
@@ -166,7 +166,7 @@ class StreamingE2E
       }
       output {
         kusto {
-          ingestion_mode => "managed_streaming"
+          ingestion_mode => "streaming"
           streaming_max_request_bytes => #{REQUEST_LIMIT}
           streaming_max_retry_attempts => 2
           streaming_retry_backoff_seconds => 1
@@ -181,8 +181,8 @@ class StreamingE2E
   end
 
   def assert_request_outcomes(output)
-    unless output.include?('Managed streaming request accepted.')
-      raise "No managed streaming success was logged\n#{output}"
+    unless output.include?('Streaming request accepted.')
+      raise "No streaming success was logged\n#{output}"
     end
 
     unless output.match?(/status(?:=>|=)"?Succeeded"?/)
@@ -190,11 +190,11 @@ class StreamingE2E
     end
 
     unless output.match?(/status(?:=>|=)"?Queued"?/)
-      raise "The oversized event did not exercise managed queued fallback\n#{output}"
+      raise "The oversized event did not exercise queued fallback\n#{output}"
     end
     queued_count = output.scan(/status(?:=>|=)"?Queued"?/).length
     if queued_count < 2
-      raise "Both managed streaming fallback boundaries were not exercised\n#{output}"
+      raise "Both streaming fallback boundaries were not exercised\n#{output}"
     end
 
     request_sizes = output.scan(/bytes(?:=>|=)(\d+)/).flatten.map(&:to_i)
@@ -202,7 +202,7 @@ class StreamingE2E
       raise "The single event above the connector threshold was not sent intact: #{request_sizes}"
     end
     unless request_sizes.any? { |bytes| bytes > 10 * 1024 * 1024 }
-      raise "The managed fallback request did not exceed the SDK hard streaming limit: #{request_sizes}"
+      raise "The fallback request did not exceed the SDK hard streaming limit: #{request_sizes}"
     end
     unless request_sizes.any? { |bytes| bytes > 6 * 1024 * 1024 && bytes <= 10 * 1024 * 1024 }
       raise "The SDK JSON size-estimation fallback was not exercised: #{request_sizes}"

@@ -87,7 +87,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
 
   end
 
-  describe 'vendored managed streaming fallback policy' do
+  describe 'vendored streaming fallback policy' do
     it 'queues uncompressed JSON above the SDK estimate and hard size boundaries' do
       policy = Java::com.microsoft.azure.kusto.ingest.ManagedStreamingQueuingPolicy::Default
       json_format =
@@ -102,8 +102,8 @@ describe LogStash::Outputs::Kusto::Ingestor do
     end
   end
 
-  describe '#upload with managed streaming' do
-    let(:streaming_client) { double('managed streaming client') }
+  describe '#upload with streaming' do
+    let(:streaming_client) { double('streaming client') }
     let(:threadpool) { double('threadpool', shutdown: nil, wait_for_termination: nil) }
     let(:sleeper) { double('sleeper', call: nil) }
     let(:streaming_metric) { double('streaming metric', increment: nil) }
@@ -124,7 +124,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
         proxy_protocol,
         logger,
         threadpool,
-        'managed_streaming',
+        'streaming',
         2,
         0.01,
         streaming_client,
@@ -176,7 +176,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
         end
         expect(logger).to have_received(:warn)
         expect(logger).to have_received(:error).with(
-          'Managed streaming request was quarantined after a final non-success status.',
+          'Streaming request was quarantined after a final non-success status.',
           hash_including(status: status)
         )
         expect(streaming_client).to have_received(:ingestFromFile).once
@@ -357,7 +357,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
       expect(streaming_metric).to have_received(:increment).with(:failures)
     end
 
-    it 'ingests synchronously when the managed executor rejects a committed spool file' do
+    it 'ingests synchronously when the streaming executor rejects a committed spool file' do
       allow(threadpool).to receive(:remaining_capacity).and_return(10)
       allow(threadpool).to receive(:post).and_raise(Concurrent::RejectedExecutionError)
       allow(streaming_client).to receive(:ingestFromFile).and_return(ingestion_result('Succeeded'))
@@ -371,7 +371,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
         hash_including(path: kind_of(String))
       )
       expect(logger).to have_received(:warn).with(
-        'Managed streaming executor rejected a request; ingesting synchronously for backpressure.',
+        'Streaming executor rejected a request; ingesting synchronously for backpressure.',
         hash_including(path: kind_of(String))
       )
     end
@@ -406,7 +406,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
       end.to raise_error(Concurrent::RejectedExecutionError)
     end
 
-    it 'drains the worker pool and closes the managed streaming client on stop' do
+    it 'drains the worker pool and closes the streaming client on stop' do
       allow(streaming_client).to receive(:close)
 
       ingestor.stop
@@ -441,7 +441,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
         proxy_protocol,
         logger,
         threadpool,
-        'managed_streaming',
+        'streaming',
         2,
         30,
         streaming_client,
@@ -468,8 +468,8 @@ describe LogStash::Outputs::Kusto::Ingestor do
     end
   end
 
-  describe 'managed streaming client creation' do
-    it 'uses the managed streaming factory and lets the SDK derive both endpoints' do
+  describe 'streaming client creation' do
+    it 'uses the SDK streaming factory and lets the SDK derive both endpoints' do
       factory = Java::com.microsoft.azure.kusto.ingest.IngestClientFactory
       client = double('managed client', close: nil)
       allow(factory).to receive(:createManagedStreamingIngestClient).and_return(client)
@@ -491,7 +491,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
         proxy_protocol,
         logger,
         threadpool,
-        'managed_streaming'
+        'streaming'
       )
       ingestor.stop
 
@@ -520,7 +520,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
         proxy_protocol,
         logger,
         threadpool,
-        'managed_streaming'
+        'streaming'
       )
       ingestor.stop
 

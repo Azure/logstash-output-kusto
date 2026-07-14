@@ -111,23 +111,23 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # starts processing them in the main thread (not healthy)
   config :upload_queue_size, validate: :number, default: 30
 
-  # Queued ingestion is optimized for throughput. Managed streaming ingestion is
+  # Queued ingestion is optimized for throughput. Streaming ingestion is
   # optimized for low latency and automatically falls back to queued ingestion.
-  config :ingestion_mode, validate: %w[queued managed_streaming], default: 'queued'
+  config :ingestion_mode, validate: %w[queued streaming], default: 'queued'
 
-  # Maximum encoded bytes in one managed streaming request. Events are never split.
+  # Maximum encoded bytes in one streaming request. Events are never split.
   config :streaming_max_request_bytes, validate: :number, default: 1_048_576
 
-  # Additional retries for transient errors that escape the managed streaming client.
+  # Additional retries for transient errors that escape the streaming client.
   config :streaming_max_retry_attempts, validate: :number, default: 2
 
-  # Initial retry delay. Subsequent managed streaming retries use exponential backoff.
+  # Initial retry delay. Subsequent streaming retries use exponential backoff.
   config :streaming_retry_backoff_seconds, validate: :number, default: 1
 
   # Limit concurrent requests issued by shared Logstash pipeline workers.
   config :streaming_concurrent_requests, validate: :number, default: 4
 
-  # Local durable spool for managed streaming requests. A stable default is
+  # Local durable spool for streaming requests. A stable default is
   # derived from the Kusto destination so files can be recovered after restart.
   config :streaming_temp_directory, validate: :string, required: false
 
@@ -193,7 +193,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       validate_streaming_modes
       prepare_streaming_spool_directory
       acquire_streaming_spool_lock
-      @streaming_metric = metric.namespace(:managed_streaming)
+      @streaming_metric = metric.namespace(:streaming)
       %i[
         requests
         events
@@ -237,7 +237,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         streaming_retry_backoff_seconds.to_f,
         nil,
         nil,
-        ingestion_mode == 'managed_streaming' ? @streaming_metric : nil
+        ingestion_mode == 'streaming' ? @streaming_metric : nil
       )
 
       if recovery
@@ -287,20 +287,20 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   def validate_streaming_modes
     if (@streaming_dir_mode & 0o022).positive?
       raise LogStash::ConfigurationError,
-            'dir_mode must not allow group or world writes for managed streaming.'
+            'dir_mode must not allow group or world writes for streaming.'
     end
 
     return unless (@streaming_file_mode & 0o022).positive?
 
     raise LogStash::ConfigurationError,
-          'file_mode must not allow group or world writes for managed streaming.'
+          'file_mode must not allow group or world writes for streaming.'
   end
 
   private
   def prepare_streaming_spool_directory
     if File.symlink?(@streaming_temp_directory)
       raise LogStash::ConfigurationError,
-            "Managed streaming spool directory must not be a symlink: #{@streaming_temp_directory}"
+            "Streaming spool directory must not be a symlink: #{@streaming_temp_directory}"
     end
 
     FileUtils.mkdir_p(@streaming_temp_directory, mode: @streaming_dir_mode)
@@ -315,13 +315,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     stat = File.lstat(@streaming_temp_directory)
     unless stat.directory? && !stat.symlink?
       raise LogStash::ConfigurationError,
-            "Managed streaming spool path is not a directory: #{@streaming_temp_directory}"
+            "Streaming spool path is not a directory: #{@streaming_temp_directory}"
     end
 
     return if Gem.win_platform? || stat.uid == Process.uid
 
     raise LogStash::ConfigurationError,
-          "Managed streaming spool directory is not owned by the Logstash user: #{@streaming_temp_directory}"
+          "Streaming spool directory is not owned by the Logstash user: #{@streaming_temp_directory}"
   end
 
   private
@@ -335,11 +335,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
       unless owned_by_trusted_user || ((mode & 0o200).zero? && (mode & 0o022).zero?)
         raise LogStash::ConfigurationError,
-              "Managed streaming spool parent is owned by an untrusted user: #{current}"
+              "Streaming spool parent is owned by an untrusted user: #{current}"
       end
       if (mode & 0o022).positive? && !sticky_shared_directory
         raise LogStash::ConfigurationError,
-              "Managed streaming spool parent is writable by untrusted users: #{current}"
+              "Streaming spool parent is writable by untrusted users: #{current}"
       end
 
       parent = File.dirname(current)
@@ -375,7 +375,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   public
   def multi_receive_encoded(events_and_encoded)
-    if ingestion_mode == 'managed_streaming'
+    if ingestion_mode == 'streaming'
       streaming_files = write_streaming_chunks(
         @streaming_chunker.chunks(events_and_encoded.map(&:last))
       )
@@ -653,13 +653,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   private
   def recover_streaming_files
     Dir.glob(File.join(@streaming_temp_directory, '.batch-*.tmp')).each do |directory|
-      @logger.warn('Discarding incomplete managed streaming spool batch.', path: directory)
+      @logger.warn('Discarding incomplete streaming spool batch.', path: directory)
       FileUtils.rm_rf(directory)
     end
 
     Dir.glob(File.join(@streaming_temp_directory, 'batch-*.ready', 'stream-*.json')).sort.each do |file|
       validate_recovered_streaming_file(file)
-      @logger.info('Recovering managed streaming spool file.', path: file)
+      @logger.info('Recovering streaming spool file.', path: file)
       @ingestor.upload_async(file, delete_temp_files)
     end
   end
@@ -676,7 +676,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     return if safe_batch && safe_file
 
     raise LogStash::ConfigurationError,
-          "Managed streaming recovery rejected an unsafe spool file: #{file}"
+          "Streaming recovery rejected an unsafe spool file: #{file}"
   end
 
   private
@@ -704,7 +704,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     lock_path = File.join(@streaming_temp_directory, '.lock')
     if File.symlink?(lock_path)
       raise LogStash::ConfigurationError,
-            "Managed streaming spool lock must not be a symlink: #{lock_path}"
+            "Streaming spool lock must not be a symlink: #{lock_path}"
     end
 
     flags = File::RDWR | File::CREAT
@@ -714,7 +714,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     unless lock_file.flock(File::LOCK_EX | File::LOCK_NB)
       lock_file.close
       raise LogStash::ConfigurationError,
-            "Managed streaming spool directory is already in use: #{@streaming_temp_directory}"
+            "Streaming spool directory is already in use: #{@streaming_temp_directory}"
     end
 
     @streaming_lock_file = lock_file

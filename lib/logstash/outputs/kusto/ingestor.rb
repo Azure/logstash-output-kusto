@@ -89,7 +89,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                                    http_kusto.HttpClientProperties.builder().proxy(proxy).build()
                                  end
 
-        if @ingestion_mode == 'managed_streaming'
+        if @ingestion_mode == 'streaming'
           if http_client_properties
             kusto_java.ingest.IngestClientFactory.createManagedStreamingIngestClient(
               kusto_connection_string,
@@ -174,11 +174,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         path: path,
         backtrace: e.backtrace
       )
-      if @ingestion_mode == 'managed_streaming'
+      if @ingestion_mode == 'streaming'
         return nil if stopping?
 
         @logger.warn(
-          'Managed streaming executor rejected a request; ingesting synchronously for backpressure.',
+          'Streaming executor rejected a request; ingesting synchronously for backpressure.',
           path: path
         )
         return upload(path, delete_on_success)
@@ -188,8 +188,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
 
     def upload(path, delete_on_success)
-      return upload_managed_streaming(path, delete_on_success) if
-        @ingestion_mode == 'managed_streaming'
+      return upload_streaming(path, delete_on_success) if
+        @ingestion_mode == 'streaming'
 
       upload_queued(path, delete_on_success)
     end
@@ -236,7 +236,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
 
     private
-    def upload_managed_streaming(path, delete_on_success)
+    def upload_streaming(path, delete_on_success)
       file_size = File.size(path)
       if file_size <= 0
         @logger.warn("File #{path} is an empty file and is not ingested.")
@@ -260,10 +260,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         increment_streaming_status(status)
         status
       rescue Java::ComMicrosoftAzureKustoIngestExceptions::IngestionClientException => e
-        retain_failed_streaming_file(path, e, 'Managed streaming request failed permanently.')
+        retain_failed_streaming_file(path, e, 'Streaming request failed permanently.')
       rescue Java::ComMicrosoftAzureKustoIngestExceptions::IngestionServiceException => e
         if permanent_service_error?(e)
-          retain_failed_streaming_file(path, e, 'Managed streaming request failed permanently.')
+          retain_failed_streaming_file(path, e, 'Streaming request failed permanently.')
           return
         end
 
@@ -271,7 +271,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
           delay = @streaming_retry_backoff_seconds * (2**attempts)
           @streaming_metric.increment(:retry_cycles) unless @streaming_metric.nil?
           @logger.warn(
-            'Managed streaming retry cycle was exhausted; applying backpressure before retrying.',
+            'Streaming retry cycle was exhausted; applying backpressure before retrying.',
             path: path,
             retry_delay_seconds: delay,
             exception: e.class,
@@ -286,7 +286,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         delay = @streaming_retry_backoff_seconds * (2**attempts)
         attempts += 1
         @logger.warn(
-          'Managed streaming request failed transiently, retrying.',
+          'Streaming request failed transiently, retrying.',
           attempt: attempts,
           max_retry_attempts: @streaming_max_retry_attempts,
           retry_delay_seconds: delay,
@@ -297,7 +297,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
         retry
       rescue StreamingIngestionError => e
-        retain_failed_streaming_file(path, e, 'Managed streaming returned an unsuccessful status.')
+        retain_failed_streaming_file(path, e, 'Streaming returned an unsuccessful status.')
       rescue Errno::ENOENT, Java::JavaNioFile::NoSuchFileException => e
         @logger.error(
           "File doesn't exist! Unrecoverable error.",
@@ -307,7 +307,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
           backtrace: e.backtrace
         )
       rescue => e
-        retain_failed_streaming_file(path, e, 'Managed streaming request failed unexpectedly.')
+        retain_failed_streaming_file(path, e, 'Streaming request failed unexpectedly.')
       end
     end
 
@@ -315,7 +315,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     def validate_streaming_result(result, file_size)
       statuses = result.getIngestionStatusCollection
       if statuses.nil? || statuses.empty?
-        raise StreamingIngestionError, 'Managed streaming ingestion returned no status.'
+        raise StreamingIngestionError, 'Streaming ingestion returned no status.'
       end
 
       ingestion_statuses = statuses.to_a
@@ -323,7 +323,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       unique_statuses = status_names.uniq
       if unique_statuses.length > 1
         @logger.warn(
-          'Managed streaming request returned mixed statuses and will be quarantined.',
+          'Streaming request returned mixed statuses and will be quarantined.',
           statuses: unique_statuses,
           bytes: file_size
         )
@@ -334,7 +334,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       status = unique_statuses.first
       if FINAL_STREAMING_STATUSES.include?(status)
         @logger.warn(
-          'Managed streaming request reached a final non-success status and will not be retried.',
+          'Streaming request reached a final non-success status and will not be retried.',
           status: status,
           details: ingestion_status.respond_to?(:details) ? ingestion_status.details : nil,
           error_code: ingestion_status.respond_to?(:errorCode) ? ingestion_status.errorCode : nil,
@@ -346,11 +346,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       unless ACCEPTED_STREAMING_STATUSES.include?(status)
         details = ingestion_status.respond_to?(:details) ? ingestion_status.details : nil
         raise StreamingIngestionError,
-              "Managed streaming ingestion returned #{status}. #{details}".strip
+              "Streaming ingestion returned #{status}. #{details}".strip
       end
 
       @logger.debug(
-        "Managed streaming request accepted. status=#{status} bytes=#{file_size}",
+        "Streaming request accepted. status=#{status} bytes=#{file_size}",
         status: status,
         bytes: file_size,
         database: @ingestion_properties.getDatabaseName,
@@ -423,7 +423,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       File.rename(path, quarantine_path)
       fsync_directory(File.dirname(path))
       @logger.error(
-        'Managed streaming request was quarantined after a final non-success status.',
+        'Streaming request was quarantined after a final non-success status.',
         status: status,
         path: quarantine_path
       )

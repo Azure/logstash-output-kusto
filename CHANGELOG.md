@@ -2,9 +2,9 @@
 
 # Unreleased
 
-- Add opt-in managed streaming ingestion with byte-bounded requests, automatic SDK queued fallback, durable restart recovery, bounded transient retries, and streaming metrics.
+- Add opt-in streaming ingestion with byte-bounded requests, automatic SDK queued fallback, durable restart recovery, bounded transient retries, and streaming metrics.
 - Preserve oversized single events instead of splitting them.
-- Secure managed-streaming spool ownership and permissions, reject unsafe recovery paths, support Windows filesystems, and apply bounded worker backpressure during outages.
+- Secure streaming spool ownership and permissions, reject unsafe recovery paths, support Windows filesystems, and apply bounded worker backpressure during outages.
 
 # 2.0.3
 
