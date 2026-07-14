@@ -1,5 +1,9 @@
 # Changelog
 
+# Unreleased
+
+- Add opt-in managed streaming ingestion with byte-bounded requests, automatic SDK queued fallback, durable restart recovery, bounded transient retries, and streaming metrics.
+- Preserve oversized single events instead of splitting them.
 
 # 2.0.3
 

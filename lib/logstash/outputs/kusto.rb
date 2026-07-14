@@ -6,6 +6,7 @@ require 'logstash/errors'
 
 require 'logstash/outputs/kusto/ingestor'
 require 'logstash/outputs/kusto/interval'
+require 'logstash/outputs/kusto/streaming_chunker'
 
 ##
 # This plugin sends messages to Azure Kusto in batches.
@@ -28,7 +29,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   #
   # If you use an absolute path you cannot start with a dynamic string.
   # E.g: `/%{myfield}/`, `/test-%{myfield}/` are not valid paths
-  config :path, validate: :string, required: true
+  config :path, validate: :string, required: false
 
   # Flush interval (in seconds) for flushing writes to files.
   # 0 will flush on every message. Increase this value to recude IO calls but keep 
@@ -110,6 +111,26 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # starts processing them in the main thread (not healthy)
   config :upload_queue_size, validate: :number, default: 30
 
+  # Queued ingestion is optimized for throughput. Managed streaming ingestion is
+  # optimized for low latency and automatically falls back to queued ingestion.
+  config :ingestion_mode, validate: %w[queued managed_streaming], default: 'queued'
+
+  # Maximum encoded bytes in one managed streaming request. Events are never split.
+  config :streaming_max_request_bytes, validate: :number, default: 1_048_576
+
+  # Additional retries for transient errors that escape the managed streaming client.
+  config :streaming_max_retry_attempts, validate: :number, default: 2
+
+  # Initial retry delay. Subsequent managed streaming retries use exponential backoff.
+  config :streaming_retry_backoff_seconds, validate: :number, default: 1
+
+  # Limit concurrent requests issued by shared Logstash pipeline workers.
+  config :streaming_concurrent_requests, validate: :number, default: 4
+
+  # Local durable spool for managed streaming requests. A stable default is
+  # derived from the Kusto destination so files can be recovered after restart.
+  config :streaming_temp_directory, validate: :string, required: false
+
   # Host of the proxy , is an optional field. Can connect directly
   config :proxy_host, validate: :string, required: false
 
@@ -132,43 +153,129 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       final_mapping = mapping
     end
 
-    # TODO: add id to the tmp path to support multiple outputs of the same type. 
-    # TODO: Fix final_mapping when dynamic routing is supported
-    # add fields from the meta that will note the destination of the events in the file
-    @path = if dynamic_event_routing
-              File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][final_mapping]}")
-            else
-              File.expand_path("#{path}.#{database}.#{table}")
-            end
+    if ingestion_mode == 'queued'
+      raise LogStash::ConfigurationError, 'path is required for queued ingestion.' if path.nil? || path.empty?
 
-    validate_path
+      # TODO: add id to the tmp path to support multiple outputs of the same type.
+      # TODO: Fix final_mapping when dynamic routing is supported
+      @path = if dynamic_event_routing
+                File.expand_path("#{path}.%{[@metadata][database]}.%{[@metadata][table]}.%{[@metadata][final_mapping]}")
+              else
+                File.expand_path("#{path}.#{database}.#{table}")
+              end
 
-    @file_root = if path_with_field_ref?
-                   extract_file_root
-                 else
-                   File.dirname(path)
-                 end
-    @failure_path = File.join(@file_root, @filename_failure)
+      validate_path
 
-    executor = Concurrent::ThreadPoolExecutor.new(min_threads: 1,
-                                                  max_threads: upload_concurrent_count,
-                                                  max_queue: upload_queue_size,
-                                                  fallback_policy: :caller_runs)
-
-    @ingestor = Ingestor.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cli_auth, database, table, final_mapping, delete_temp_files, proxy_host, proxy_port,proxy_protocol, @logger, executor)
-
-    # send existing files
-    recover_past_files if recovery
-
-    @last_stale_cleanup_cycle = Time.now
-
-    @flush_interval = @flush_interval.to_i
-    if @flush_interval > 0
-      @flusher = Interval.start(@flush_interval, -> { flush_pending_files })
+      @file_root = if path_with_field_ref?
+                     extract_file_root
+                   else
+                     File.dirname(path)
+                   end
+      @failure_path = File.join(@file_root, @filename_failure)
+    else
+      validate_streaming_config
+      @streaming_chunker = StreamingChunker.new(streaming_max_request_bytes.to_i)
+      require 'digest'
+      require 'tmpdir'
+      destination_id = Digest::SHA256.hexdigest(
+        [ingest_url, database, table, final_mapping].join("\0")
+      )[0, 20]
+      @streaming_temp_directory = File.expand_path(
+        streaming_temp_directory ||
+        File.join(Dir.tmpdir, 'logstash-output-kusto', destination_id)
+      )
+      if @dir_mode != -1
+        FileUtils.mkdir_p(@streaming_temp_directory, mode: @dir_mode)
+      else
+        FileUtils.mkdir_p(@streaming_temp_directory)
+      end
+      acquire_streaming_spool_lock
+      @streaming_metric = metric.namespace(:managed_streaming)
+      %i[
+        requests
+        events
+        bytes
+        streamed
+        queued_fallback
+        pending
+        final_non_success
+        oversized_events
+        failures
+      ].each { |counter| @streaming_metric.increment(counter, 0) }
     end
 
-    if (@stale_cleanup_type == 'interval') && (@stale_cleanup_interval > 0)
-      @cleaner = Interval.start(stale_cleanup_interval, -> { close_stale_files })
+    begin
+      executor = Concurrent::ThreadPoolExecutor.new(
+        min_threads: 1,
+        max_threads: ingestion_mode == 'queued' ? upload_concurrent_count : streaming_concurrent_requests,
+        max_queue: upload_queue_size,
+        fallback_policy: :caller_runs
+      )
+
+      @ingestor = Ingestor.new(
+        ingest_url,
+        app_id,
+        app_key,
+        app_tenant,
+        managed_identity,
+        cli_auth,
+        database,
+        table,
+        final_mapping,
+        delete_temp_files,
+        proxy_host,
+        proxy_port,
+        proxy_protocol,
+        @logger,
+        executor,
+        ingestion_mode,
+        streaming_max_retry_attempts.to_i,
+        streaming_retry_backoff_seconds.to_f,
+        nil,
+        nil,
+        ingestion_mode == 'managed_streaming' ? @streaming_metric : nil
+      )
+
+      if recovery
+        ingestion_mode == 'queued' ? recover_past_files : recover_streaming_files
+      end
+
+      @last_stale_cleanup_cycle = Time.now
+
+      @flush_interval = @flush_interval.to_i
+      if ingestion_mode == 'queued' && @flush_interval > 0
+        @flusher = Interval.start(@flush_interval, -> { flush_pending_files })
+      end
+
+      if ingestion_mode == 'queued' && (@stale_cleanup_type == 'interval') && (@stale_cleanup_interval > 0)
+        @cleaner = Interval.start(stale_cleanup_interval, -> { close_stale_files })
+      end
+    rescue
+      release_streaming_spool_lock
+      raise
+    end
+  end
+
+  private
+  def validate_streaming_config
+    if streaming_max_request_bytes.to_i <= 0
+      raise LogStash::ConfigurationError,
+            'streaming_max_request_bytes must be greater than zero.'
+    end
+
+    if streaming_max_retry_attempts.to_i < 0
+      raise LogStash::ConfigurationError,
+            'streaming_max_retry_attempts must be zero or greater.'
+    end
+
+    if streaming_retry_backoff_seconds.to_f <= 0
+      raise LogStash::ConfigurationError,
+            'streaming_retry_backoff_seconds must be greater than zero.'
+    end
+
+    if streaming_concurrent_requests.to_i <= 0
+      raise LogStash::ConfigurationError,
+            'streaming_concurrent_requests must be greater than zero.'
     end
   end
 
@@ -198,6 +305,16 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   public
   def multi_receive_encoded(events_and_encoded)
+    if ingestion_mode == 'managed_streaming'
+      streaming_files = write_streaming_chunks(
+        @streaming_chunker.chunks(events_and_encoded.map(&:last))
+      )
+      streaming_files.each do |file|
+        @ingestor.upload_async(file[:path], delete_temp_files)
+      end
+      return
+    end
+
     encoded_by_path = Hash.new { |h, k| h[k] = [] }
 
     events_and_encoded.each do |event, encoded|
@@ -220,22 +337,28 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   def close
     @flusher.stop unless @flusher.nil?
     @cleaner.stop unless @cleaner.nil?
-    @io_mutex.synchronize do
-      @logger.debug('Close: closing files')
+    if ingestion_mode == 'queued'
+      @io_mutex.synchronize do
+        @logger.debug('Close: closing files')
 
-      @files.each do |path, fd|
-        begin
-          fd.close
-          @logger.debug("Closed file #{path}", fd: fd)
+        @files.each do |path, fd|
+          begin
+            fd.close
+            @logger.debug("Closed file #{path}", fd: fd)
 
-          kusto_send_file(path)
-        rescue Exception => e
-          @logger.error('Exception while flushing and closing files.', exception: e)
+            kusto_send_file(path)
+          rescue Exception => e
+            @logger.error('Exception while flushing and closing files.', exception: e)
+          end
         end
       end
     end
 
-    @ingestor.stop unless @ingestor.nil?
+    begin
+      @ingestor.stop unless @ingestor.nil?
+    ensure
+      release_streaming_spool_lock
+    end
   end
 
   private
@@ -397,6 +520,109 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     rescue Errno::ENOENT => e
       @logger.warn('No such file or directory', exception: e.class, message: e.message, path: new_path, backtrace: e.backtrace)
     end
+  end
+
+  private
+  def write_streaming_chunks(chunks)
+    require 'securerandom'
+
+    return [] if chunks.empty?
+
+    batch_id = SecureRandom.uuid
+    temporary_directory = File.join(@streaming_temp_directory, ".batch-#{batch_id}.tmp")
+    ready_directory = File.join(@streaming_temp_directory, "batch-#{batch_id}.ready")
+    files = []
+    FileUtils.mkdir(temporary_directory, mode: @dir_mode == -1 ? 0o777 : @dir_mode)
+
+    chunks.each_with_index do |chunk, index|
+      encoded = chunk.join
+      source_id = SecureRandom.uuid
+      path = File.join(
+        temporary_directory,
+        format('stream-%06d-%s.json', index, source_id)
+      )
+      write_streaming_file(path, encoded)
+      files << { path: path, bytes: encoded.bytesize, events: chunk.length }
+    end
+    fsync_directory(temporary_directory)
+    File.rename(temporary_directory, ready_directory)
+    fsync_directory(@streaming_temp_directory)
+    files.each do |file|
+      file[:path] = File.join(ready_directory, File.basename(file[:path]))
+    end
+
+    files.each do |file|
+      @streaming_metric.increment(:requests)
+      @streaming_metric.increment(:events, file[:events])
+      @streaming_metric.increment(:bytes, file[:bytes])
+      @streaming_metric.increment(:oversized_events) if
+        file[:events] == 1 && file[:bytes] > streaming_max_request_bytes.to_i
+    end
+    files
+  rescue
+    FileUtils.rm_rf(temporary_directory) if temporary_directory
+    FileUtils.rm_rf(ready_directory) if ready_directory
+    @streaming_metric.increment(:failures)
+    raise
+  end
+
+  private
+  def write_streaming_file(path, encoded)
+    file = if @file_mode != -1
+             File.new(path, 'wb', @file_mode)
+           else
+             File.new(path, 'wb')
+           end
+    begin
+      file.write(encoded)
+      file.flush
+      file.fsync
+    ensure
+      file.close
+    end
+  end
+
+  private
+  def recover_streaming_files
+    Dir.glob(File.join(@streaming_temp_directory, '.batch-*.tmp')).each do |directory|
+      @logger.warn('Discarding incomplete managed streaming spool batch.', path: directory)
+      FileUtils.rm_rf(directory)
+    end
+
+    Dir.glob(File.join(@streaming_temp_directory, 'batch-*.ready', 'stream-*.json')).sort.each do |file|
+      @logger.info('Recovering managed streaming spool file.', path: file)
+      @ingestor.upload_async(file, delete_temp_files)
+    end
+  end
+
+  private
+  def fsync_directory(directory)
+    File.open(directory, File::RDONLY) { |file| file.fsync }
+  rescue Errno::EINVAL
+    @logger.debug('Directory fsync is not supported on this platform.', path: directory)
+  end
+
+  private
+  def acquire_streaming_spool_lock
+    lock_path = File.join(@streaming_temp_directory, '.lock')
+    mode = @file_mode == -1 ? 0o600 : @file_mode
+    lock_file = File.open(lock_path, File::RDWR | File::CREAT, mode)
+    unless lock_file.flock(File::LOCK_EX | File::LOCK_NB)
+      lock_file.close
+      raise LogStash::ConfigurationError,
+            "Managed streaming spool directory is already in use: #{@streaming_temp_directory}"
+    end
+
+    @streaming_lock_file = lock_file
+  end
+
+  private
+  def release_streaming_spool_lock
+    return if @streaming_lock_file.nil?
+
+    @streaming_lock_file.flock(File::LOCK_UN)
+    @streaming_lock_file.close
+    @streaming_lock_file = nil
   end
 end
 

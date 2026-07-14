@@ -52,11 +52,36 @@ output {
 ```
 More information about configuring Logstash can be found in the [logstash configuration guide](https://www.elastic.co/guide/en/logstash/current/configuration.html)
 
+### Managed streaming ingestion
+
+Queued ingestion remains the default and is recommended for high-throughput workloads. For lower ingestion latency, enable the Kusto Java SDK's managed streaming client:
+
+```ruby
+output {
+  kusto {
+    ingestion_mode => "managed_streaming"
+    streaming_max_request_bytes => 1048576
+    streaming_temp_directory => "/var/lib/logstash/kusto-streaming"
+    ingest_url => "https://ingest-<cluster-name>.kusto.windows.net/"
+    app_id => "<application id>"
+    app_key => "<application key/secret>"
+    app_tenant => "<tenant id>"
+    database => "<database name>"
+    table => "<target table>"
+    json_mapping => "<mapping name>"
+  }
+}
+```
+
+Managed streaming must be enabled on the target Kusto table. The connector groups encoded events into requests of at most 1 MiB by default, measured in bytes. It never splits one event: an event above the configured target is sent intact, and the managed Kusto client decides whether to stream it or fall back to queued ingestion.
+
+Before acknowledging a Logstash batch, the connector writes all requests into an atomic local spool batch. Accepted requests are removed, transiently failed requests remain for recovery after restart, and final non-success statuses are quarantined beside the spool file for investigation without replaying the entire request. Use persistent storage for `streaming_temp_directory`; its default under the operating system temporary directory does not survive every host or container replacement. A spool directory can be owned by only one active plugin instance.
+
 ### Available Configuration Keys
 
 | Parameter Name | Description | Notes |
 | --- | --- | --- |
-| **path** | The plugin writes events to temporary files before sending them to ADX. This parameter includes a path where files should be written and a time expression for file rotation to trigger an upload to the ADX service. The example above shows how to rotate the files every minute and check the Logstash docs for more information on time expressions. | Required
+| **path** | The plugin writes events to temporary files before sending them to ADX. This parameter includes a path where files should be written and a time expression for file rotation to trigger an upload to the ADX service. The example above shows how to rotate the files every minute and check the Logstash docs for more information on time expressions. | Required for queued ingestion |
 | **ingest_url** | The Kusto endpoint for ingestion-related communication. See it on the Azure Portal.| Required|
 | **app_id, app_key, app_tenant**| Credentials required to connect to the ADX service. Be sure to use an application with 'ingest' privileges. | Optional|
 | **managed_identity**| Managed Identity to authenticate. For user-based managed ID, use the Client ID GUID. For system-based, use the value `system`. The ID needs to have 'ingest' privileges on the cluster. | Optional|
@@ -69,6 +94,12 @@ More information about configuring Logstash can be found in the [logstash config
 | **proxy_host** | The proxy hostname for redirecting traffic to Kusto.| |
 | **proxy_port** | The proxy port for the proxy. Defaults to 80.| |
 | **proxy_protocol** | The proxy server protocol , is one of http or https.| |
+| **ingestion_mode** | `queued` for throughput-oriented ingestion or `managed_streaming` for low-latency ingestion with SDK-managed queued fallback. | Defaults to `queued` |
+| **streaming_max_request_bytes** | Target maximum encoded bytes per managed streaming request. A single event is never split. | Defaults to 1048576 |
+| **streaming_max_retry_attempts** | Additional retries for transient errors escaping the managed streaming SDK. | Defaults to 2 |
+| **streaming_retry_backoff_seconds** | Initial delay for connector retries; later retries use exponential backoff. | Defaults to 1 |
+| **streaming_concurrent_requests** | Maximum managed streaming upload worker count. | Defaults to 4 |
+| **streaming_temp_directory** | Durable local spool for managed streaming requests and restart recovery. Only one active output may use a directory. | Defaults to a destination-specific directory under the OS temporary directory |
 
 > Note : LS_JAVA_OPTS can be used to set proxy parameters as well (using export or SET options)
 
