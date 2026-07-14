@@ -34,7 +34,7 @@ class StreamingE2E
     assert_ingested_events(events)
   ensure
     drop_table if @query_client
-    @query_client&.close
+    @query_client.close if @query_client&.respond_to?(:close)
   end
 
   private
