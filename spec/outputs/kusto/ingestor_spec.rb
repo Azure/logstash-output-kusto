@@ -87,19 +87,26 @@ describe LogStash::Outputs::Kusto::Ingestor do
 
   end
 
+  describe 'vendored managed streaming fallback policy' do
+    it 'queues uncompressed JSON above the SDK estimate and hard size boundaries' do
+      policy = Java::com.microsoft.azure.kusto.ingest.ManagedStreamingQueuingPolicy::Default
+      json_format =
+        Java::com.microsoft.azure.kusto.ingest.IngestionProperties::DataFormat::JSON
+      six_mib = 6 * 1024 * 1024
+      ten_mib = 10 * 1024 * 1024
+
+      expect(policy.shouldUseQueuedIngestion(six_mib, false, json_format)).to be(false)
+      expect(policy.shouldUseQueuedIngestion(six_mib + 1, false, json_format)).to be(true)
+      expect(policy.shouldUseQueuedIngestion(ten_mib, true, json_format)).to be(true)
+      expect(policy.shouldUseQueuedIngestion(ten_mib + 1, false, json_format)).to be(true)
+    end
+  end
+
   describe '#upload with managed streaming' do
     let(:streaming_client) { double('managed streaming client') }
     let(:threadpool) { double('threadpool', shutdown: nil, wait_for_termination: nil) }
     let(:sleeper) { double('sleeper', call: nil) }
     let(:streaming_metric) { double('streaming metric', increment: nil) }
-    let(:scheduled_retries) { [] }
-    let(:scheduler) do
-      lambda do |delay, &task|
-        scheduled_task = double('scheduled task', complete?: false, cancel: nil)
-        scheduled_retries << { delay: delay, task: task, scheduled_task: scheduled_task }
-        scheduled_task
-      end
-    end
     let(:ingestor) do
       described_class.new(
         ingest_url,
@@ -122,8 +129,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
         0.01,
         streaming_client,
         sleeper,
-        streaming_metric,
-        scheduler
+        streaming_metric
       )
     end
 
@@ -194,6 +200,24 @@ describe LogStash::Outputs::Kusto::Ingestor do
       with_streaming_file do |path|
         expect(ingestor.upload(path, true)).to be_nil
         expect(File.exist?(path)).to be(true)
+      end
+    end
+
+    it 'quarantines a mixed status collection instead of trusting the first status' do
+      result = double(
+        'ingestion result',
+        getIngestionStatusCollection: [
+          double('succeeded status', status: 'Succeeded'),
+          double('failed status', status: 'Failed')
+        ]
+      )
+      allow(streaming_client).to receive(:ingestFromFile).and_return(result)
+
+      with_streaming_file do |path|
+        expect(ingestor.upload(path, true)).to eq('PartiallySucceeded')
+        quarantine_path = "#{path}.partiallysucceeded"
+        expect(File.exist?(quarantine_path)).to be(true)
+        File.delete(quarantine_path)
       end
     end
 
@@ -298,20 +322,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
       expect(sleeper).not_to have_received(:call)
     end
 
-    it 'retains the spool file after transient retry attempts are exhausted' do
-      transient_error =
-        Java::com.microsoft.azure.kusto.ingest.exceptions.IngestionServiceException.new('transient')
-      allow(streaming_client).to receive(:ingestFromFile).and_raise(transient_error)
-
-      with_streaming_file do |path|
-        expect(ingestor.upload(path, true)).to be_nil
-        expect(File.exist?(path)).to be(true)
-      end
-      expect(streaming_client).to have_received(:ingestFromFile).exactly(3).times
-      expect(scheduled_retries.map { |retry_item| retry_item[:delay] }).to eq([0.04])
-    end
-
-    it 'requeues an exhausted transient failure without changing its source id' do
+    it 'applies backpressure and starts another retry cycle after transient retries are exhausted' do
       transient_error =
         Java::com.microsoft.azure.kusto.ingest.exceptions.IngestionServiceException.new('transient')
       attempts = 0
@@ -323,18 +334,16 @@ describe LogStash::Outputs::Kusto::Ingestor do
 
         ingestion_result('Succeeded')
       end
-      allow(threadpool).to receive(:remaining_capacity).and_return(10)
-      allow(threadpool).to receive(:post).and_yield
 
       with_streaming_file do |path|
-        expect(ingestor.upload(path, true)).to be_nil
-        expect(File.exist?(path)).to be(true)
-
-        scheduled_retries.fetch(0).fetch(:task).call
-
+        expect(ingestor.upload(path, true)).to eq('Succeeded')
         expect(File.exist?(path)).to be(false)
       end
       expect(streaming_client).to have_received(:ingestFromFile).exactly(4).times
+      expect(sleeper).to have_received(:call).with(0.01).once
+      expect(sleeper).to have_received(:call).with(0.02).once
+      expect(sleeper).to have_received(:call).with(0.04).once
+      expect(streaming_metric).to have_received(:increment).with(:retry_cycles)
       expect(source_ids.uniq.length).to eq(1)
     end
 
@@ -348,22 +357,114 @@ describe LogStash::Outputs::Kusto::Ingestor do
       expect(streaming_metric).to have_received(:increment).with(:failures)
     end
 
+    it 'ingests synchronously when the managed executor rejects a committed spool file' do
+      allow(threadpool).to receive(:remaining_capacity).and_return(10)
+      allow(threadpool).to receive(:post).and_raise(Concurrent::RejectedExecutionError)
+      allow(streaming_client).to receive(:ingestFromFile).and_return(ingestion_result('Succeeded'))
+
+      with_streaming_file do |path|
+        expect(ingestor.upload_async(path, true)).to eq('Succeeded')
+        expect(File.exist?(path)).to be(false)
+      end
+      expect(logger).to have_received(:error).with(
+        'Failed to enqueue Kusto ingestion.',
+        hash_including(path: kind_of(String))
+      )
+      expect(logger).to have_received(:warn).with(
+        'Managed streaming executor rejected a request; ingesting synchronously for backpressure.',
+        hash_including(path: kind_of(String))
+      )
+    end
+
+    it 'preserves queued-mode enqueue failure behavior' do
+      allow(threadpool).to receive(:remaining_capacity).and_return(10)
+      allow(threadpool).to receive(:post).and_raise(Concurrent::RejectedExecutionError)
+      queued_ingestor = described_class.new(
+        ingest_url,
+        app_id,
+        app_key,
+        app_tenant,
+        managed_identity,
+        cliauth,
+        database,
+        table,
+        json_mapping,
+        delete_local,
+        proxy_host,
+        proxy_port,
+        proxy_protocol,
+        logger,
+        threadpool,
+        'queued',
+        2,
+        1,
+        streaming_client
+      )
+
+      expect do
+        queued_ingestor.upload_async('/queued/request.json', true)
+      end.to raise_error(Concurrent::RejectedExecutionError)
+    end
+
     it 'drains the worker pool and closes the managed streaming client on stop' do
       allow(streaming_client).to receive(:close)
-      scheduled_task = double('scheduled task', complete?: false, cancel: nil)
-      scheduled_retries << {
-        delay: 1,
-        task: -> {},
-        scheduled_task: scheduled_task
-      }
-      ingestor.instance_variable_get(:@scheduled_retries) << scheduled_task
 
       ingestor.stop
 
       expect(streaming_client).to have_received(:close)
-      expect(scheduled_task).to have_received(:cancel)
       expect(threadpool).to have_received(:shutdown)
       expect(threadpool).to have_received(:wait_for_termination).with(nil)
+    end
+
+    it 'interrupts an in-flight retry backoff during shutdown' do
+      transient_error =
+        Java::com.microsoft.azure.kusto.ingest.exceptions.IngestionServiceException.new('transient')
+      attempted = Queue.new
+      allow(streaming_client).to receive(:ingestFromFile) do
+        attempted << true
+        raise transient_error
+      end
+      allow(streaming_client).to receive(:close)
+      interruptible = described_class.new(
+        ingest_url,
+        app_id,
+        app_key,
+        app_tenant,
+        managed_identity,
+        cliauth,
+        database,
+        table,
+        json_mapping,
+        delete_local,
+        proxy_host,
+        proxy_port,
+        proxy_protocol,
+        logger,
+        threadpool,
+        'managed_streaming',
+        2,
+        30,
+        streaming_client,
+        nil,
+        streaming_metric
+      )
+
+      with_streaming_file do |path|
+        upload_thread = Thread.new { interruptible.upload(path, true) }
+        attempted.pop
+        interruptible.stop
+
+        expect(upload_thread.join(1)).to eq(upload_thread)
+        expect(File.exist?(path)).to be(true)
+      end
+    end
+
+    it 'skips completion directory fsync on Windows' do
+      allocated = described_class.allocate
+      allow(Gem).to receive(:win_platform?).and_return(true)
+      expect(File).not_to receive(:open)
+
+      expect { allocated.send(:fsync_directory, 'C:/spool') }.not_to raise_error
     end
   end
 

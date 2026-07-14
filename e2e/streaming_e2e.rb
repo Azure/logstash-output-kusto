@@ -8,6 +8,7 @@ require 'timeout'
 
 class StreamingE2E
   REQUEST_LIMIT = 1_048_576
+  POLICY_FALLBACK_PAYLOAD_BYTES = 7 * 1024 * 1024
   FALLBACK_PAYLOAD_BYTES = 11 * 1024 * 1024
   PROCESS_TIMEOUT_SECONDS = 240
   INGESTION_TIMEOUT_SECONDS = 600
@@ -85,13 +86,18 @@ class StreamingE2E
       'single_above_connector_limit',
       'm' * (2 * 1024 * 1024)
     )
-    managed_fallback = event(
+    policy_fallback = event(
       small_events.length + 1,
-      'managed_fallback',
+      'managed_policy_fallback',
+      'p' * POLICY_FALLBACK_PAYLOAD_BYTES
+    )
+    managed_fallback = event(
+      small_events.length + 2,
+      'managed_hard_fallback',
       'l' * FALLBACK_PAYLOAD_BYTES
     )
 
-    small_events + [above_connector_limit, managed_fallback]
+    small_events + [above_connector_limit, policy_fallback, managed_fallback]
   end
 
   def event(sequence, scenario, payload)
@@ -186,6 +192,10 @@ class StreamingE2E
     unless output.match?(/status(?:=>|=)"?Queued"?/)
       raise "The oversized event did not exercise managed queued fallback\n#{output}"
     end
+    queued_count = output.scan(/status(?:=>|=)"?Queued"?/).length
+    if queued_count < 2
+      raise "Both managed streaming fallback boundaries were not exercised\n#{output}"
+    end
 
     request_sizes = output.scan(/bytes(?:=>|=)(\d+)/).flatten.map(&:to_i)
     unless request_sizes.any? { |bytes| bytes > REQUEST_LIMIT }
@@ -193,6 +203,9 @@ class StreamingE2E
     end
     unless request_sizes.any? { |bytes| bytes > 10 * 1024 * 1024 }
       raise "The managed fallback request did not exceed the SDK hard streaming limit: #{request_sizes}"
+    end
+    unless request_sizes.any? { |bytes| bytes > 6 * 1024 * 1024 && bytes <= 10 * 1024 * 1024 }
+      raise "The SDK JSON size-estimation fallback was not exercised: #{request_sizes}"
     end
   end
 

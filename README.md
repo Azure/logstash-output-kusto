@@ -75,7 +75,13 @@ output {
 
 Managed streaming must be enabled on the target Kusto table. The connector groups encoded events into requests of at most 1 MiB by default, measured in bytes. It never splits one event: an event above the configured target is sent intact, and the managed Kusto client decides whether to stream it or fall back to queued ingestion.
 
-Before acknowledging a Logstash batch, the connector writes all requests into an atomic local spool batch. Accepted requests are removed, transiently failed requests remain for recovery after restart, and final non-success statuses are quarantined beside the spool file for investigation without replaying the entire request. Use persistent storage for `streaming_temp_directory`; its default under the operating system temporary directory does not survive every host or container replacement. A spool directory can be owned by only one active plugin instance.
+Before acknowledging a Logstash batch, the connector writes all requests into an atomic local spool batch. Accepted requests are removed, transient failures apply backpressure and retry with interruptible exponential delays, and final non-success statuses are quarantined for investigation without replaying the entire request.
+
+Managed streaming delivery is **at least once**. A process or host failure after Kusto accepts a request but before the local spool file is removed can cause that request to be recovered and ingested again. The stable source identifier is used for request tracking; it does not provide Kusto-side row deduplication.
+
+The SDK's `Queued` result means the request was transferred to queued ingestion, not that ingestion into the table has completed. Continue monitoring Kusto ingestion failures for later mapping, schema, encoding-policy, or row-size failures.
+
+The default spool is a destination-specific directory under Logstash `path.data`. Managed streaming defaults to private `0700` directories and `0600` files, rejects symlinked or untrusted recovery files, and allows only one active plugin instance per spool. When setting a custom directory, place it on persistent local storage with trusted parent directories. Group- or world-writable `dir_mode` and `file_mode` values are rejected.
 
 ### Available Configuration Keys
 
@@ -88,18 +94,20 @@ Before acknowledging a Logstash batch, the connector writes all requests into an
 | **database**| Database name to place events | Required |
 | **table** | Target table name to place events | Required
 | **json_mapping** | Maps each attribute from incoming event JSON strings to the appropriate column in the table. Note that this must be in JSON format, as this is the interface between Logstash and Kusto | Optional |
-| **recovery** | If set to true (default), plugin will attempt to resend pre-existing temp files found in the path upon startup | |
+| **recovery** | If set to true (default), plugin will attempt to resend pre-existing temp files upon startup. With managed streaming, disabling recovery can leave committed spool files unprocessed after restart. | |
 | **delete_temp_files** | Determines if temp files will be deleted after a successful upload (true is default; set false for debug purposes only)| |
 | **flush_interval** | The time (in seconds) for flushing writes to temporary files. Default is 2 seconds, 0 will flush on every event. Increase this value to reduce IO calls but keep in mind that events in the buffer will be lost in case of abrupt failure.| |
+| **dir_mode** | Directory permissions. Managed streaming defaults to `0700` and rejects group- or world-writable values. | |
+| **file_mode** | Temporary-file permissions. Managed streaming defaults to `0600` and rejects group- or world-writable values. | |
 | **proxy_host** | The proxy hostname for redirecting traffic to Kusto.| |
 | **proxy_port** | The proxy port for the proxy. Defaults to 80.| |
 | **proxy_protocol** | The proxy server protocol , is one of http or https.| |
 | **ingestion_mode** | `queued` for throughput-oriented ingestion or `managed_streaming` for low-latency ingestion with SDK-managed queued fallback. | Defaults to `queued` |
 | **streaming_max_request_bytes** | Target maximum encoded bytes per managed streaming request. A single event is never split. | Defaults to 1048576 |
-| **streaming_max_retry_attempts** | Additional retries for transient errors escaping the managed streaming SDK. | Defaults to 2 |
+| **streaming_max_retry_attempts** | Transient retries before an interruptible cooldown cycle. During an outage, workers remain bounded and backpressure the Logstash pipeline instead of creating an unbounded retry queue. | Defaults to 2 |
 | **streaming_retry_backoff_seconds** | Initial delay for connector retries; later retries use exponential backoff. | Defaults to 1 |
 | **streaming_concurrent_requests** | Maximum managed streaming upload worker count. | Defaults to 4 |
-| **streaming_temp_directory** | Durable local spool for managed streaming requests and restart recovery. Only one active output may use a directory. | Defaults to a destination-specific directory under the OS temporary directory |
+| **streaming_temp_directory** | Durable local spool for managed streaming requests and restart recovery. Only one active output may use a directory. | Defaults below Logstash `path.data/plugins/logstash-output-kusto` |
 
 > Note : LS_JAVA_OPTS can be used to set proxy parameters as well (using export or SET options)
 

@@ -176,19 +176,22 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       validate_streaming_config
       @streaming_chunker = StreamingChunker.new(streaming_max_request_bytes.to_i)
       require 'digest'
-      require 'tmpdir'
       destination_id = Digest::SHA256.hexdigest(
         [ingest_url, database, table, final_mapping].join("\0")
       )[0, 20]
       @streaming_temp_directory = File.expand_path(
         streaming_temp_directory ||
-        File.join(Dir.tmpdir, 'logstash-output-kusto', destination_id)
+        File.join(
+          LogStash::SETTINGS.get('path.data'),
+          'plugins',
+          'logstash-output-kusto',
+          destination_id
+        )
       )
-      if @dir_mode != -1
-        FileUtils.mkdir_p(@streaming_temp_directory, mode: @dir_mode)
-      else
-        FileUtils.mkdir_p(@streaming_temp_directory)
-      end
+      @streaming_dir_mode = @dir_mode == -1 ? 0o700 : @dir_mode.to_i
+      @streaming_file_mode = @file_mode == -1 ? 0o600 : @file_mode.to_i
+      validate_streaming_modes
+      prepare_streaming_spool_directory
       acquire_streaming_spool_lock
       @streaming_metric = metric.namespace(:managed_streaming)
       %i[
@@ -201,6 +204,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         final_non_success
         oversized_events
         failures
+        retry_cycles
       ].each { |counter| @streaming_metric.increment(counter, 0) }
     end
 
@@ -276,6 +280,72 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     if streaming_concurrent_requests.to_i <= 0
       raise LogStash::ConfigurationError,
             'streaming_concurrent_requests must be greater than zero.'
+    end
+  end
+
+  private
+  def validate_streaming_modes
+    if (@streaming_dir_mode & 0o022).positive?
+      raise LogStash::ConfigurationError,
+            'dir_mode must not allow group or world writes for managed streaming.'
+    end
+
+    return unless (@streaming_file_mode & 0o022).positive?
+
+    raise LogStash::ConfigurationError,
+          'file_mode must not allow group or world writes for managed streaming.'
+  end
+
+  private
+  def prepare_streaming_spool_directory
+    if File.symlink?(@streaming_temp_directory)
+      raise LogStash::ConfigurationError,
+            "Managed streaming spool directory must not be a symlink: #{@streaming_temp_directory}"
+    end
+
+    FileUtils.mkdir_p(@streaming_temp_directory, mode: @streaming_dir_mode)
+    File.chmod(@streaming_dir_mode, @streaming_temp_directory)
+    @streaming_temp_directory = File.realpath(@streaming_temp_directory)
+    validate_streaming_spool_directory
+    validate_streaming_spool_parents unless Gem.win_platform?
+  end
+
+  private
+  def validate_streaming_spool_directory
+    stat = File.lstat(@streaming_temp_directory)
+    unless stat.directory? && !stat.symlink?
+      raise LogStash::ConfigurationError,
+            "Managed streaming spool path is not a directory: #{@streaming_temp_directory}"
+    end
+
+    return if Gem.win_platform? || stat.uid == Process.uid
+
+    raise LogStash::ConfigurationError,
+          "Managed streaming spool directory is not owned by the Logstash user: #{@streaming_temp_directory}"
+  end
+
+  private
+  def validate_streaming_spool_parents
+    current = File.dirname(@streaming_temp_directory)
+    loop do
+      stat = File.lstat(current)
+      mode = stat.mode & 0o7777
+      owned_by_trusted_user = stat.uid == Process.uid || stat.uid.zero?
+      sticky_shared_directory = stat.sticky? && (mode & 0o002).positive?
+
+      unless owned_by_trusted_user || ((mode & 0o200).zero? && (mode & 0o022).zero?)
+        raise LogStash::ConfigurationError,
+              "Managed streaming spool parent is owned by an untrusted user: #{current}"
+      end
+      if (mode & 0o022).positive? && !sticky_shared_directory
+        raise LogStash::ConfigurationError,
+              "Managed streaming spool parent is writable by untrusted users: #{current}"
+      end
+
+      parent = File.dirname(current)
+      break if parent == current
+
+      current = parent
     end
   end
 
@@ -532,17 +602,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     temporary_directory = File.join(@streaming_temp_directory, ".batch-#{batch_id}.tmp")
     ready_directory = File.join(@streaming_temp_directory, "batch-#{batch_id}.ready")
     files = []
-    FileUtils.mkdir(temporary_directory, mode: @dir_mode == -1 ? 0o777 : @dir_mode)
+    Dir.mkdir(temporary_directory, @streaming_dir_mode)
 
     chunks.each_with_index do |chunk, index|
-      encoded = chunk.join
       source_id = SecureRandom.uuid
       path = File.join(
         temporary_directory,
         format('stream-%06d-%s.json', index, source_id)
       )
-      write_streaming_file(path, encoded)
-      files << { path: path, bytes: encoded.bytesize, events: chunk.length }
+      bytes = chunk.sum(&:bytesize)
+      write_streaming_file(path, chunk)
+      files << { path: path, bytes: bytes, events: chunk.length }
     end
     fsync_directory(temporary_directory)
     File.rename(temporary_directory, ready_directory)
@@ -567,14 +637,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   end
 
   private
-  def write_streaming_file(path, encoded)
-    file = if @file_mode != -1
-             File.new(path, 'wb', @file_mode)
-           else
-             File.new(path, 'wb')
-           end
+  def write_streaming_file(path, encoded_events)
+    flags = File::WRONLY | File::CREAT | File::EXCL
+    flags |= File::NOFOLLOW if defined?(File::NOFOLLOW)
+    file = File.new(path, flags, @streaming_file_mode)
     begin
-      file.write(encoded)
+      encoded_events.each { |encoded| file.write(encoded) }
       file.flush
       file.fsync
     ensure
@@ -590,23 +658,59 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
 
     Dir.glob(File.join(@streaming_temp_directory, 'batch-*.ready', 'stream-*.json')).sort.each do |file|
+      validate_recovered_streaming_file(file)
       @logger.info('Recovering managed streaming spool file.', path: file)
       @ingestor.upload_async(file, delete_temp_files)
     end
   end
 
   private
+  def validate_recovered_streaming_file(file)
+    batch_directory = File.dirname(file)
+    batch_stat = File.lstat(batch_directory)
+    file_stat = File.lstat(file)
+    safe_batch = batch_stat.directory? && !batch_stat.symlink? &&
+                 safe_streaming_spool_stat?(batch_stat)
+    safe_file = file_stat.file? && !file_stat.symlink? &&
+                safe_streaming_spool_stat?(file_stat)
+    return if safe_batch && safe_file
+
+    raise LogStash::ConfigurationError,
+          "Managed streaming recovery rejected an unsafe spool file: #{file}"
+  end
+
+  private
+  def safe_streaming_spool_stat?(stat)
+    owner_is_safe = Gem.win_platform? || stat.uid == Process.uid
+    owner_is_safe && (stat.mode & 0o022).zero?
+  end
+
+  private
   def fsync_directory(directory)
+    return if Gem.win_platform?
+
     File.open(directory, File::RDONLY) { |file| file.fsync }
-  rescue Errno::EINVAL
+  rescue SystemCallError => e
+    unsupported_errors = [Errno::EINVAL::Errno]
+    unsupported_errors << Errno::EISDIR::Errno if defined?(Errno::EISDIR)
+    unsupported_errors << Errno::ENOTSUP::Errno if defined?(Errno::ENOTSUP)
+    raise unless unsupported_errors.include?(e.errno)
+
     @logger.debug('Directory fsync is not supported on this platform.', path: directory)
   end
 
   private
   def acquire_streaming_spool_lock
     lock_path = File.join(@streaming_temp_directory, '.lock')
-    mode = @file_mode == -1 ? 0o600 : @file_mode
-    lock_file = File.open(lock_path, File::RDWR | File::CREAT, mode)
+    if File.symlink?(lock_path)
+      raise LogStash::ConfigurationError,
+            "Managed streaming spool lock must not be a symlink: #{lock_path}"
+    end
+
+    flags = File::RDWR | File::CREAT
+    flags |= File::NOFOLLOW if defined?(File::NOFOLLOW)
+    lock_file = File.open(lock_path, flags, @streaming_file_mode)
+    File.chmod(@streaming_file_mode, lock_path)
     unless lock_file.flock(File::LOCK_EX | File::LOCK_NB)
       lock_file.close
       raise LogStash::ConfigurationError,

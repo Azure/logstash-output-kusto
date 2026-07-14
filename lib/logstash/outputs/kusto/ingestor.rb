@@ -25,19 +25,16 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     LOW_QUEUE_LENGTH = 3
     FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL, ingestion_mode = 'queued', streaming_max_retry_attempts = 2, streaming_retry_backoff_seconds = 1, kusto_client = nil, sleeper = nil, streaming_metric = nil, scheduler = nil)
+    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL, ingestion_mode = 'queued', streaming_max_retry_attempts = 2, streaming_retry_backoff_seconds = 1, kusto_client = nil, sleeper = nil, streaming_metric = nil)
       @workers_pool = threadpool
       @logger = logger
       @ingestion_mode = ingestion_mode
       @streaming_max_retry_attempts = streaming_max_retry_attempts
       @streaming_retry_backoff_seconds = streaming_retry_backoff_seconds
-      @sleeper = sleeper || ->(seconds) { sleep seconds }
+      @sleeper = sleeper
       @streaming_metric = streaming_metric
-      @scheduler = scheduler || lambda do |delay, &task|
-        Concurrent::ScheduledTask.execute(delay, &task)
-      end
-      @scheduled_retries = []
-      @scheduled_retries_mutex = Mutex.new
+      @retry_mutex = Mutex.new
+      @retry_condition = ConditionVariable.new
       @stopping = false
       validate_config(database, table, json_mapping,proxy_protocol,app_id, app_key, managed_identity_id,cli_auth)
       @logger.info('Preparing Kusto resources.')
@@ -169,9 +166,25 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         LogStash::Util.set_thread_name("Kusto to ingest file: #{path}")
         upload(path, delete_on_success)
       end
-    rescue Exception => e
-      @logger.error('StandardError.', exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
-      raise e
+    rescue => e
+      @logger.error(
+        'Failed to enqueue Kusto ingestion.',
+        exception: e.class,
+        message: e.message,
+        path: path,
+        backtrace: e.backtrace
+      )
+      if @ingestion_mode == 'managed_streaming'
+        return nil if stopping?
+
+        @logger.warn(
+          'Managed streaming executor rejected a request; ingesting synchronously for backpressure.',
+          path: path
+        )
+        return upload(path, delete_on_success)
+      end
+
+      raise
     end
 
     def upload(path, delete_on_success)
@@ -255,9 +268,19 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         end
 
         if attempts >= @streaming_max_retry_attempts
-          retain_failed_streaming_file(path, e, 'Managed streaming retry attempts were exhausted.')
-          schedule_streaming_retry(path, delete_on_success, attempts) unless @stopping
-          return
+          delay = @streaming_retry_backoff_seconds * (2**attempts)
+          @streaming_metric.increment(:retry_cycles) unless @streaming_metric.nil?
+          @logger.warn(
+            'Managed streaming retry cycle was exhausted; applying backpressure before retrying.',
+            path: path,
+            retry_delay_seconds: delay,
+            exception: e.class,
+            message: e.message
+          )
+          attempts = 0
+          return unless wait_for_retry(delay)
+
+          retry
         end
 
         delay = @streaming_retry_backoff_seconds * (2**attempts)
@@ -270,7 +293,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
           exception: e.class,
           message: e.message
         )
-        @sleeper.call(delay)
+        return unless wait_for_retry(delay)
+
         retry
       rescue StreamingIngestionError => e
         retain_failed_streaming_file(path, e, 'Managed streaming returned an unsuccessful status.')
@@ -294,8 +318,20 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         raise StreamingIngestionError, 'Managed streaming ingestion returned no status.'
       end
 
-      ingestion_status = statuses.first
-      status = ingestion_status.status.to_s
+      ingestion_statuses = statuses.to_a
+      status_names = ingestion_statuses.map { |ingestion_status| ingestion_status.status.to_s }
+      unique_statuses = status_names.uniq
+      if unique_statuses.length > 1
+        @logger.warn(
+          'Managed streaming request returned mixed statuses and will be quarantined.',
+          statuses: unique_statuses,
+          bytes: file_size
+        )
+        return 'PartiallySucceeded'
+      end
+
+      ingestion_status = ingestion_statuses.first
+      status = unique_statuses.first
       if FINAL_STREAMING_STATUSES.include?(status)
         @logger.warn(
           'Managed streaming request reached a final non-success status and will not be retried.',
@@ -395,34 +431,34 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     private
     def fsync_directory(directory)
+      return if Gem.win_platform?
+
       File.open(directory, File::RDONLY) { |file| file.fsync }
-    rescue Errno::EINVAL
+    rescue SystemCallError => e
+      unsupported_errors = [Errno::EINVAL::Errno]
+      unsupported_errors << Errno::EISDIR::Errno if defined?(Errno::EISDIR)
+      unsupported_errors << Errno::ENOTSUP::Errno if defined?(Errno::ENOTSUP)
+      raise unless unsupported_errors.include?(e.errno)
+
       @logger.debug('Directory fsync is not supported on this platform.', path: directory)
     end
 
     private
-    def schedule_streaming_retry(path, delete_on_success, attempts)
-      delay = @streaming_retry_backoff_seconds * (2**attempts)
-      scheduled_task = nil
-      scheduled_task = @scheduler.call(delay) do
-        begin
-          upload_async(path, delete_on_success) if !@stopping && File.exist?(path)
-        ensure
-          @scheduled_retries_mutex.synchronize do
-            @scheduled_retries.delete(scheduled_task) unless scheduled_task.nil?
-          end
-        end
+    def wait_for_retry(delay)
+      if @sleeper
+        @sleeper.call(delay)
+        return !stopping?
       end
 
-      @scheduled_retries_mutex.synchronize do
-        @scheduled_retries.reject!(&:complete?)
-        @scheduled_retries << scheduled_task unless scheduled_task.complete?
+      @retry_mutex.synchronize do
+        @retry_condition.wait(@retry_mutex, delay) unless @stopping
+        !@stopping
       end
-      @logger.warn(
-        'Managed streaming spool file was scheduled for another retry cycle.',
-        path: path,
-        retry_delay_seconds: delay
-      )
+    end
+
+    private
+    def stopping?
+      @retry_mutex.synchronize { @stopping }
     end
 
     private
@@ -438,13 +474,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     public
     def stop
-      @stopping = true
-      scheduled_retries = @scheduled_retries_mutex.synchronize do
-        tasks = @scheduled_retries.dup
-        @scheduled_retries.clear
-        tasks
+      @retry_mutex.synchronize do
+        @stopping = true
+        @retry_condition.broadcast
       end
-      scheduled_retries.each(&:cancel)
       @workers_pool.shutdown
       @workers_pool.wait_for_termination(nil) # block until its done
       @kusto_client.close

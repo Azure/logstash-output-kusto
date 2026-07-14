@@ -60,15 +60,103 @@ describe LogStash::Outputs::Kusto do
     end
 
     it 'does not require path for managed streaming ingestion' do
-      streaming_options = options
-        .reject { |key, _| key == 'path' }
-        .merge('ingestion_mode' => 'managed_streaming')
-      ingestor = instance_double(LogStash::Outputs::Kusto::Ingestor, stop: nil)
-      allow(LogStash::Outputs::Kusto::Ingestor).to receive(:new).and_return(ingestor)
-      kusto = described_class.new(streaming_options)
+      Dir.mktmpdir('kusto-streaming') do |directory|
+        streaming_options = options
+          .reject { |key, _| key == 'path' }
+          .merge(
+            'ingestion_mode' => 'managed_streaming',
+            'streaming_temp_directory' => directory
+          )
+        ingestor = instance_double(LogStash::Outputs::Kusto::Ingestor, stop: nil)
+        allow(LogStash::Outputs::Kusto::Ingestor).to receive(:new).and_return(ingestor)
+        kusto = described_class.new(streaming_options)
 
-      expect { kusto.register }.not_to raise_error
-      kusto.close
+        expect { kusto.register }.not_to raise_error
+        kusto.close
+      end
+    end
+
+    it 'uses a private destination spool below path.data by default' do
+      Dir.mktmpdir('kusto-path-data') do |path_data|
+        allow(LogStash::SETTINGS).to receive(:get).and_call_original
+        allow(LogStash::SETTINGS).to receive(:get).with('path.data').and_return(path_data)
+        ingestor = instance_double(LogStash::Outputs::Kusto::Ingestor, stop: nil)
+        allow(LogStash::Outputs::Kusto::Ingestor).to receive(:new).and_return(ingestor)
+        kusto = described_class.new(
+          options.reject { |key, _| key == 'path' }.merge(
+            'ingestion_mode' => 'managed_streaming'
+          )
+        )
+
+        kusto.register
+
+        spool = kusto.instance_variable_get(:@streaming_temp_directory)
+        expect(spool).to start_with(File.realpath(path_data))
+        expect(File.stat(spool).mode & 0o777).to eq(0o700)
+        kusto.close
+      end
+    end
+
+    it 'rejects unsafe managed streaming file and directory modes' do
+      {
+        'dir_mode' => 0o777,
+        'file_mode' => 0o666
+      }.each do |setting, mode|
+        Dir.mktmpdir('kusto-unsafe-mode') do |directory|
+          kusto = described_class.new(options.merge(
+            'ingestion_mode' => 'managed_streaming',
+            'streaming_temp_directory' => directory,
+            setting => mode
+          ))
+
+          expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /must not allow/)
+        end
+      end
+    end
+
+    it 'rejects a symlink as the managed streaming spool directory' do
+      skip 'Windows symlink creation requires elevated privileges' if Gem.win_platform?
+
+      Dir.mktmpdir('kusto-streaming-symlink') do |directory|
+        target = File.join(directory, 'target')
+        link = File.join(directory, 'link')
+        Dir.mkdir(target)
+        File.symlink(target, link)
+        kusto = described_class.new(options.merge(
+          'ingestion_mode' => 'managed_streaming',
+          'streaming_temp_directory' => link
+        ))
+
+        expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /must not be a symlink/)
+      end
+    end
+
+    it 'rejects a spool below a non-sticky world-writable parent' do
+      skip 'POSIX permission validation is not available on Windows' if Gem.win_platform?
+
+      Dir.mktmpdir('kusto-streaming-parent') do |directory|
+        unsafe_parent = File.join(directory, 'unsafe')
+        Dir.mkdir(unsafe_parent, 0o777)
+        File.chmod(0o777, unsafe_parent)
+        spool = File.join(unsafe_parent, 'spool')
+        kusto = described_class.new(options.merge(
+          'ingestion_mode' => 'managed_streaming',
+          'streaming_temp_directory' => spool
+        ))
+
+        expect { kusto.register }.to raise_error(
+          LogStash::ConfigurationError,
+          /writable by untrusted users/
+        )
+      end
+    end
+
+    it 'skips unsupported directory fsync on Windows' do
+      output = described_class.allocate
+      allow(Gem).to receive(:win_platform?).and_return(true)
+      expect(File).not_to receive(:open)
+
+      expect { output.send(:fsync_directory, 'C:/spool') }.not_to raise_error
     end
 
     it 'recovers managed streaming spool files after restart' do
@@ -91,7 +179,7 @@ describe LogStash::Outputs::Kusto do
           'streaming_temp_directory' => directory
         ))
 
-        expect(ingestor).to receive(:upload_async).with(recovered_file, true)
+        expect(ingestor).to receive(:upload_async).with(File.realpath(recovered_file), true)
         kusto.register
         kusto.close
       end
@@ -140,6 +228,30 @@ describe LogStash::Outputs::Kusto do
       end
     end
 
+    it 'rejects unsafe files during managed streaming recovery' do
+      skip 'Windows symlink creation requires elevated privileges' if Gem.win_platform?
+
+      Dir.mktmpdir('kusto-streaming-recovery') do |directory|
+        batch_directory = File.join(directory, 'batch-existing.ready')
+        FileUtils.mkdir_p(batch_directory)
+        outside_file = File.join(directory, 'outside.json')
+        File.write(outside_file, "{\"id\":\"forged\"}\n")
+        recovered_file = File.join(
+          batch_directory,
+          'stream-000000-2a11f3ee-9dd7-42ae-99bc-89046a8b8d65.json'
+        )
+        File.symlink(outside_file, recovered_file)
+        ingestor = instance_double(LogStash::Outputs::Kusto::Ingestor, stop: nil)
+        allow(LogStash::Outputs::Kusto::Ingestor).to receive(:new).and_return(ingestor)
+        kusto = described_class.new(options.merge(
+          'ingestion_mode' => 'managed_streaming',
+          'streaming_temp_directory' => directory
+        ))
+
+        expect { kusto.register }.to raise_error(LogStash::ConfigurationError, /unsafe spool file/)
+      end
+    end
+
     it 'rejects a non-positive streaming request size' do
       kusto = described_class.new(options.merge(
         'ingestion_mode' => 'managed_streaming',
@@ -183,12 +295,15 @@ describe LogStash::Outputs::Kusto do
 
     before do
       @uploads = []
+      @uploads_mutex = Mutex.new
       allow(ingestor).to receive(:upload_async) do |path, delete_on_success|
-        @uploads << {
-          path: path,
-          payload: File.binread(path),
-          delete_on_success: delete_on_success
-        }
+        @uploads_mutex.synchronize do
+          @uploads << {
+            path: path,
+            payload: File.binread(path),
+            delete_on_success: delete_on_success
+          }
+        end
       end
       allow(LogStash::Outputs::Kusto::Ingestor).to receive(:new).and_return(ingestor)
       kusto.register
@@ -214,6 +329,8 @@ describe LogStash::Outputs::Kusto do
       expect(@uploads.map { |upload| File.basename(File.dirname(upload[:path])) }.uniq.length).to eq(1)
       expect(File.basename(File.dirname(@uploads.first[:path]))).to match(/\Abatch-.*\.ready\z/)
       expect(Dir.glob(File.join(streaming_temp_directory, '.batch-*.tmp'))).to be_empty
+      expect(File.stat(File.dirname(@uploads.first[:path])).mode & 0o777).to eq(0o700)
+      expect(File.stat(@uploads.first[:path]).mode & 0o777).to eq(0o600)
     end
 
     it 'writes a single event larger than the threshold intact' do
@@ -259,6 +376,39 @@ describe LogStash::Outputs::Kusto do
       kusto.multi_receive_encoded(events_and_encoded)
 
       expect(observed_file_count).to eq(2)
+    end
+
+    it 'cleans the entire uncommitted batch when a spool write fails' do
+      allow(kusto).to receive(:write_streaming_file).and_call_original
+      allow(kusto).to receive(:write_streaming_file).with(anything, ["abcde\n"])
+        .and_raise(Errno::ENOSPC)
+
+      expect do
+        kusto.multi_receive_encoded([
+          [LogStash::Event.new('id' => 1), "123456\n"],
+          [LogStash::Event.new('id' => 2), "abcde\n"]
+        ])
+      end.to raise_error(Errno::ENOSPC)
+
+      expect(@uploads).to be_empty
+      expect(Dir.glob(File.join(streaming_temp_directory, '.batch-*.tmp'))).to be_empty
+      expect(Dir.glob(File.join(streaming_temp_directory, 'batch-*.ready'))).to be_empty
+    end
+
+    it 'creates collision-free atomic batches from concurrent Logstash workers' do
+      threads = 8.times.map do |index|
+        Thread.new do
+          kusto.multi_receive_encoded([
+            [LogStash::Event.new('id' => index), "#{index}-payload\n"]
+          ])
+        end
+      end
+      threads.each(&:join)
+
+      paths = @uploads.map { |upload| upload[:path] }
+      expect(paths.uniq.length).to eq(8)
+      expect(paths.map { |path| File.dirname(path) }.uniq.length).to eq(8)
+      expect(Dir.glob(File.join(streaming_temp_directory, '.batch-*.tmp'))).to be_empty
     end
   end
 
