@@ -11,6 +11,7 @@ class StreamingE2E
   FALLBACK_PAYLOAD_BYTES = 11 * 1024 * 1024
   PROCESS_TIMEOUT_SECONDS = 240
   INGESTION_TIMEOUT_SECONDS = 180
+  STREAMING_POLICY_PROPAGATION_SECONDS = 60
 
   def initialize
     @engine_url = required_env('ENGINE_URL')
@@ -66,7 +67,7 @@ class StreamingE2E
       "@'{\"MaximumBatchingTimeSpan\":\"00:00:10\", \"MaximumNumberOfItems\":1, " \
       "\"MaximumRawDataSizeMB\":100}'"
     )
-    sleep 5
+    sleep STREAMING_POLICY_PROPAGATION_SECONDS
   end
 
   def drop_table
