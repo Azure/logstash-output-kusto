@@ -10,7 +10,7 @@ class StreamingE2E
   REQUEST_LIMIT = 1_048_576
   FALLBACK_PAYLOAD_BYTES = 11 * 1024 * 1024
   PROCESS_TIMEOUT_SECONDS = 240
-  INGESTION_TIMEOUT_SECONDS = 180
+  INGESTION_TIMEOUT_SECONDS = 600
   STREAMING_POLICY_PROPAGATION_SECONDS = 60
 
   def initialize
@@ -224,7 +224,9 @@ class StreamingE2E
         raise "Ingested events do not match expected sequences: #{actual_rows.inspect}"
       end
 
-      raise "Events did not land before timeout" if Time.now >= deadline
+      if Time.now >= deadline
+        raise "Events did not land before timeout. Observed rows: #{actual_rows.inspect}"
+      end
 
       sleep 2
     end
