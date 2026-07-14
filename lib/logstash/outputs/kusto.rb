@@ -602,6 +602,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     temporary_directory = File.join(@streaming_temp_directory, ".batch-#{batch_id}.tmp")
     ready_directory = File.join(@streaming_temp_directory, "batch-#{batch_id}.ready")
     files = []
+    committed = false
     Dir.mkdir(temporary_directory, @streaming_dir_mode)
 
     chunks.each_with_index do |chunk, index|
@@ -616,6 +617,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
     fsync_directory(temporary_directory)
     File.rename(temporary_directory, ready_directory)
+    committed = true
     fsync_directory(@streaming_temp_directory)
     files.each do |file|
       file[:path] = File.join(ready_directory, File.basename(file[:path]))
@@ -631,7 +633,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     files
   rescue
     FileUtils.rm_rf(temporary_directory) if temporary_directory
-    FileUtils.rm_rf(ready_directory) if ready_directory
+    FileUtils.rm_rf(ready_directory) if ready_directory && !committed
     @streaming_metric.increment(:failures)
     raise
   end

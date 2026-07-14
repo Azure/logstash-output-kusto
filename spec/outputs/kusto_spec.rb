@@ -406,6 +406,27 @@ describe LogStash::Outputs::Kusto do
       expect(Dir.glob(File.join(streaming_temp_directory, 'batch-*.ready'))).to be_empty
     end
 
+    it 'preserves a committed batch when a post-rename operation fails' do
+      spool_directory = kusto.instance_variable_get(:@streaming_temp_directory)
+      allow(kusto).to receive(:fsync_directory).and_call_original
+      allow(kusto).to receive(:fsync_directory).with(spool_directory)
+        .and_raise(Errno::EIO)
+
+      expect do
+        kusto.multi_receive_encoded([
+          [LogStash::Event.new('id' => 1), "durable\n"]
+        ])
+      end.to raise_error(Errno::EIO)
+
+      expect(@uploads).to be_empty
+      expect(Dir.glob(File.join(streaming_temp_directory, '.batch-*.tmp'))).to be_empty
+      committed_files = Dir.glob(
+        File.join(streaming_temp_directory, 'batch-*.ready', 'stream-*.json')
+      )
+      expect(committed_files.length).to eq(1)
+      expect(File.binread(committed_files.first)).to eq("durable\n")
+    end
+
     it 'creates collision-free atomic batches from concurrent Logstash workers' do
       threads = 8.times.map do |index|
         Thread.new do
