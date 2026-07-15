@@ -20,7 +20,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     LOW_QUEUE_LENGTH = 3
     FIELD_REF = /%\{[^}]+\}/
 
-    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL)
+    # The connector "application for tracing" string the SDK sends to Kusto on
+    # every request (recorded server-side as the request's Application value).
+    # Exposed for tests/diagnostics.
+    attr_reader :connector_details_for_tracing
+
+    def initialize(ingest_url, app_id, app_key, app_tenant, managed_identity_id, cli_auth, database, table, json_mapping, delete_local, proxy_host , proxy_port , proxy_protocol,logger, threadpool = DEFAULT_THREADPOOL, rotate_by = 'event')
       @workers_pool = threadpool
       @logger = logger
       validate_config(database, table, json_mapping,proxy_protocol,app_id, app_key, managed_identity_id,cli_auth)
@@ -63,7 +68,18 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       java_util = Java::java.util
       # kusto_connection_string.setClientVersionForTracing(name_for_tracing)
       version_for_tracing=Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"
-      kusto_connection_string.setConnectorDetails("Logstash",version_for_tracing.to_s,"","",false,"", java_util.Collections.emptyMap());
+      # Report the selected rotate_by mode as a connector tracing field so that
+      # adoption of processing-time rotation is visible in Kusto's server-side
+      # telemetry (the request's `Application` value). It is a non-sensitive
+      # config enum, set once per client. setConnectorDetails takes a
+      # Map<String,String> of additional fields (azure-kusto-data 7.0.5).
+      connector_additional_fields = java_util.HashMap.new
+      connector_additional_fields.put('RotateBy', rotate_by.to_s)
+      kusto_connection_string.setConnectorDetails(
+        "Logstash", version_for_tracing.to_s, "", "", false, "", connector_additional_fields
+      )
+      @connector_details_for_tracing = kusto_connection_string.getApplicationNameForTracing
+      @logger.info("Kusto connector details for tracing: #{@connector_details_for_tracing}")
       @kusto_client = begin
         if is_direct_conn
           kusto_java.ingest.IngestClientFactory.createClient(kusto_connection_string)
