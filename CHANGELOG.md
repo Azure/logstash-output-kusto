@@ -9,6 +9,8 @@
   costly ingestion operations - when event timestamps are skewed or delayed. The default remains `event`
   for backward compatibility and is scheduled to change to `processing` in the next major version.
   Resolves #44.
+- Report the selected `rotate_by` mode as a connector tracing field (`RotateBy`) on Kusto requests,
+  so adoption of processing-time rotation can be observed in server-side telemetry.
 
 
 # 2.0.3

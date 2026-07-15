@@ -86,6 +86,36 @@ describe LogStash::Outputs::Kusto::Ingestor do
 
   end
 
+  describe 'connector telemetry' do
+    let(:pool) do
+      Concurrent::ThreadPoolExecutor.new(min_threads: 1, max_threads: 1, max_queue: 1, fallback_policy: :caller_runs)
+    end
+
+    def build_ingestor(*rotate_by)
+      described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth,
+                          database, table, json_mapping, delete_local, proxy_host, proxy_port,
+                          proxy_protocol, logger, pool, *rotate_by)
+    end
+
+    it 'reports the selected rotate_by value in the connector tracing details' do
+      ingestor = build_ingestor('processing')
+      expect(ingestor.connector_details_for_tracing).to include('RotateBy:{processing}')
+      ingestor.stop
+    end
+
+    it 'defaults the reported rotate_by to event' do
+      ingestor = build_ingestor
+      expect(ingestor.connector_details_for_tracing).to include('RotateBy:{event}')
+      ingestor.stop
+    end
+
+    it 'still identifies the connector as Logstash' do
+      ingestor = build_ingestor('processing')
+      expect(ingestor.connector_details_for_tracing).to include('Logstash')
+      ingestor.stop
+    end
+  end
+
   # describe 'receiving events' do
 
   #   context 'with non-zero flush interval' do
