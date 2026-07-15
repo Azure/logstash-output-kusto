@@ -266,6 +266,30 @@ describe LogStash::Outputs::Kusto::Ingestor do
       end
     end
 
+    it 'removes a committed batch directory after its final spool file completes' do
+      allow(streaming_client).to receive(:ingestFromFile).and_return(ingestion_result('Succeeded'))
+
+      Dir.mktmpdir('kusto-streaming-batch') do |directory|
+        batch_directory = File.join(directory, 'batch-completed.ready')
+        Dir.mkdir(batch_directory)
+        first_path = File.join(
+          batch_directory,
+          'stream-000000-11111111-1111-1111-1111-111111111111.json'
+        )
+        second_path = File.join(
+          batch_directory,
+          'stream-000001-22222222-2222-2222-2222-222222222222.json'
+        )
+        File.write(first_path, "{\"id\":1}\n")
+        File.write(second_path, "{\"id\":2}\n")
+
+        expect(ingestor.upload(first_path, true)).to eq('Succeeded')
+        expect(Dir.exist?(batch_directory)).to be(true)
+        expect(ingestor.upload(second_path, true)).to eq('Succeeded')
+        expect(Dir.exist?(batch_directory)).to be(false)
+      end
+    end
+
     it 'retries transient service failures with bounded backoff and a stable source id' do
       transient_error =
         Java::com.microsoft.azure.kusto.ingest.exceptions.IngestionServiceException.new('transient')

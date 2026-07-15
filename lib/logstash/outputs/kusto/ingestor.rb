@@ -411,7 +411,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       fsync_directory(parent)
       return unless File.basename(parent).match?(/\Abatch-.*\.ready\z/)
 
-      File.rmdir(parent)
+      Dir.rmdir(parent)
       fsync_directory(File.dirname(parent))
     rescue Errno::ENOTEMPTY, Errno::ENOENT
       nil
