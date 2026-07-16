@@ -1,5 +1,5 @@
 on:
-  workflow_dispatch:  
+  workflow_dispatch:
   release:
     types: [released]
 
@@ -9,27 +9,23 @@ jobs:
   build:
     permissions:
       checks: write
+      contents: write
       pull-requests: write
-      id-token: write 
+      id-token: write
       packages: write # for pushing GitHub packages
     name: Upload Release Asset
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: jruby
           bundler-cache: true
-      - name: Checkout code
-        uses: actions/checkout@v2
       - name: Run gradle vendor
         run: ./gradlew vendor
       - name: Build gem
         run: jruby -S gem build *.gemspec
-      - name: Get release
-        id: get_release
-        uses: bruceadams/get-release@v1.2.2
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
       - name: Publish gem
         uses: dawidd6/action-publish-gem@v1
         with:
@@ -38,15 +34,22 @@ jobs:
       - name: Set artifact name
         id: set_artifact_name
         run: |
-          ARTIFACT_PATH=$(find . -maxdepth 1 -iname '*.gem')
-          echo "::set-output name=artifact_name::$ARTIFACT_PATH"
+          mapfile -t artifacts < <(find . -maxdepth 1 -type f -name '*.gem' -print)
+          if [[ ${#artifacts[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly one gem artifact, found ${#artifacts[@]}"
+            exit 1
+          fi
+
+          echo "artifact_path=${artifacts[0]}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$(basename "${artifacts[0]}")" >> "$GITHUB_OUTPUT"
       - name: Upload Release Asset
-        id: upload-release-asset
-        uses: actions/upload-release-asset@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.get_release.outputs.upload_url }}
-          asset_path: ./${{ steps.set_artifact_name.outputs.artifact_name }}
-          asset_name: ${{ steps.set_artifact_name.outputs.artifact_name }}
-          asset_content_type: application/zip
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_PATH: ${{ steps.set_artifact_name.outputs.artifact_path }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ -z "$RELEASE_TAG" ]]; then
+            RELEASE_TAG="v$(cat version)"
+          fi
+
+          gh release upload "$RELEASE_TAG" "$ARTIFACT_PATH" --clobber
