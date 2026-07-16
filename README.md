@@ -120,6 +120,7 @@ export  LS_JAVA_OPTS="-Dhttp.proxyHost=1.2.34 -Dhttp.proxyPort=8989 -Dhttps.prox
 
 | Version | Release Date | Notes |
 | --- | --- | --- |
+| 2.2.0 | 2026-07-16 | - Add opt-in Kusto streaming ingestion with byte-bounded requests, automatic queued fallback, durable restart recovery, bounded backpressure, secure local spooling, streaming metrics, and production stress coverage. Queued ingestion remains the default. |
 | 2.0.8 | 2024-10-23 | - Fix library deprecations, fix issues in the Azure Identity library  |
 | 2.0.7 | 2024-01-01 | - Update Kusto JAVA SDK  |
 | 2.0.3 | 2023-12-12 | - Make JSON mapping field optional. If not provided logstash output JSON attribute names will be used for column resolution  |
