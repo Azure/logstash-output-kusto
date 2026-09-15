@@ -40,6 +40,30 @@ describe LogStash::Outputs::Kusto do
       end.to raise_error(LogStash::ConfigurationError)
     end
 
+    [
+      { 'database' => '%{database}' },
+      { 'table' => '%{table}' },
+      { 'json_mapping' => '%{mapping}' },
+      { 'json_mapping' => nil, 'mapping' => '%{mapping}' },
+      { 'dynamic_event_routing' => true }
+    ].each do |routing_settings|
+      it "rejects streaming with dynamic routing settings #{routing_settings.inspect}" do
+        Dir.mktmpdir('kusto-dynamic-streaming') do |directory|
+          kusto = described_class.new(options.merge(routing_settings).merge(
+            'ingestion_mode' => 'streaming',
+            'streaming_temp_directory' => directory
+          ))
+          expect(LogStash::Outputs::Kusto::Ingestor).not_to receive(:new)
+
+          expect { kusto.register }.to raise_error(
+            LogStash::ConfigurationError,
+            'Dynamic event routing is only supported with ingestion_mode => queued.'
+          )
+          expect(Dir.children(directory)).to be_empty
+        end
+      end
+    end
+
     it 'doesnt allow the path to start with a dynamic string' do
       kusto = described_class.new(options.merge( {'path' => '/%{name}'} ))
       expect { kusto.register }.to raise_error(LogStash::ConfigurationError)

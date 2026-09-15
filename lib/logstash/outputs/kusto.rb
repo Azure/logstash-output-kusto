@@ -175,7 +175,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config :path, validate: :string, required: false
 
   # Flush interval (in seconds) for flushing writes to files.
-  # 0 will flush on every message. Increase this value to reduce IO calls but keep 
+  # 0 will flush on every message. Increase this value to reduce IO calls but keep
   # in mind that events buffered before flush can be lost in case of abrupt failure.
   config :flush_interval, validate: :number, default: 2
 

@@ -1,17 +1,9 @@
 # Changelog
 
-# 2.2.0
-
-- Add opt-in streaming ingestion while preserving queued ingestion as the default.
-- Bound streaming requests by encoded bytes without splitting events, and rely on the Kusto SDK for automatic queued fallback.
-- Add atomic durable spooling, restart recovery, stable source identifiers, final-status quarantine, and streaming metrics.
-- Add bounded worker backpressure, interruptible transient retry cycles, graceful shutdown draining, and proxy support.
-- Secure spool ownership and permissions, reject unsafe paths and symlinks, and support Windows directory-fsync behavior.
-- Preserve committed batches and safely handle missing spool files and completed batch-directory cleanup.
-
-# 2.2.0
+# Unreleased
 
 - Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) so a single output can route events to different Azure Data Explorer destinations. Resolved values may contain letters, digits, spaces, dots, dashes and underscores.
+- Dynamic event routing requires queued ingestion; combining it with streaming ingestion is rejected at startup.
 - Unroutable events (missing routing field or a value containing unsupported characters such as a path separator) are sent to Logstash's native Dead Letter Queue when it is enabled, and otherwise dropped with startup and per-batch warnings (rather than mis-ingested into an unintended table). Enable the dead letter queue to capture them.
 - Fail fast at startup when a static `database`/`table` used alongside dynamic routing is empty or contains invalid characters.
 - Crash recovery is isolated per output: each dynamic temp file is stamped with a stable identifier derived from the output's `ingest_url`/`database`/`table`/`json_mapping`/`path`, and recovery only resends files carrying that identifier, so outputs with a *different* routing configuration sharing a `path` root never pick up each other's leftover files. Outputs identical in all of those settings (e.g. differing only by credentials or pipeline conditionals) share an identifier — give them distinct `path` roots if they must not recover each other's files.
@@ -22,6 +14,14 @@
 - Known limitation: routing validates only the *format* of `database`/`table`/`json_mapping`, not their *existence*. A syntactically valid but non-existent (e.g. mistyped) target passes validation and the file is uploaded; because ingestion is asynchronous, the failure then surfaces inside Azure Data Explorer (`.show ingestion failures`), not in Logstash.
 - Upgrade caveat: switching an existing output from static to dynamic routing does not auto-recover legacy static temp files (`.database.table` suffix) still on disk, because dynamic recovery only resends files carrying the output's dynamic owner tag. Drain the pipeline before switching, briefly redeploy the previous static configuration to flush them, or resend them manually.
 
+# 2.2.0
+
+- Add opt-in streaming ingestion while preserving queued ingestion as the default.
+- Bound streaming requests by encoded bytes without splitting events, and rely on the Kusto SDK for automatic queued fallback.
+- Add atomic durable spooling, restart recovery, stable source identifiers, final-status quarantine, and streaming metrics.
+- Add bounded worker backpressure, interruptible transient retry cycles, graceful shutdown draining, and proxy support.
+- Secure spool ownership and permissions, reject unsafe paths and symlinks, and support Windows directory-fsync behavior.
+- Preserve committed batches and safely handle missing spool files and completed batch-directory cleanup.
 
 # 2.0.3
 

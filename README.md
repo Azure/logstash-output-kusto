@@ -121,6 +121,10 @@ export  LS_JAVA_OPTS="-Dhttp.proxyHost=1.2.34 -Dhttp.proxyPort=8989 -Dhttps.prox
 
 ### Dynamic event routing
 
+Dynamic routing is supported only with `ingestion_mode => "queued"` (the default).
+Combining automatic or explicitly enabled dynamic routing with streaming ingestion
+is rejected at startup; streaming destinations must be static.
+
 You can route each event to a different database, table and/or JSON mapping by
 using Logstash field references in the `database`, `table` or `json_mapping`
 settings. This lets a single output block send events to multiple Azure Data
