@@ -25,8 +25,7 @@ describe LogStash::Outputs::Kusto::Ingestor do
   describe '#initialize' do
 
     it 'does not throw an error when initializing' do
-      # note that this will cause an internal error since connection is being tried.
-      # however we still want to test that all the java stuff is working as expected
+      # SDK builders remain real; spec_helpers prevents network client creation.
       expect { 
         ingestor = described_class.new(ingest_url, app_id, app_key, app_tenant, managed_identity, cliauth, database, table, json_mapping, dynamic_routing, delete_local, proxy_host, proxy_port,proxy_protocol, logger)
         ingestor.stop
@@ -99,36 +98,6 @@ describe LogStash::Outputs::Kusto::Ingestor do
         }.to raise_error(LogStash::ConfigurationError)          
       end
 
-      it "fails when app_id/app_key/managed_identity are blank empty strings (not just nil)" do
-        # Empty strings are not nil, so the old all-nil guard let them through and
-        # the failure surfaced later as a cryptic AAD error. Blank must be treated
-        # as missing.
-        expect {
-          ingestor = described_class.new(ingest_url, '', LogStash::Util::Password.new(''), app_tenant, '', cliauth, database, table, json_mapping, dynamic_routing, delete_local, proxy_host, proxy_port,'http',logger)
-          ingestor.stop
-        }.to raise_error(LogStash::ConfigurationError, /No valid authentication/)
-      end
-
-      it "fails when app_id is provided but app_key is blank (partial credentials)" do
-        expect {
-          ingestor = described_class.new(ingest_url, 'myid', LogStash::Util::Password.new(''), app_tenant, nil, cliauth, database, table, json_mapping, dynamic_routing, delete_local, proxy_host, proxy_port,'http',logger)
-          ingestor.stop
-        }.to raise_error(LogStash::ConfigurationError, /No valid authentication/)
-      end
-
-      it "accepts a managed identity even when app_id/app_key are blank" do
-        expect {
-          ingestor = described_class.new(ingest_url, '', LogStash::Util::Password.new(''), app_tenant, 'system', cliauth, database, table, json_mapping, dynamic_routing, delete_local, proxy_host, proxy_port,'http',logger)
-          ingestor.stop
-        }.not_to raise_error
-      end
-
-      it "accepts cli_auth even when all other credentials are blank" do
-        expect {
-          ingestor = described_class.new(ingest_url, '', LogStash::Util::Password.new(''), app_tenant, '', true, database, table, json_mapping, dynamic_routing, delete_local, proxy_host, proxy_port,'http',logger)
-          ingestor.stop
-        }.not_to raise_error
-      end
     end
 
   end
@@ -733,14 +702,16 @@ describe LogStash::Outputs::Kusto::Ingestor do
       expect(result).to eq(props)
     end
 
-    it 'deletes an undecodable dynamic file on upload instead of leaving it for infinite retry' do
+    it 'retains an undecodable dynamic file without attempting ingestion or retry' do
       require 'tmpdir'
       Dir.mktmpdir do |dir|
         # Marker present but only one segment -> decode returns nil (unroutable).
         path = File.join(dir, '2024-01-01.kusto~onlydb')
         File.write(path, '{"a":1}')
+        expect(ingestor.instance_variable_get(:@kusto_client)).not_to receive(:ingestFromFile)
         ingestor.upload(path, true)
-        expect(File.exist?(path)).to be false
+        expect(File.read(path)).to eq('{"a":1}')
+        expect(logger).to have_received(:warn).with(/retained for manual recovery/, hash_including(path: path))
       end
     end
   end

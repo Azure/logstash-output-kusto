@@ -157,31 +157,34 @@ Notes and caveats:
 - Resolved `database`, `table` and `json_mapping` values may contain letters,
   digits, spaces, dots, dashes and underscores — the common Azure Data Explorer
   entity-naming characters (e.g. `Security.Events`, `App Logs`). The value is
-  reversibly encoded into the temp file name, so dots and spaces are preserved.
+  reversibly encoded into the temp file name, preserving case, dots and spaces.
+  Whitespace-only names and invalid UTF-8 are rejected. Uppercase ASCII letters
+  are encoded too, so case-distinct tables remain distinct on Windows.
   Values containing other characters (for example a path separator `/`) are
   treated as unroutable. **By design, dynamic mode is stricter than legacy static
   mode:** in pure legacy static mode (no dynamic routing active) a
   `database`/`table`/`json_mapping` literal is passed through to Azure Data
   Explorer as-is, whereas once dynamic routing is active a per-event resolved
   value is validated against this character/length format *before* upload and
-  treated as unroutable if it does not match (so a bad per-event value is never
-  mis-ingested into an unintended target). Note that a static literal used
+  treated as unroutable if it does not match. Note that a static literal used
   *alongside* dynamic routing (including when forced with
   `dynamic_event_routing => true`) is also validated against this format, but at
   startup — the plugin fails fast rather than treating it as unroutable.
 - **Length / filename budget.** Azure Data Explorer entity names may be up to
   1024 characters, but in dynamic mode the resolved `database`, `table` and
-  `json_mapping` are encoded together into a single temp **file name**, which the
-  filesystem caps at 255 bytes. The practical per-event budget is therefore
-  smaller than 1024 and is *shared* across the time-based `path` prefix plus the
-  three encoded values. Note that percent-encoding makes non-ASCII and special
-  characters cost several bytes each (e.g. `é` → 2 bytes → 6 encoded bytes), so
-  the byte length can exceed the character length. As a rule of thumb keep the
-  combined `database` + `table` + `json_mapping` comfortably under ~150 bytes for
-  a typical short time-prefixed path. A value that is individually over the ADX
-  1024-character limit, or whose encoded file name would exceed the filesystem
-  limit, is treated as unroutable (sent to the DLQ or dropped) — the DLQ reason
-  states which condition was hit.
+  `json_mapping` are encoded together into a single temp **file name**. The
+  plugin enforces a conservative 255-byte basename budget, including the path
+  prefix, owner tag, separators, and a 38-byte generation token. Uppercase ASCII
+  costs three encoded bytes; non-ASCII characters can cost more (`é` → 6 bytes).
+  The remaining budget is shared by all three encoded values, not 255 bytes per
+  field. Over-budget events go to the DLQ or are dropped with a specific reason.
+  Filesystems with stricter component/full-path limits can still raise storage
+  errors; those errors are propagated rather than silently dropping the batch.
+- **File lifetime.** Each active route/time-window writer uses an exclusively
+  created, unique physical file. Once closed for upload, its path is never reused
+  by a later writer. This prevents a late event from appending to a file already
+  being uploaded, including during cap-driven cleanup or restart recovery.
+  Static queued filenames and streaming spooling are unchanged.
 - Events that cannot be routed — because the referenced field is missing or the
   resolved value is invalid — are **not** ingested into an unintended table.
   When Logstash's
@@ -196,8 +199,10 @@ Notes and caveats:
   filter is not setting the routing field — fix the pipeline producing the events.
 - If a static `database`/`table` is combined with dynamic routing, it is
   validated at startup and the plugin fails fast on an empty or invalid value.
-- The `json_mapping` reference is optional: if it does not resolve, the event is
-  still routed using `database`/`table` and columns are mapped by attribute name.
+- The `json_mapping` reference is optional: an empty value or a missing field in
+  an exact single reference (for example `%{[@metadata][mapping]}`) routes using
+  `database`/`table` and maps columns by attribute name. An unresolved composite
+  such as `prefix_%{missing}`, a blank name, or invalid encoding is unroutable.
   This means a **missing mapping field does not** send the event to the DLQ — if
   a mapping is required for a table, make sure the field is always set upstream.
 - Crash recovery scans the temp-file root for leftover files to resend on
@@ -213,6 +218,11 @@ Notes and caveats:
   any of those settings also changes the identifier, so temp files written under
   a previous configuration are not auto-recovered; reprocess them with the old
   configuration or resend manually.)
+- Use only one active instance per recovery owner, and keep the spool root on
+  trusted local storage. Owner tags isolate configuration; they are not process
+  locks. Invalid owned files are logged and left untouched for manual recovery,
+  not uploaded or deleted. Symlinked dynamic recovery files are not uploaded.
+  Both older owner-stamped dynamic filenames and new generations can be recovered.
 - **Upgrade caveat (static → dynamic).** Dynamic recovery only resends temp files
   carrying this output's dynamic owner tag; legacy static temp files use a
   `.database.table` suffix instead. If you switch an existing output from static
@@ -223,18 +233,27 @@ Notes and caveats:
   manually.
 - **Routing only validates the *format* of the target, not its *existence*.** A
   syntactically valid but non-existent (e.g. mistyped) `database`/`table`/`json_mapping`
-  passes validation and the file is uploaded; because ingestion is asynchronous,
-  the failure then surfaces **inside Azure Data Explorer** (visible via
-  `.show ingestion failures`), not in Logstash. Double-check routing field values
-  against existing ADX objects.
+  passes local validation. Upload failures may be retried by Logstash; failures
+  after queued submission surface **inside Azure Data Explorer** (visible via
+  `.show ingestion failures`). Double-check routing values against existing ADX
+  objects. Successful queued submission is not confirmation of table ingestion.
+- Dynamic routing does not add exactly-once delivery or power-loss durability.
+  Queued buffering/retry behavior is unchanged: partial batches can be duplicated
+  after a failure, buffered writes can be lost on abrupt termination, and an
+  outage can delay shutdown. Files retained with `delete_temp_files => false`
+  remain eligible for recovery; use that setting only for debugging.
 - **High-cardinality routing has an operational cost.** Dynamic mode keeps one
   open temporary file per distinct *(time window × database × table × mapping)*
   combination, so routing to many destinations means many concurrent file
   descriptors (watch the OS `ulimit -n`) and many small ingestion calls. ADX
   prefers batched ingestion, so rely on the server-side
   [IngestionBatching policy](https://learn.microsoft.com/azure/data-explorer/kusto/management/batchingpolicy)
-  and tune `flush_interval` / `stale_cleanup_interval` rather than routing to an
-  unbounded number of tables per pipeline. As an early signal, the plugin logs a
+  and tune `stale_cleanup_interval` rather than routing to an unbounded number of
+  tables per pipeline. `flush_interval` only flushes buffers; it does not close
+  files or initiate upload. For idle/finite inputs, use
+  `stale_cleanup_type => "interval"` with a positive `stale_cleanup_interval`,
+  since the default `"events"` cleanup runs only when events arrive.
+  As an early signal, the plugin logs a
   warning when the number of open temporary files crosses
   `dynamic_routing_open_files_warning_threshold` (default 100). For a hard limit,
   set `dynamic_routing_max_open_files` (default 0 = no cap): once that many temp
@@ -247,14 +266,15 @@ Notes and caveats:
   enabled dead letter queue is recommended hardening:** keep the cap below the
   process descriptor limit (`ulimit -n`, leaving headroom for other
   inputs/outputs) so capped events are captured in the DLQ rather than risking
-  file-descriptor exhaustion.
+  file-descriptor exhaustion. The cap and warning threshold must be finite,
+  nonnegative integers (0 disables them).
 
 
 ### Release Notes and versions
 
 | Version | Release Date | Notes |
 | --- | --- | --- |
-| Unreleased | — | - Add dynamic event routing for queued ingestion: `database`, `table` and `json_mapping` accept Logstash field references. Unroutable events go to the Dead Letter Queue when enabled, otherwise are dropped with warnings. Recovery is isolated between outputs with different routing configuration; use distinct `recovery_owner_id` values to separate otherwise-identical outputs. The encoded filename must fit the filesystem's 255-byte limit. High routing cardinality is reported, with an optional `dynamic_routing_max_open_files` cap. See the dynamic routing section for full caveats. |
+| 2.3.0 | Unreleased | Dynamic database/table/mapping routing for queued ingestion, unique per-writer files, case-safe filenames, per-output recovery, invalid-route DLQ handling, and optional open-file limits. Addresses [#92](https://github.com/Azure/logstash-output-kusto/issues/92) and [#3](https://github.com/Azure/logstash-output-kusto/issues/3). See the dynamic routing section for limits and recovery caveats. |
 | 2.2.0 | 2026-07-16 | - Add opt-in Kusto streaming ingestion with byte-bounded requests, automatic queued fallback, durable restart recovery, bounded backpressure, secure local spooling, streaming metrics, and production stress coverage. Queued ingestion remains the default. |
 | 2.0.8 | 2024-10-23 | - Fix library deprecations, fix issues in the Azure Identity library  |
 | 2.0.7 | 2024-01-01 | - Update Kusto JAVA SDK  |
@@ -266,19 +286,29 @@ Notes and caveats:
 
 ## Development Requirements
 
-- Openjdk **8 64bit** (https://www.openlogic.com/openjdk-downloads)
-- JRuby 9.2 or higher, defined with openjdk 8 64bit
-- Logstash, defined with openjdk 8 64bit
+- Logstash 8.7+ and its compatible JRuby runtime (MRI Ruby is not supported).
+- A 64-bit JDK supported by Logstash; the Gradle wrapper requires Java 17+.
+- For a local Logstash installation, set `LOGSTASH_SOURCE=1` and `LOGSTASH_PATH`
+  to its root, and put its JRuby/JDK on `PATH` with `JAVA_HOME` set appropriately.
 
-*It is reccomened to use the bundled jdk and jruby with logstash to avoid compatibility issues.*
-
-To fully build the gem, run: 
+Build and run the offline unit/integration suite:
 
 ```shell
-bundle install
-lock_jars
-gem build
+jruby -S bundle install
+./gradlew vendor
+jruby -S bundle exec rspec spec
+jruby -S gem build logstash-output-kusto.gemspec
 ```
+
+On Windows, use `gradlew.bat vendor`. Unit tests stub only network clients while
+exercising the real Logstash codec, filesystem, executor, and SDK property objects.
+
+The live harness in [e2e/e2e.rb](e2e/e2e.rb) is separate: it creates and drops test
+tables and requires explicit test-cluster credentials (`ENGINE_URL`, `INGEST_URL`,
+`TEST_DATABASE`, Azure CLI auth). It checks static ingestion and dynamic table/
+mapping fan-out. Set `TEST_SECOND_DATABASE` to an existing test database for
+cross-database fan-out too. Do not run it against production resources. Each run
+uses independent table names and local paths; local artifacts remain for inspection.
 
 ## Contributing
 

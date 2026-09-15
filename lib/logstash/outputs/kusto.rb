@@ -16,9 +16,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   config_name 'kusto'
   concurrency :shared
 
-  # Possessive quantifier (`++`) prevents catastrophic/quadratic backtracking
-  # when scanning attacker- or config-supplied strings such as `%{%{%{...`
-  # (CodeQL rb/polynomial-redos). Match semantics are identical to `[^}]+`.
+  # Possessive matching avoids backtracking within a field reference.
   FIELD_REF = /%\{[^}]++\}/
 
   # Marker appended to the temp file name (after the user-provided path) to
@@ -38,11 +36,16 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # segments stay contiguous and decode_routing_target is unaffected.
   ROUTING_OWNER_MARKER = '.kustoid-'
 
-  # Characters left as-is in an encoded routing segment. Everything else
-  # (including '.', ' ', '~', '/', '\\' and '%') is percent-encoded, which keeps
-  # the encoded segment free of path separators and of the marker/separator
-  # characters, so the file name is always safe and unambiguous to decode.
-  ROUTING_SEGMENT_UNSAFE = /[^A-Za-z0-9_-]/n
+  # Encode uppercase too: ADX table/mapping names are case-sensitive, whereas
+  # local filesystems may not be. For example, Orders -> %4Frders, orders -> orders.
+  # The remaining literal characters and canonical escapes stay distinct even
+  # when filenames are compared case-insensitively.
+  ROUTING_SEGMENT_UNSAFE = /[^a-z0-9_-]/n
+
+  # Each newly opened dynamic writer gets an exclusive physical generation.
+  # The deterministic route remains the cache key, never an upload pathname.
+  ROUTING_GENERATION_MARKER = '.part-'
+  ROUTING_GENERATION_BYTES = ROUTING_GENERATION_MARKER.bytesize + 32
 
   # Acceptable resolved database / table / mapping value (after decoding). This
   # follows Azure Data Explorer entity-naming: letters and digits (including
@@ -59,15 +62,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # or as unroutable at decode time) instead of failing later on the ADX side.
   ROUTING_VALUE_MAX_LENGTH = 1024
 
-  # Maximum length (in bytes) of the encoded routing basename (time prefix +
-  # owner-tag + routing marker + encoded segments). In dynamic mode this basename
-  # is the complete, final filename — no suffix is appended afterward — so 255,
-  # the NAME_MAX limit on ext4/xfs/btrfs/APFS/NTFS, is the precise filesystem
-  # ceiling rather than an arbitrary margin. A value over this is treated as
-  # unroutable (DLQ/drop) before File.new is attempted, avoiding
-  # Errno::ENAMETOOLONG and batch aborts. Filesystems with a smaller NAME_MAX
-  # (e.g. eCryptfs home directories, ~143 bytes) are caught defensively by the
-  # rescue in multi_receive_encoded.
+  # Conservative basename byte budget for common filesystems. Includes the
+  # generation token added on open. Storage errors on filesystems with stricter
+  # limits still propagate; they must not acknowledge unwritten events.
   ROUTING_ENCODED_BASENAME_MAX_BYTES = 255
 
   # Percent-encodes a resolved routing value so it can be embedded as one segment
@@ -117,6 +114,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   def self.classify_routing_target(path)
     return [nil, 'generated file name carried no routing marker', 'no routing marker'] if path.nil?
 
+    path = File.basename(path)
     marker_index = path.rindex(ROUTING_MARKER)
     return [nil, 'generated file name carried no routing marker', 'no routing marker'] if marker_index.nil?
 
@@ -130,9 +128,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     return [nil, "table field is missing, unresolved, or invalid (allowed: #{ROUTING_VALUE_DESCRIPTION}; 1-#{ROUTING_VALUE_MAX_LENGTH} characters)", 'missing or invalid table'] if unresolved_or_invalid_routing_value?(table)
 
     mapping = decode_routing_segment(mapping_enc)
-    if mapping.nil? || mapping.empty?
+    if mapping.nil?
+      return [nil, 'json_mapping contains invalid UTF-8', 'invalid json_mapping']
+    elsif mapping.empty?
       # Absent mapping -> route without a mapping.
       mapping = nil
+    elsif mapping.length > ROUTING_VALUE_MAX_LENGTH || mapping.strip.empty?
+      return [nil, 'json_mapping is blank or too long', 'invalid json_mapping']
     elsif mapping =~ FIELD_REF
       # An exact, unresolved field reference like %{[@metadata][mapping]} (left
       # when the field is absent) -> route without a mapping. A composite such as
@@ -143,7 +145,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       else
         return [nil, 'json_mapping resolved to a composite value that still contains an unresolved field reference', 'invalid json_mapping']
       end
-    elsif mapping !~ ROUTING_VALUE_PATTERN || mapping.length > ROUTING_VALUE_MAX_LENGTH
+    elsif mapping !~ ROUTING_VALUE_PATTERN
       return [nil, "json_mapping is invalid or too long (allowed: #{ROUTING_VALUE_DESCRIPTION}; 1-#{ROUTING_VALUE_MAX_LENGTH} characters)", 'invalid json_mapping']
     end
 
@@ -154,9 +156,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # field reference (the event lacked the field), longer than
   # ROUTING_VALUE_MAX_LENGTH, or outside ROUTING_VALUE_PATTERN.
   def self.unresolved_or_invalid_routing_value?(value)
-    return true if value.nil? || value.empty?
-    return true if value =~ FIELD_REF
+    return true if value.nil? || value.strip.empty?
     return true if value.length > ROUTING_VALUE_MAX_LENGTH
+    return true if value =~ FIELD_REF
     value !~ ROUTING_VALUE_PATTERN
   end
 
@@ -274,8 +276,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # events are never silently lost. Only applies in dynamic mode. Set it below the
   # process file-descriptor limit (ulimit -n), leaving headroom for other
   # inputs/outputs, and pair it with the dead letter queue so capped events are
-  # captured. Unblock a hit cap by reducing routing cardinality or shortening
-  # flush_interval / stale_cleanup_interval so files close sooner.
+  # captured. Reduce routing cardinality or shorten stale_cleanup_interval to
+  # reclaim inactive writers sooner. Flushing alone does not close files.
   config :dynamic_routing_max_open_files, validate: :number, default: 0
 
   # Optional stable identifier that participates in the per-output crash-recovery
@@ -334,18 +336,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @files = {}
     @io_mutex = Mutex.new
 
-    # Reject nonsensical negative tuning values up front. Both are gated by `> 0`
-    # / `<= 0` checks at runtime, so a negative value would otherwise be silently
-    # treated as "disabled", hiding a misconfiguration from a user who believes
-    # they set a limit.
-    if dynamic_routing_max_open_files < 0
-      @logger.error('dynamic_routing_max_open_files must be 0 (no cap) or a positive number.', value: dynamic_routing_max_open_files)
-      raise LogStash::ConfigurationError.new("dynamic_routing_max_open_files must be 0 (no cap) or a positive number, got #{dynamic_routing_max_open_files}.")
-    end
-    if dynamic_routing_open_files_warning_threshold < 0
-      @logger.error('dynamic_routing_open_files_warning_threshold must be 0 (disabled) or a positive number.', value: dynamic_routing_open_files_warning_threshold)
-      raise LogStash::ConfigurationError.new("dynamic_routing_open_files_warning_threshold must be 0 (disabled) or a positive number, got #{dynamic_routing_open_files_warning_threshold}.")
-    end
+    validate_routing_limit('dynamic_routing_max_open_files', dynamic_routing_max_open_files)
+    validate_routing_limit('dynamic_routing_open_files_warning_threshold', dynamic_routing_open_files_warning_threshold)
 
     final_mapping = json_mapping
     if final_mapping.nil? || final_mapping.empty?
@@ -501,9 +493,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # Early-warning latch for high routing cardinality (dynamic mode only; 0 off).
       @open_files_warning_threshold = @dynamic_routing ? dynamic_routing_open_files_warning_threshold : 0
       @open_files_warning_active = false
-  # Optional hard cap on concurrent open temp files (dynamic mode only; 0 off).
-  # Enforced in multi_receive_encoded while events are still available.
-  @open_files_max = @dynamic_routing ? dynamic_routing_max_open_files.to_i : 0
+      # Enforced while the original events are still available for the DLQ.
+      @open_files_max = @dynamic_routing ? dynamic_routing_max_open_files.to_i : 0
 
       @flush_interval = @flush_interval.to_i
       if ingestion_mode == 'queued' && @flush_interval > 0
@@ -638,11 +629,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # event at write time, so they are skipped here.
   def validate_dynamic_literal(name, value, optional: false)
     return if value_dynamic?(value)
+    return if optional && (value.nil? || value.empty?)
 
-    if value.nil? || value.empty?
-      return if optional
-      @logger.error("#{name} must not be empty when dynamic routing is enabled.")
-      raise LogStash::ConfigurationError.new("#{name} must not be empty when dynamic routing is enabled.")
+    if value.nil? || value.strip.empty?
+      raise LogStash::ConfigurationError, "#{name} must not be empty or whitespace when dynamic routing is enabled."
     end
 
     unless value =~ ROUTING_VALUE_PATTERN
@@ -654,6 +644,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.error("#{name} static value is #{value.length} characters; it must be #{ROUTING_VALUE_MAX_LENGTH} characters or fewer when dynamic routing is enabled.")
       raise LogStash::ConfigurationError.new("#{name} static value is #{value.length} characters; it must be #{ROUTING_VALUE_MAX_LENGTH} characters or fewer when dynamic routing is enabled.")
     end
+  end
+
+  def validate_routing_limit(name, value)
+    return if value.finite? && value >= 0 && value == value.to_i
+
+    raise LogStash::ConfigurationError, "#{name} must be 0 (disabled) or a positive finite integer."
   end
 
   # True when Logstash's native dead-letter queue is enabled for this pipeline.
@@ -764,7 +760,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         # remain and the original event can no longer be dead-lettered).
         if planned_open && !planned_open.key?(file_output_path)
           if planned_open.size >= @open_files_max
-            handle_unroutable_event(event, "open temporary file limit (#{@open_files_max}) reached; routing to a new database/table/mapping target would exceed it (raise dynamic_routing_max_open_files, reduce routing cardinality, or shorten flush_interval/stale_cleanup_interval)")
+            handle_unroutable_event(event, "open temporary file limit (#{@open_files_max}) reached; routing to a new database/table/mapping target would exceed it (raise dynamic_routing_max_open_files, reduce routing cardinality, or shorten stale_cleanup_interval)")
             unroutable_reasons['open file limit reached'] += 1
             next
           end
@@ -777,26 +773,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       log_unroutable_summary(unroutable_reasons)
 
       encoded_by_path.each do |path, chunks|
-        begin
-          fd = open(path)
-          # append to the file
-          chunks.each { |chunk| fd.write(chunk) }
-          fd.flush unless @flusher && @flusher.alive?
-        rescue Errno::ENAMETOOLONG => e
-          # Last-resort backstop: the basename passed the 255-byte NAME_MAX check
-          # in valid_routing_target?, but this filesystem's NAME_MAX is lower
-          # (e.g. eCryptfs ~143). Only the encoded chunks are available here, not
-          # the original events, so these cannot be re-routed to the dead letter
-          # queue at this stage; they are dropped and logged. Isolate this path so
-          # the other paths in the batch still proceed.
-          @logger.error("Could not open routing target file; filename exceeds this filesystem's limit. Dropping events for this target (cannot be sent to the dead letter queue at this stage).", path: path, exception: e.class, message: e.message)
-        rescue Errno::ENOENT => e
-          # Path directory was deleted; isolate and log.
-          @logger.error('Could not open routing target file; parent directory missing.', path: path, exception: e.class, message: e.message)
-        rescue => e
-          # Other file-open errors; isolate and log.
-          @logger.error('Could not open routing target file.', path: path, exception: e.class, message: e.message)
-        end
+        # Invalid routes were handled while the original event was available.
+        # Storage failures are different: propagate them, as in static queued
+        # ingestion, rather than returning success for unwritten events.
+        fd = open(path)
+        chunks.each { |chunk| fd.write(chunk) }
+        fd.flush unless @flusher && @flusher.alive?
       end
 
       # Close any files that went stale in previous batches, then warn on the
@@ -839,7 +821,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
             fd.close
             @logger.debug("Closed file #{path}", fd: fd)
 
-            kusto_send_file(path)
+            @files.delete(path) if @dynamic_routing
+            kusto_send_file(@dynamic_routing ? fd.path : path)
           rescue Exception => e
             @logger.error('Exception while flushing and closing files.', exception: e)
           end
@@ -856,12 +839,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   private
   def inside_file_root?(log_path)
-    # Expand both sides and normalise any backslashes to '/' so the containment
-    # check is independent of separator style (Windows/JRuby may produce either)
-    # and of '.'/'..' segments. The path is inside the root when it is the root
-    # itself or sits beneath it.
-    target_file = File.expand_path(log_path).tr('\\', '/')
-    root = File.expand_path(@file_root).tr('\\', '/')
+    # Backslashes are separators on Windows, but literal filename characters on
+    # POSIX. Reinterpreting them on POSIX could admit a sibling directory.
+    target_file = File.expand_path(log_path)
+    root = File.expand_path(@file_root)
+    if Gem.win_platform?
+      target_file = target_file.tr('\\', '/')
+      root = root.tr('\\', '/')
+    end
     target_file == root || target_file.start_with?("#{root}/")
   end
 
@@ -879,7 +864,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     elsif @dynamic_routing && (unroutable = unroutable_reason(file_output_path))
       reason, category = unroutable
       return record_unroutable(event, reason, category, reasons)
-    elsif !@create_if_deleted && deleted?(file_output_path)
+    elsif !@create_if_deleted && (!@dynamic_routing || cached?(file_output_path)) && deleted?(file_output_path)
       # The temp file was deleted and we are told not to recreate it. In dynamic
       # mode there is no usable failure file (it carries no routing target and
       # cannot be ingested), so treat this as unroutable (DLQ / drop) to keep the
@@ -941,14 +926,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     _target, reason, category = self.class.classify_routing_target(file_output_path)
     return [reason, category] if reason
 
-    # The basename is the complete final filename, so guard it against the
-    # filesystem NAME_MAX (255 bytes). Percent-encoding can expand a value up to
-    # ~6× (a 1024-char value could encode to ~6144 bytes), so an ADX-valid value
-    # may still overflow the name; such targets are treated as unroutable
-    # (DLQ/drop) here rather than failing later in File.new.
+    # Reserve the fixed-size physical generation token before accepting an
+    # event; it must not cause an otherwise accepted name to overflow on open.
     basename = File.basename(file_output_path)
-    if basename.bytesize > ROUTING_ENCODED_BASENAME_MAX_BYTES
-      return ["encoded routing file name is #{basename.bytesize} bytes, over the #{ROUTING_ENCODED_BASENAME_MAX_BYTES}-byte filesystem limit (shorten database/table/json_mapping or the path prefix)", 'filename over filesystem limit']
+    physical_bytes = basename.bytesize + ROUTING_GENERATION_BYTES
+    if physical_bytes > ROUTING_ENCODED_BASENAME_MAX_BYTES
+      return ["encoded routing file name including its generation token is #{physical_bytes} bytes, over the #{ROUTING_ENCODED_BASENAME_MAX_BYTES}-byte filesystem limit (shorten database/table/json_mapping or the path prefix)", 'filename over filesystem limit']
     end
 
     nil
@@ -1011,7 +994,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     if open_count >= @open_files_warning_threshold
       unless @open_files_warning_active
         @open_files_warning_active = true
-        @logger.warn("Dynamic routing currently has #{open_count} temporary files open (threshold #{@open_files_warning_threshold}). High routing cardinality increases open file descriptors and produces many small ingestion calls; consider reducing the number of distinct database/table/mapping targets or increasing flush_interval/stale_cleanup_interval.", open_files: open_count, threshold: @open_files_warning_threshold)
+        @logger.warn("Dynamic routing currently has #{open_count} temporary files open (threshold #{@open_files_warning_threshold}). Reduce routing cardinality or shorten stale_cleanup_interval to reclaim inactive files; flush_interval does not close files.", open_files: open_count, threshold: @open_files_warning_threshold)
       end
     else
       @open_files_warning_active = false
@@ -1047,7 +1030,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       fd.close
       @files.delete(path)
 
-      kusto_send_file(path)
+      kusto_send_file(@dynamic_routing ? fd.path : path)
     end
     # mark all files as inactive, a call to write will mark them as active again
     @files.each { |path, fd| fd.active = false }
@@ -1061,11 +1044,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
   private
   def deleted?(path)
+    path = @files[path].path if @dynamic_routing && cached?(path)
     !File.exist?(path)
   end
 
   private
   def open(path)
+    if @dynamic_routing && cached?(path) && (@files[path].closed? || deleted?(path))
+      # Do not leak an externally deleted descriptor or reuse a closed one.
+      @files[path].close unless @files[path].closed?
+      @files.delete(path)
+    end
     return @files[path] if !deleted?(path) && cached?(path)
 
     if deleted?(path)
@@ -1089,6 +1078,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       end
     end
 
+    return @files[path] = open_dynamic_file(path) if @dynamic_routing
+
     # work around a bug opening fifos (bug JRUBY-6280)
     stat = begin
              File.stat(path)
@@ -1102,7 +1093,28 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
           else
             File.new(path, 'a+')
           end
-    @files[path] = IOWriter.new(fd)
+    @files[path] = IOWriter.new(fd, path)
+  end
+
+  private
+  def open_dynamic_file(logical_path)
+    require 'securerandom'
+
+    suffix_start = logical_path.rindex("#{@routing_owner_tag}#{ROUTING_MARKER}")
+    prefix = logical_path[0...suffix_start]
+    suffix = logical_path[suffix_start..-1]
+    attempts = 0
+    begin
+      physical_path = "#{prefix}#{ROUTING_GENERATION_MARKER}#{SecureRandom.hex(16)}#{suffix}"
+      flags = File::WRONLY | File::CREAT | File::EXCL
+      mode = @file_mode == -1 ? 0o666 : @file_mode.to_i
+      io = File.new(physical_path, flags, mode)
+    rescue Errno::EEXIST
+      attempts += 1
+      retry if attempts < 5
+      raise
+    end
+    IOWriter.new(io, physical_path)
   end
 
   private
@@ -1131,7 +1143,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                     # shared path root does not cause an output to pick up the
                     # leftover file of another output with a different routing
                     # configuration (possibly bound for a different cluster/table).
-                    Find.find(new_path).select { |p| File.file?(p) && dynamic_temp_file_owned_by_this_output?(p) }
+                    Find.find(new_path).select do |p|
+                      next false unless File.file?(p) && !File.symlink?(p) && dynamic_temp_file_owned_by_this_output?(p)
+                      next true unless self.class.decode_routing_target(p).nil?
+
+                      @logger.warn('Ignoring invalid dynamic routing file; retained for manual recovery.', path: p)
+                      false
+                    end
                   else
                     suffix = /\.#{Regexp.escape(database)}\.#{Regexp.escape(table)}\z/
                     Find.find(new_path).select { |p| File.file?(p) && p =~ suffix }
@@ -1296,7 +1314,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     # boundary, so a backslash-style path (possible on some Windows/JRuby setups)
     # is handled too. @path is sliced with the same index because tr does not
     # change the string length.
-    normalized = @path.tr('\\', '/')
+    normalized = Gem.win_platform? ? @path.tr('\\', '/') : @path
     path_last_char = normalized.length - 1
     pattern_start = normalized.index('%') || path_last_char
     last_folder_before_pattern = normalized.rindex('/', pattern_start) || path_last_char
@@ -1312,14 +1330,20 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   private
   def dynamic_temp_file_owned_by_this_output?(path)
     basename = File.basename(path)
-    basename.include?("#{@routing_owner_tag}#{ROUTING_MARKER}")
+    marker_index = basename.rindex(ROUTING_MARKER)
+    return false if marker_index.nil?
+
+    basename[0...marker_index].end_with?(@routing_owner_tag)
   end
 end
 
 # wrapper class
 class IOWriter
-  def initialize(io)
+  attr_reader :path
+
+  def initialize(io, path = nil)
     @io = io
+    @path = path
   end
 
   def write(*args)

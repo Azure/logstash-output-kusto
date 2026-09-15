@@ -1,5 +1,8 @@
-require '../lib/logstash-output-kusto_jars'
+require_relative '../lib/logstash-output-kusto_jars'
 require 'csv'
+require 'tmpdir'
+require 'securerandom'
+require 'fileutils'
 
 $kusto_java = Java::com.microsoft.azure.kusto
 
@@ -7,8 +10,10 @@ class E2E
 
   def initialize
     super
-    @input_file = "/tmp/input_file.txt"
-    @output_file = "output_file.txt"
+    run_id = SecureRandom.hex(8)
+    @work_directory = File.join(Dir.tmpdir, "kusto-e2e-#{run_id}").tr('\\', '/')
+    @input_file = "#{@work_directory}/input.csv"
+    @output_file = "#{@work_directory}/output.json"
     @columns = "(rownumber:int, rowguid:string, xdouble:real, xfloat:real, xbool:bool, xint16:int, xint32:int, xint64:long, xuint8:long, xuint16:long, xuint32:long, xuint64:long, xdate:datetime, xsmalltext:string, xtext:string, xnumberAsText:string, xtime:timespan, xtextWithNulls:string, xdynamicWithNulls:dynamic)"
     @csv_columns = '"rownumber", "rowguid", "xdouble", "xfloat", "xbool", "xint16", "xint32", "xint64", "xuint8", "xuint16", "xuint32", "xuint64", "xdate", "xsmalltext", "xtext", "xnumberAsText", "xtime", "xtextWithNulls", "xdynamicWithNulls"'
     @column_count = 19
@@ -19,16 +24,24 @@ class E2E
     if @lslocalpath.nil?
       @lslocalpath = "/usr/share/logstash/bin/logstash"
     end
-    @table_with_mapping = "RubyE2E#{Time.now.getutc.to_i}"
-    @table_without_mapping = "RubyE2ENoMapping#{Time.now.getutc.to_i}"    
-    @table_dynamic_odd = "RubyE2EDynamicOdd#{Time.now.getutc.to_i}"
-    @table_dynamic_even = "RubyE2EDynamicEven#{Time.now.getutc.to_i}"
+    @table_with_mapping = "RubyE2E#{run_id}"
+    @table_without_mapping = "RubyE2ENoMapping#{run_id}"
+    @table_dynamic_odd = "RubyE2EDynamicOdd#{run_id}"
+    @table_dynamic_even = "RubyE2EDynamicEven#{run_id}"
     @mapping_name = "test_mapping"
-    @csv_file = "dataset.csv"
+    @odd_mapping = 'odd_mapping'
+    @even_mapping = 'even_mapping'
+    # Optional pre-provisioned database; the harness never creates databases.
+    @even_database = ENV.fetch('TEST_SECOND_DATABASE', @database)
+    @csv_file = File.join(__dir__, 'dataset.csv')
 
     @logstash_config = %{
   input {
-    file { path => "#{@input_file}"}
+    file {
+      path => "#{@input_file}"
+      start_position => "beginning"
+      sincedb_path => "#{@work_directory}/sincedb"
+    }
   }
   filter {
     csv { columns => [#{@csv_columns}]}
@@ -40,8 +53,8 @@ class E2E
       code => "
         rn = event.get('rownumber').to_i
         event.set('[@metadata][kusto_table]', rn.odd? ? '#{@table_dynamic_odd}' : '#{@table_dynamic_even}')
-        event.set('[@metadata][kusto_database]', '#{@database}')
-        event.set('[@metadata][kusto_mapping]', '#{@mapping_name}')
+        event.set('[@metadata][kusto_database]', rn.odd? ? '#{@database}' : '#{@even_database}')
+        event.set('[@metadata][kusto_mapping]', rn.odd? ? '#{@odd_mapping}' : '#{@even_mapping}')
       "
     }
   }
@@ -49,7 +62,9 @@ class E2E
     file { path => "#{@output_file}"}
     stdout { codec => rubydebug }
     kusto {
-      path => "tmp%{+YYYY-MM-dd-HH-mm}.txt"
+      path => "#{@work_directory}/tmp%{+YYYY-MM-dd-HH-mm}.txt"
+      stale_cleanup_type => "interval"
+      stale_cleanup_interval => 2
       ingest_url => "#{@ingest_url}"
       cli_auth => true
       database => "#{@database}"
@@ -57,7 +72,9 @@ class E2E
       json_mapping => "#{@mapping_name}"
     }
     kusto {
-      path => "nomaptmp%{+YYYY-MM-dd-HH-mm}.txt"
+      path => "#{@work_directory}/nomaptmp%{+YYYY-MM-dd-HH-mm}.txt"
+      stale_cleanup_type => "interval"
+      stale_cleanup_interval => 2
       cli_auth => true
       ingest_url => "#{@ingest_url}"
       database => "#{@database}"
@@ -65,10 +82,12 @@ class E2E
     }
     # Dynamic routing: a single output resolves database, table AND json_mapping
     # per event from event metadata, fanning events out to two ADX tables by
-    # odd/even rownumber. This proves all three dynamic dimensions end to end
-    # (dynamic database + table + mapping), not just the table.
+    # odd/even rownumber. Mapping names differ; TEST_SECOND_DATABASE optionally
+    # exercises a second pre-provisioned database as well.
     kusto {
-      path => "dyntmp%{+YYYY-MM-dd-HH-mm}.txt"
+      path => "#{@work_directory}/dyntmp%{+YYYY-MM-dd-HH-mm}.txt"
+      stale_cleanup_type => "interval"
+      stale_cleanup_interval => 2
       cli_auth => true
       ingest_url => "#{@ingest_url}"
       database => "%{[@metadata][kusto_database]}"
@@ -79,39 +98,46 @@ class E2E
 }
   end
 
+  def destinations
+    [
+      [@database, @table_with_mapping, @mapping_name],
+      [@database, @table_without_mapping, nil],
+      [@database, @table_dynamic_odd, @odd_mapping],
+      [@even_database, @table_dynamic_even, @even_mapping]
+    ]
+  end
+
   def create_table_and_mapping
-    Array[@table_with_mapping, @table_without_mapping, @table_dynamic_odd, @table_dynamic_even].each { |tableop|
+    destinations.each do |database, tableop, mapping|
       puts "Creating table #{tableop}"
-      @query_client.executeMgmt(@database, ".drop table #{tableop} ifexists")
-      sleep(1)
-      @query_client.executeMgmt(@database, ".create table #{tableop} #{@columns}")
-      @query_client.executeMgmt(@database, ".alter table #{tableop} policy ingestionbatching @'{\"MaximumBatchingTimeSpan\":\"00:00:10\", \"MaximumNumberOfItems\": 1, \"MaximumRawDataSizeMB\": 100}'")
-    }
-    # Mapping for the tables that use it (static-with-mapping and both dynamic).
-    Array[@table_with_mapping, @table_dynamic_odd, @table_dynamic_even].each { |tableop|
-      @query_client.executeMgmt(@database, ".create table #{tableop} ingestion json mapping '#{@mapping_name}' '#{File.read("dataset_mapping.json")}'")
-    }
+      @query_client.executeMgmt(database, ".create table #{tableop} #{@columns}")
+      (@created_tables ||= []) << [database, tableop]
+      @query_client.executeMgmt(database, ".alter table #{tableop} policy ingestionbatching @'{\"MaximumBatchingTimeSpan\":\"00:00:10\", \"MaximumNumberOfItems\": 1, \"MaximumRawDataSizeMB\": 100}'")
+      if mapping
+        @query_client.executeMgmt(database, ".create table #{tableop} ingestion json mapping '#{mapping}' '#{File.read(File.join(__dir__, 'dataset_mapping.json'))}'")
+      end
+    end
   end
 
 
   def drop_and_cleanup
-    Array[@table_with_mapping, @table_without_mapping, @table_dynamic_odd, @table_dynamic_even].each { |tableop|
+    (@created_tables || []).each do |database, tableop|
       puts "Dropping table #{tableop}"
-      @query_client.executeMgmt(@database, ".drop table #{tableop} ifexists")
-      sleep(1)
-    }
+      @query_client.executeMgmt(database, ".drop table #{tableop} ifexists")
+    end
   end
 
   def run_logstash
-    File.write("logstash.conf", @logstash_config)
-    logstashpath = File.absolute_path("logstash.conf")
+    FileUtils.mkdir_p(@work_directory)
+    logstashpath = File.join(@work_directory, 'logstash.conf')
+    File.write(logstashpath, @logstash_config)
     File.write(@output_file, "")
     File.write(@input_file, "")
     lscommand = "#{@lslocalpath} -f #{logstashpath}"
     puts "Running logstash from config path #{logstashpath} and final command #{lscommand}"
     # Keep the child PID so the process can be terminated during cleanup (see
     # stop_logstash); otherwise a failed validation would leave Logstash running.
-    @logstash_pid = spawn(lscommand)
+    @logstash_pid = spawn(@lslocalpath, '-f', logstashpath, '--path.data', File.join(@work_directory, 'data'))
     sleep(60)
     data = File.read(@csv_file)
     f = File.open(@input_file, "a")
@@ -166,7 +192,7 @@ class E2E
     # Static tables receive the full dataset and are validated row-by-row.
     Array[@table_with_mapping, @table_without_mapping].each { |tableop|
       puts "Validating results for table #{tableop}"
-      validate_table_rows(tableop, csv_data, max_timeout)
+      validate_table_rows(tableop, csv_data, max_timeout, mapped: tableop == @table_with_mapping)
     }
 
     # Dynamic routing proof: a single output fanned events out to two tables by
@@ -175,20 +201,20 @@ class E2E
     odd_rows = csv_data.select { |row| row[0].to_i.odd? }
     even_rows = csv_data.select { |row| row[0].to_i.even? }
     puts "Validating dynamic routing: #{odd_rows.length} odd rows -> #{@table_dynamic_odd}, #{even_rows.length} even rows -> #{@table_dynamic_even}"
-    validate_table_rows(@table_dynamic_odd, odd_rows, max_timeout)
-    validate_table_rows(@table_dynamic_even, even_rows, max_timeout)
+    validate_table_rows(@table_dynamic_odd, odd_rows, max_timeout, mapped: true)
+    validate_table_rows(@table_dynamic_even, even_rows, max_timeout, mapped: true, database: @even_database)
   end
 
   # Validates that an ADX table eventually contains exactly the expected rows
   # (retried because ingestion is asynchronous), comparing column by column.
-  def validate_table_rows(tableop, expected_rows, max_timeout)
+  def validate_table_rows(tableop, expected_rows, max_timeout, mapped: false, database: @database)
     validated = false
     (0...max_timeout).each do |_|
       sleep(5)
       begin
-        query = @query_client.executeQuery(@database, "#{tableop} | sort by rownumber asc")
+        query = @query_client.executeQuery(database, "#{tableop} | sort by rownumber asc")
         result = query.getPrimaryResults()
-      rescue Exception => e
+      rescue StandardError => e
         puts "Error querying #{tableop}: #{e}"
         next
       end
@@ -208,7 +234,9 @@ class E2E
           elsif j == 12 # date formatting
             csv_item = csv_item.sub(".0000000", "")
           elsif j == 15 # numbers as text
-            result_item = expected_rows[i][0].to_s
+            # dataset_mapping maps this column from rowguid, while the default
+            # name-based mapping reads xnumberAsText. Never overwrite the result.
+            csv_item = expected_rows[i][1] if mapped
           elsif j == 17 #null
             next
           end
@@ -229,13 +257,16 @@ class E2E
       run_logstash
       assert_data
     ensure
-      # Always stop the spawned Logstash process and drop the test tables, even
-      # if validation raised, so a failed run leaks neither a process nor ADX
-      # tables.
-      stop_logstash
-      drop_and_cleanup
+      # Attempt cleanup even after validation fails. Release the SDK client
+      # even if a management request to drop a table fails.
+      begin
+        stop_logstash
+        drop_and_cleanup
+      ensure
+        @query_client.close
+      end
     end
   end
 end
 
-E2E::new().start
+E2E.new.start if $PROGRAM_NAME == __FILE__

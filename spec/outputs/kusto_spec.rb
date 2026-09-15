@@ -1,4 +1,5 @@
 # encoding: utf-8
+require_relative '../spec_helpers'
 require 'logstash/outputs/kusto'
 require 'logstash/codecs/plain'
 require 'logstash/event'
@@ -14,6 +15,7 @@ describe LogStash::Outputs::Kusto do
     "database" => "mydatabase",
     "table" => "mytable",
     "json_mapping" => "mymapping",
+    "flush_interval" => 0,
     "proxy_host" => "localhost",
     "proxy_port" => 3128,
     "proxy_protocol" => "https"
@@ -668,6 +670,7 @@ describe LogStash::Outputs::Kusto do
       kusto.register
       # Force a backslash-style @path (as some Windows/JRuby setups could yield)
       # and confirm the directory boundary before the field reference is still found.
+      allow(Gem).to receive(:win_platform?).and_return(true)
       kusto.instance_variable_set(:@path, 'C:\\logs\\kusto\\out-%{+YYYY-MM-dd-HH-mm}')
       scan_dir = kusto.send(:recovery_scan_dir)
       expect(scan_dir).not_to include('%')
@@ -712,13 +715,12 @@ describe LogStash::Outputs::Kusto do
 
   describe '#inside_file_root?' do
 
-    it 'treats a path inside the root as inside regardless of separator style' do
+    it 'interprets backslash separators only on Windows' do
       kusto = described_class.new(options.merge('path' => '/tmp/kusto/%{+YYYY-MM-dd-HH-mm}'))
       kusto.register
       root = kusto.instance_variable_get(:@file_root)
       expect(kusto.send(:inside_file_root?, "#{root}/sub/file.txt")).to be true
-      # A backslash-separated variant of the same in-root path is still inside.
-      expect(kusto.send(:inside_file_root?, "#{root}\\sub\\file.txt")).to be true
+      expect(kusto.send(:inside_file_root?, "#{root}\\sub\\file.txt")).to eq(Gem.win_platform?)
       kusto.close
     end
 
@@ -887,6 +889,7 @@ describe LogStash::Outputs::Kusto do
       kusto.register
       kusto.instance_variable_set(:@dlq_writer, nil)
       allow(kusto).to receive(:deleted?).and_return(true)
+      allow(kusto).to receive(:cached?).and_return(true) # an externally deleted active writer
 
       event = LogStash::Event.new
       event.set('[@metadata][database]', 'mydb')
@@ -1140,10 +1143,10 @@ describe LogStash::Outputs::Kusto do
       kusto.close
     end
 
-    it 'isolates an open failure (e.g. EMFILE) to the affected route and continues the batch' do
-      # When opening one route's temp file fails (here simulated EMFILE), the
-      # other routes in the batch must still be written and the batch must not
-      # abort (which would re-write the good routes on Logstash's retry).
+    it 'propagates EMFILE rather than reporting success for an unwritten route' do
+      # Unlike invalid routing data, a storage failure is not a DLQ/drop policy.
+      # Some earlier routes may already have been written; preserve the existing
+      # queued error contract instead of silently acknowledging the failed route.
       kusto = described_class.new(dynamic_options)
       kusto.register
       logger = spy('logger')
@@ -1160,9 +1163,8 @@ describe LogStash::Outputs::Kusto do
       allow(kusto).to receive(:open).with(good_path).and_return(good_writer)
       allow(kusto).to receive(:open).with(bad_path).and_raise(Errno::EMFILE)
 
-      expect { kusto.multi_receive_encoded([[good, '{"a":1}'], [bad, '{"a":1}']]) }.not_to raise_error
+      expect { kusto.multi_receive_encoded([[good, '{"a":1}'], [bad, '{"a":1}']]) }.to raise_error(Errno::EMFILE)
       expect(good_writer).to have_received(:write).with('{"a":1}')
-      expect(logger).to have_received(:error).with(/Could not open routing target file/, hash_including(:path)).at_least(:once)
       kusto.close
     end
 
@@ -1245,7 +1247,7 @@ describe LogStash::Outputs::Kusto do
 
       # A stale (inactive) file the cycle should close, queue for ingest, and
       # remove from @files — all under the lock.
-      fd = double('writer')
+      fd = double('writer', path: '/tmp/kusto/stale.kusto~db~t~m')
       allow(fd).to receive(:active).and_return(false)
       allow(fd).to receive(:active=)
       allow(fd).to receive(:close)
