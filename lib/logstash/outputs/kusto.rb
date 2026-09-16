@@ -86,6 +86,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     decoded.valid_encoding? ? decoded : nil
   end
 
+  # Share the absent-mapping rule between new filenames and legacy recovery.
+  # Interpret the same UTF-8 bytes as the decoder, without mutating the input.
+  # Invalid or overlong references must remain visible to routing validation.
+  def self.unresolved_optional_mapping?(value)
+    utf8 = value.dup.force_encoding('UTF-8')
+    utf8.valid_encoding? && utf8.length <= ROUTING_VALUE_MAX_LENGTH &&
+      utf8.match?(/\A%\{[^}]++\}\z/)
+  end
+
   # Decodes the (database, table, mapping) routing target encoded into a dynamic
   # temp file name by the output. This is the single source of truth shared by
   # the writer side (validating events before they are written) and the ingestor
@@ -140,7 +149,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # when the field is absent) -> route without a mapping. A composite such as
       # "prefix_%{...}" that is still unresolved is treated as unroutable so the
       # event is not silently ingested without its intended mapping.
-      if mapping =~ /\A%\{[^}]++\}\z/
+      if unresolved_optional_mapping?(mapping)
         mapping = nil
       else
         return [nil, 'json_mapping resolved to a composite value that still contains an unresolved field reference', 'invalid json_mapping']
@@ -906,14 +915,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     nil
   end
 
-  # True when the routing target encoded in a dynamically-generated file path is
-  # valid and its encoded file name fits the filesystem limit. Thin predicate
-  # over unroutable_reason (which carries the specific cause for DLQ/logs).
-  private
-  def valid_routing_target?(file_output_path)
-    unroutable_reason(file_output_path).nil?
-  end
-
   # Returns nil when the path is a valid routing target, otherwise a two-element
   # [reason, category] array describing why it is not: a missing/invalid database
   # or table, an unresolved/invalid json_mapping, or an encoded file name over the
@@ -943,12 +944,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
     # Resolve the user path (for time-based rotation) and each routing target
     # separately, then percent-encode each target so the file name is safe and
-    # the marker decodes unambiguously. Unresolved field references survive as a
-    # literal `%{...}` and are rejected later by decode_routing_target.
+    # the marker decodes unambiguously. Normalize an absent optional mapping
+    # BEFORE grouping, cap accounting and filename-budget validation. Other
+    # unresolved/invalid values survive for classify_routing_target to reject.
     prefix = event.sprintf(@path)
     database = self.class.encode_routing_segment(event.sprintf(@routing_database))
     table = self.class.encode_routing_segment(event.sprintf(@routing_table))
-    mapping = self.class.encode_routing_segment(@routing_mapping.nil? ? '' : event.sprintf(@routing_mapping))
+    resolved_mapping = @routing_mapping.nil? ? '' : event.sprintf(@routing_mapping)
+    resolved_mapping = '' if self.class.unresolved_optional_mapping?(resolved_mapping)
+    mapping = self.class.encode_routing_segment(resolved_mapping)
     # @routing_owner_tag (before the marker) stamps the file as ours for recovery;
     # the marker and its encoded segments stay contiguous so decoding is unchanged.
     "#{prefix}#{@routing_owner_tag}#{ROUTING_MARKER}#{database}~#{table}~#{mapping}"
@@ -1029,6 +1033,11 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.info("Closing file #{path}")
       fd.close
       @files.delete(path)
+      # Observe the low-water mark even if the next batch immediately refills
+      # the cache, or this upload handoff raises. The caller holds @io_mutex.
+      if @open_files_warning_active && @files.size < @open_files_warning_threshold
+        @open_files_warning_active = false
+      end
 
       kusto_send_file(@dynamic_routing ? fd.path : path)
     end

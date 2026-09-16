@@ -203,8 +203,11 @@ Notes and caveats:
   an exact single reference (for example `%{[@metadata][mapping]}`) routes using
   `database`/`table` and maps columns by attribute name. An unresolved composite
   such as `prefix_%{missing}`, a blank name, or invalid encoding is unroutable.
-  This means a **missing mapping field does not** send the event to the DLQ — if
-  a mapping is required for a table, make sure the field is always set upstream.
+  For an exact single-reference template, missing, null and empty mapping fields
+  share the same writer, open-file cap slot and filename budget for the same
+  resolved path, database and table. A missing mapping alone does not make an
+  event unroutable; other routing checks still apply. If a mapping is required
+  for a table, make sure the field is always set upstream.
 - Crash recovery scans the temp-file root for leftover files to resend on
   startup. Each dynamic temp file is stamped with a stable identifier derived
   from this output's `ingest_url`, `database`, `table`, `json_mapping` and
@@ -300,8 +303,11 @@ jruby -S bundle exec rspec spec
 jruby -S gem build logstash-output-kusto.gemspec
 ```
 
-On Windows, use `gradlew.bat vendor`. Unit tests stub only network clients while
-exercising the real Logstash codec, filesystem, executor, and SDK property objects.
+On Windows, use `gradlew.bat vendor`. The suite is network-free. Dedicated
+queued-ingestion integration-style tests replace only the SDK network client
+while exercising the real Logstash codec, filesystem, ingestor, executor, and
+SDK property objects. Other unit tests also stub writers or ingestors to isolate
+specific behaviors and failure paths.
 
 The live harness in [e2e/e2e.rb](e2e/e2e.rb) is separate: it creates and drops test
 tables and requires explicit test-cluster credentials (`ENGINE_URL`, `INGEST_URL`,

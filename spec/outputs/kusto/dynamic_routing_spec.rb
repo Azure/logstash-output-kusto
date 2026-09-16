@@ -54,6 +54,256 @@ describe LogStash::Outputs::Kusto, 'dynamic routing safety' do
     plugin.send(:close_stale_files)
   end
 
+  def unmapped_event(kind, table = 'orders')
+    ev = event('db', table, nil)
+    ev.remove('[@metadata][mapping]') if kind == :missing
+    ev.set('[@metadata][mapping]', '') if kind == :empty
+    ev.set('id', kind.to_s)
+    ev
+  end
+
+  def stored_ids(plugin)
+    writers(plugin).values.flat_map do |writer|
+      File.readlines(writer.path).map { |line| LogStash::Json.load(line)['id'] }
+    end
+  end
+
+  context 'optional mapping normalization' do
+    [0, 1].product([true, false], [true, false]).each do |cap, dlq_enabled, single_batch|
+      it "shares one writer with cap=#{cap}, DLQ=#{dlq_enabled}, single_batch=#{single_batch}, in every order" do
+        %i[missing null empty].permutation.each do |order|
+          # Event-driven cleanup is intentionally not due during these batches.
+          plugin = output('dynamic_routing_max_open_files' => cap, 'stale_cleanup_interval' => 60_000)
+          plugin.instance_variable_set(:@dlq_writer, nil) unless dlq_enabled
+          events = order.map { |kind| unmapped_event(kind) }
+          if single_batch
+            plugin.multi_receive(events)
+          else
+            events.each { |ev| plugin.multi_receive([ev]) }
+          end
+
+          expect(events.map { |ev| plugin.send(:generate_filepath, ev) }.uniq.length).to eq(1)
+          expect(writers(plugin).length).to eq(1)
+          expect(stored_ids(plugin)).to contain_exactly('missing', 'null', 'empty')
+        end
+        expect(dlq).not_to have_received(:write)
+        expect(logger).not_to have_received(:warn).with(/event\(s\).*could not be routed/)
+      end
+    end
+
+    [255, 256].each do |physical_bytes|
+      it "applies the same #{physical_bytes}-byte filename boundary to every absent mapping form" do
+        plugin = output('dynamic_routing_max_open_files' => 1)
+        empty = unmapped_event(:empty, 'x')
+        overhead = File.basename(plugin.send(:generate_filepath, empty)).bytesize - 1 +
+                   described_class::ROUTING_GENERATION_BYTES
+        table = 'a' * (physical_bytes - overhead)
+        events = %i[missing null empty].map { |kind| unmapped_event(kind, table) }
+        sizes = events.map do |ev|
+          File.basename(plugin.send(:generate_filepath, ev)).bytesize + described_class::ROUTING_GENERATION_BYTES
+        end
+        expect(sizes).to eq([physical_bytes] * 3)
+        plugin.multi_receive(events)
+
+        if physical_bytes == 255
+          expect(writers(plugin).length).to eq(1)
+          expect(File.basename(writers(plugin).values.first.path).bytesize).to eq(255)
+          expect(stored_ids(plugin)).to contain_exactly('missing', 'null', 'empty')
+          expect(dlq).not_to have_received(:write)
+        else
+          expect(writers(plugin)).to be_empty
+          events.each { |ev| expect(dlq).to have_received(:write).with(ev, /filesystem limit/).once }
+        end
+      end
+    end
+
+    it 'shares one cap slot across concurrent workers with different absent mapping forms' do
+      plugin = output('dynamic_routing_max_open_files' => 1, 'stale_cleanup_interval' => 60_000)
+      start = Queue.new
+      threads = (%i[missing null empty] * 3).each_with_index.map do |kind, index|
+        Thread.new do
+          ev = unmapped_event(kind)
+          ev.set('id', index)
+          start.pop
+          plugin.multi_receive([ev])
+        end
+      end
+      threads.length.times { start << true }
+      threads.each(&:value)
+
+      expect(writers(plugin).length).to eq(1)
+      expect(stored_ids(plugin)).to contain_exactly(*(0...9).to_a)
+      expect(dlq).not_to have_received(:write)
+    end
+
+    it 'normalizes resolved values, not templates, and keeps real mappings, destinations and windows separate' do
+      plugin = output
+      events = %i[missing null empty].map { |kind| unmapped_event(kind) }
+      %w[Map map].each { |mapping| events << event('db', 'orders', mapping) }
+      events << unmapped_event(:missing, 'other_table')
+      other_database = unmapped_event(:empty)
+      other_database.set('target_database', 'other_db')
+      events << other_database
+      later = unmapped_event(:null)
+      later.set('@timestamp', LogStash::Timestamp.new(Time.utc(2026, 9, 15, 1, 1)))
+      events << later
+      plugin.multi_receive(events)
+
+      expect(writers(plugin).length).to eq(6)
+      targets = writers(plugin).values.map { |writer| described_class.decode_routing_target(writer.path) }
+      expect(targets.count { |target| target == { database: 'db', table: 'orders', mapping: nil } }).to eq(2)
+      expect(targets.map { |target| target[:mapping] }.compact).to contain_exactly('Map', 'map')
+      expect(dlq).not_to have_received(:write)
+    end
+
+    [
+      '%{mapping}', '%{[mapping]}', "%{[#{'m' * 1019}]}"
+    ].each do |template|
+      it "normalizes a missing exact reference of #{template.length} characters without charging it to the filename" do
+        plugin = output('json_mapping' => template)
+        ev = unmapped_event(:missing)
+        path = plugin.send(:generate_filepath, ev)
+        expect(path).to end_with('.kusto~db~orders~')
+        plugin.multi_receive([ev])
+        expect(writers(plugin).length).to eq(1)
+        expect(dlq).not_to have_received(:write)
+      end
+    end
+
+    ['prefix_%{missing}', '%{missing}_suffix', '%{one}%{two}', "%{missing}\n",
+     '%{}', '%{missing', '   ', 'bad/mapping', '%2F', "%{#{'m' * 1022}}"].each do |value|
+      it "does not normalize an invalid resolved mapping #{value.length > 80 ? '(overlong reference)' : value.inspect}" do
+        plugin = output
+        ev = event('db', 'orders', value)
+        path = plugin.send(:generate_filepath, ev)
+        expect(described_class.classify_routing_target(path).last).to eq('invalid json_mapping')
+        plugin.multi_receive([ev])
+        expect(writers(plugin)).to be_empty
+        expect(dlq).to have_received(:write).with(ev, /json_mapping/).once
+      end
+    end
+
+    it 'does not erase invalid UTF-8 bytes inside an exact-looking mapping reference' do
+      plugin = output
+      ev = unmapped_event(:missing)
+      # Exercise malformed bytes at the sprintf boundary, without Java sanitizing the event string.
+      invalid = "%{\xFF}".b
+      allow(ev).to receive(:sprintf).and_call_original
+      allow(ev).to receive(:sprintf).with('%{[@metadata][mapping]}').and_return(invalid)
+      plugin.multi_receive_encoded([[ev, "payload\n"]])
+
+      expect(writers(plugin)).to be_empty
+      expect(dlq).to have_received(:write).with(ev, /invalid UTF-8/).once
+      expect(invalid.encoding).to eq(Encoding::ASCII_8BIT)
+    end
+
+    it 'preserves literal percent escapes until validation rather than decoding them a second time' do
+      plugin = output
+      ev = event('db', 'orders', '%25%7Bmissing%7D')
+      plugin.multi_receive([ev])
+      expect(writers(plugin)).to be_empty
+      expect(dlq).to have_received(:write).with(ev, /json_mapping/).once
+    end
+
+    it 'rejects a missing field in a composite template, but preserves its resolved literal when the field is empty' do
+      plugin = output('json_mapping' => 'prefix_%{[@metadata][mapping]}')
+      missing = unmapped_event(:missing)
+      empty = unmapped_event(:empty)
+      plugin.multi_receive([missing, empty])
+
+      expect(dlq).to have_received(:write).with(missing, /composite/).once
+      expect(writers(plugin).length).to eq(1)
+      expect(described_class.decode_routing_target(writers(plugin).values.first.path)[:mapping]).to eq('prefix_')
+      expect(stored_ids(plugin)).to eq(['empty'])
+    end
+
+    it 'recovers legacy unresolved and empty mapping filenames without changing ownership or appending to them' do
+      original = output
+      owner = original.instance_variable_get(:@routing_owner_tag)
+      encoded = described_class.encode_routing_segment('%{[@metadata][mapping]}')
+      legacy = File.join(@directory, "legacy#{owner}.kusto~db~orders~#{encoded}")
+      empty = File.join(@directory, "empty#{owner}.kusto~db~orders~")
+      [legacy, empty].each { |path| File.write(path, "old\n") }
+      restarted = output('recovery' => true)
+
+      expect(restarted.instance_variable_get(:@routing_owner_tag)).to eq(owner)
+      expect(uploads).to contain_exactly(legacy, empty)
+      [legacy, empty].each do |path|
+        expect(described_class.decode_routing_target(path)).to eq(database: 'db', table: 'orders', mapping: nil)
+      end
+      restarted.multi_receive(%i[missing null empty].map { |kind| unmapped_event(kind) })
+      expect(writers(restarted).length).to eq(1)
+      expect([legacy, empty]).not_to include(writers(restarted).values.first.path)
+      expect(stored_ids(restarted)).to contain_exactly('missing', 'null', 'empty')
+      [legacy, empty].each { |path| expect(File.read(path)).to eq("old\n") }
+    end
+  end
+
+  context 'warning re-arming after cleanup' do
+    it 'warns again after background cleanup between bursts, without an extra below-threshold receive call' do
+      # No automatic timer: run the real cleanup entry point on a separate thread, deterministically.
+      plugin = output('stale_cleanup_type' => 'interval', 'stale_cleanup_interval' => 0,
+                      'dynamic_routing_open_files_warning_threshold' => 1)
+      plugin.multi_receive([unmapped_event(:empty)])
+      Thread.new do
+        plugin.send(:close_stale_files) # Marks active writers inactive.
+        plugin.send(:close_stale_files) # Removes the inactive writers.
+      end.value
+
+      expect(writers(plugin)).to be_empty
+      expect(plugin.instance_variable_get(:@open_files_warning_active)).to be(false)
+      plugin.multi_receive([unmapped_event(:empty)])
+      expect(logger).to have_received(:warn).with(/Dynamic routing currently/, anything).twice
+    end
+
+    it 'warns again when cap-driven cleanup and refill happen in the same receive call' do
+      plugin = output('dynamic_routing_max_open_files' => 1, 'dynamic_routing_open_files_warning_threshold' => 1)
+      plugin.multi_receive([unmapped_event(:empty)])
+      writers(plugin).each_value { |writer| writer.active = false }
+      plugin.instance_variable_set(:@last_stale_cleanup_cycle, Time.now - 60)
+      plugin.multi_receive([unmapped_event(:missing)])
+
+      expect(writers(plugin).length).to eq(1)
+      expect(uploads.length).to eq(1)
+      expect(logger).to have_received(:warn).with(/Dynamic routing currently/, anything).twice
+      expect(dlq).not_to have_received(:write)
+    end
+
+    it 'does not re-arm when cleanup leaves the count exactly at the threshold' do
+      plugin = output('stale_cleanup_type' => 'interval', 'stale_cleanup_interval' => 0,
+                      'dynamic_routing_open_files_warning_threshold' => 2)
+      plugin.multi_receive(%w[one two three].map { |table| event('db', table) })
+      writers(plugin).values.first.active = false
+      plugin.send(:close_stale_files)
+
+      expect(writers(plugin).length).to eq(2)
+      expect(plugin.instance_variable_get(:@open_files_warning_active)).to be(true)
+      plugin.multi_receive([event('db', 'four')])
+      expect(logger).to have_received(:warn).with(/Dynamic routing currently/, anything).once
+    end
+
+    it 're-arms before enqueue so an upload handoff failure does not lose the below-threshold transition' do
+      plugin = output('dynamic_routing_open_files_warning_threshold' => 1)
+      plugin.multi_receive([event])
+      allow(uploader).to receive(:upload_async).and_raise(Concurrent::RejectedExecutionError)
+      expect { retire(plugin) }.to raise_error(Concurrent::RejectedExecutionError)
+      expect(writers(plugin)).to be_empty
+      expect(plugin.instance_variable_get(:@open_files_warning_active)).to be(false)
+
+      allow(uploader).to receive(:upload_async) { |path, _delete| uploads << path }
+      plugin.multi_receive([event])
+      expect(logger).to have_received(:warn).with(/Dynamic routing currently/, anything).twice
+    end
+
+    it 'keeps warnings disabled across cleanup when the threshold is zero' do
+      plugin = output('dynamic_routing_open_files_warning_threshold' => 0)
+      plugin.multi_receive([event])
+      retire(plugin)
+      plugin.multi_receive([event])
+      expect(logger).not_to have_received(:warn).with(/Dynamic routing currently/, anything)
+    end
+  end
+
   it 'partitions real files by database, table AND mapping, reusing a writer only for the same tuple' do
     plugin = output
     tuples = [

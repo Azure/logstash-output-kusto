@@ -1009,12 +1009,12 @@ describe LogStash::Outputs::Kusto do
       kusto.instance_variable_set(:@dlq_writer, dlq_writer)
       allow(dlq_writer).to receive(:write)
 
-      # A 1024-char UTF-8 value (at max length) encodes to ~6144 bytes when
-      # percent-encoded, far exceeding the 255-byte basename limit. This event
-      # should be routed to DLQ, not attempt to open an overlong filename.
+      # Lowercase ASCII needs no percent escapes: this segment alone is 1024
+      # bytes, exceeding the 255-byte basename limit. The event should go to
+      # DLQ without attempting to open an overlong filename.
       event = LogStash::Event.new
       event.set('[@metadata][database]', 'db')
-      event.set('[@metadata][table]', 'a' * 1024)  # encodes to ~1540 bytes
+      event.set('[@metadata][table]', 'a' * 1024)
       event.set('[@metadata][mapping]', 'mymapping')
       path = kusto.send(:event_path, event)
       # Path should be nil because the basename exceeds the filesystem limit.
