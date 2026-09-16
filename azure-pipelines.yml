@@ -1,12 +1,88 @@
 trigger:
-- master
+  branches:
+    include:
+      - master
 
 pr:
-- master
+  branches:
+    include:
+      - master
 
 pool:
   vmImage: ubuntu-latest
 
-steps:
-- script: echo "Hello from Azure Pipelines"
-  displayName: Validate Azure Pipelines integration
+variables:
+  LOGSTASH_SOURCE: '1'
+  LOGSTASH_PATH: /home/vsts/logstash
+  JRUBY_HOME: /home/vsts/logstash/vendor/jruby
+  JAVA_HOME: /home/vsts/logstash/jdk
+
+jobs:
+  - job: E2E
+    displayName: Kusto E2E tests
+    timeoutInMinutes: 45
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'True'))
+    steps:
+      - checkout: self
+        clean: true
+
+      - bash: |
+          set -euo pipefail
+          wget --quiet \
+            --output-document=/tmp/logstash.tar.gz \
+            https://artifacts.elastic.co/downloads/logstash/logstash-8.7.0-linux-x86_64.tar.gz
+          tar -xf /tmp/logstash.tar.gz -C /home/vsts
+          mv /home/vsts/logstash-8.7.0 "${LOGSTASH_PATH}"
+          echo "##vso[task.prependpath]${LOGSTASH_PATH}/bin"
+          echo "##vso[task.prependpath]${JRUBY_HOME}/bin"
+          echo "##vso[task.prependpath]${JAVA_HOME}/bin"
+        displayName: Install Logstash 8.7.0
+
+      - bash: |
+          set -euo pipefail
+          jruby -S gem install bundler -v 2.4.19
+        displayName: Install Bundler
+
+      - bash: |
+          set -euo pipefail
+          jruby -S bundle install
+        displayName: Install Ruby dependencies
+
+      - bash: |
+          set -euo pipefail
+          ./gradlew vendor
+        displayName: Vendor Java dependencies
+
+      - bash: |
+          set -euo pipefail
+          jruby -S gem build logstash-output-kusto.gemspec
+          version="$(tr -d '\r\n' < version)"
+          gem_path="$(Build.SourcesDirectory)/logstash-output-kusto-${version}.gem"
+          test -f "${gem_path}"
+          echo "##vso[task.setvariable variable=KUSTO_GEM_PATH]${gem_path}"
+        displayName: Build plugin gem
+
+      - bash: |
+          set -euo pipefail
+          "${LOGSTASH_PATH}/bin/logstash-plugin" install "${KUSTO_GEM_PATH}"
+        displayName: Install plugin into Logstash
+        env:
+          KUSTO_GEM_PATH: $(KUSTO_GEM_PATH)
+
+      - task: AzureCLI@2
+        displayName: Run Kusto E2E tests
+        inputs:
+          azureSubscription: logstash-output-kusto
+          scriptType: bash
+          scriptLocation: inlineScript
+          workingDirectory: $(Build.SourcesDirectory)/e2e
+          inlineScript: |
+            set -euo pipefail
+            az account show --output none
+            jruby -J-cp ../vendor/jar-dependencies e2e.rb
+            jruby -J-cp ../vendor/jar-dependencies streaming_e2e.rb
+        env:
+          ENGINE_URL: $(ENGINE_URL)
+          INGEST_URL: $(INGEST_URL)
+          TEST_DATABASE: $(TEST_DATABASE)
+          LS_LOCAL_PATH: /home/vsts/logstash/bin/logstash
