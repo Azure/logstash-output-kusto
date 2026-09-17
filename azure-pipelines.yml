@@ -72,7 +72,7 @@ jobs:
       - task: AzureCLI@2
         displayName: Run Kusto E2E tests
         inputs:
-          azureSubscription: logstash-output-kusto
+          azureSubscription: $(AZURE_SERVICE_CONNECTION)
           scriptType: bash
           scriptLocation: inlineScript
           workingDirectory: $(Build.SourcesDirectory)/e2e
