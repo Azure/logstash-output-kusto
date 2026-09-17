@@ -57,7 +57,7 @@ jobs:
           set -euo pipefail
           jruby -S gem build logstash-output-kusto.gemspec
           version="$(tr -d '\r\n' < version)"
-          gem_path="$(Build.SourcesDirectory)/logstash-output-kusto-${version}.gem"
+          gem_path="$(Build.SourcesDirectory)/logstash-output-kusto-${version}-java.gem"
           test -f "${gem_path}"
           echo "##vso[task.setvariable variable=KUSTO_GEM_PATH]${gem_path}"
         displayName: Build plugin gem
