@@ -110,6 +110,7 @@ class E2E
     csv_data = CSV.read(@csv_file)
     Array[@table_with_mapping, @table_without_mapping].each { |tableop| 
       puts "Validating results for table  #{tableop}"    
+      validated = false
       (0...max_timeout).each do |_|
         begin
           sleep(5)
@@ -118,6 +119,7 @@ class E2E
           raise "Wrong count - expected #{csv_data.length}, got #{result.count()} in table #{tableop}" unless result.count() == csv_data.length
         rescue Exception => e
           puts "Error: #{e}"
+          next
         end
         (0...csv_data.length).each do |i|
           result.next()
@@ -141,9 +143,10 @@ class E2E
           end
           puts ""
         end
-        return
+        validated = true
+        break
       end
-      raise "Failed after timeouts"
+      raise "Failed after timeouts for table #{tableop}" unless validated
     }
   end
 
@@ -152,7 +155,8 @@ class E2E
     create_table_and_mapping
     run_logstash
     assert_data
-    drop_and_cleanup    
+  ensure
+    drop_and_cleanup if @query_client
   end  
 end
 
