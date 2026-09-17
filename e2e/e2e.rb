@@ -1,5 +1,6 @@
 require '../lib/logstash-output-kusto_jars'
 require 'csv'
+require 'timeout'
 
 $kusto_java = Java::com.microsoft.azure.kusto
 
@@ -81,14 +82,27 @@ class E2E
     File.write(@input_file, "")
     lscommand = "#{@lslocalpath} -f #{logstashpath}"
     puts "Running logstash from config path #{logstashpath} and final command #{lscommand}"
-    spawn(lscommand)
-    sleep(60)
-    data = File.read(@csv_file)
-    f = File.open(@input_file, "a")
-    f.write(data)
-    f.close
-    sleep(60)
-    puts File.read(@output_file)
+    process_id = spawn(@lslocalpath, "-f", logstashpath, pgroup: true)
+    begin
+      sleep(60)
+      data = File.read(@csv_file)
+      f = File.open(@input_file, "a")
+      f.write(data)
+      f.close
+      sleep(60)
+      puts File.read(@output_file)
+    ensure
+      stop_process_group(process_id)
+    end
+  end
+
+  def stop_process_group(process_id)
+    Process.kill('TERM', -process_id)
+    Timeout.timeout(30) { Process.wait(process_id) }
+  rescue Timeout::Error
+    Process.kill('KILL', -process_id)
+    Process.wait(process_id)
+  rescue Errno::ESRCH, Errno::ECHILD
   end
 
   def assert_data
