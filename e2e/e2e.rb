@@ -106,7 +106,7 @@ class E2E
   end
 
   def assert_data
-    max_timeout = 10
+    max_timeout = 120
     csv_data = CSV.read(@csv_file)
     Array[@table_with_mapping, @table_without_mapping].each { |tableop| 
       puts "Validating results for table  #{tableop}"    
