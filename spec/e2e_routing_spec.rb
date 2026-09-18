@@ -131,12 +131,14 @@ describe E2E do
         directory = harness.instance_variable_get(:@work_directory)
         arguments = ['/logstash with spaces/bin/logstash', '-f', File.join(directory, 'logstash.conf'),
                      '--path.data', File.join(directory, 'data')]
-        arguments << { pgroup: true } unless windows
+        process_options = windows ? {} : { pgroup: true }
 
         harness.run_logstash
         harness.stop_logstash # Cleanup from start's ensure must be idempotent.
 
-        expect(harness).to have_received(:spawn).with(*arguments).once
+        # Ruby 2.6 passes **{} as a trailing hash; Ruby 3 omits it. Match the
+        # harness's keyword forwarding while still checking exact spawn options.
+        expect(harness).to have_received(:spawn).with(*arguments, **process_options).once
         expect(Process).to have_received(:kill).with('TERM', windows ? pid : -pid).once
         expect(harness).to have_received(:wait_for_exit).with(pid, 30).once
         expect(harness.instance_variable_get(:@logstash_pid)).to be_nil

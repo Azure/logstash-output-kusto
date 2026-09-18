@@ -50,7 +50,7 @@ jobs:
         run: ./gradlew vendor
         working-directory: 'kusto'        
       - name: Run unit tests
-        run: jruby -S bundle exec rspec -r rspec_junit_formatter --format RspecJunitFormatter -o rspec.xml
+        run: jruby -S bundle exec rspec -r rspec_junit_formatter --format progress --format RspecJunitFormatter -o rspec.xml
         working-directory: 'kusto'
       - run: jruby -S gem build *.gemspec
         working-directory: 'kusto'
@@ -62,7 +62,7 @@ jobs:
         with:
           name: logstash-kusto.gem
           path: 'kusto/logstash-kusto.gem'
-      - if: matrix.logstash.main == 'true'
+      - if: always() && matrix.logstash.main == 'true' && hashFiles('kusto/rspec.xml') != ''
         name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v1.6
         with:
