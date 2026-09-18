@@ -135,30 +135,37 @@ class E2E
     File.write(@input_file, "")
     lscommand = "#{@lslocalpath} -f #{logstashpath}"
     puts "Running logstash from config path #{logstashpath} and final command #{lscommand}"
-    # Keep the child PID so the process can be terminated during cleanup (see
-    # stop_logstash); otherwise a failed validation would leave Logstash running.
-    @logstash_pid = spawn(@lslocalpath, '-f', logstashpath, '--path.data', File.join(@work_directory, 'data'))
-    sleep(60)
-    data = File.read(@csv_file)
-    f = File.open(@input_file, "a")
-    f.write(data)
-    f.close
-    sleep(60)
-    puts File.read(@output_file)
+    # Isolate the process group on POSIX so CI cleanup includes child processes.
+    # Keep the per-run data directory and use PID-only cleanup on Windows.
+    @logstash_process_group = !Gem.win_platform?
+    process_options = @logstash_process_group ? { pgroup: true } : {}
+    @logstash_pid = spawn(@lslocalpath, '-f', logstashpath, '--path.data',
+                          File.join(@work_directory, 'data'), **process_options)
+    begin
+      sleep(60)
+      data = File.read(@csv_file)
+      File.open(@input_file, 'a') { |file| file.write(data) }
+      sleep(60)
+      puts File.read(@output_file)
+    ensure
+      # Stop before querying ADX: shutdown drains queued files and the next
+      # streaming E2E test must not inherit a running Logstash process.
+      stop_logstash
+    end
   end
 
-  # Terminate the spawned Logstash process if it is still running. Safe to call
-  # multiple times and when no process was started. Sends TERM, waits a bounded
-  # time for a graceful exit, then escalates to KILL so a Logstash that ignores
-  # TERM cannot hang the e2e cleanup (and the table drop that follows it).
+  # Terminate Logstash (and its POSIX process group). Safe to call repeatedly and
+  # when no process was started. Both TERM and KILL waits remain bounded so a
+  # hung child cannot prevent test-table cleanup and SDK client closure.
   def stop_logstash
     return if @logstash_pid.nil?
+    target = @logstash_process_group ? -@logstash_pid : @logstash_pid
     begin
-      Process.kill('TERM', @logstash_pid)
+      Process.kill('TERM', target)
       reaped = wait_for_exit(@logstash_pid, 30)
       unless reaped
         puts "Logstash (pid #{@logstash_pid}) did not exit after TERM; sending KILL."
-        Process.kill('KILL', @logstash_pid)
+        Process.kill('KILL', target)
         wait_for_exit(@logstash_pid, 10)
       end
     rescue Errno::ESRCH, Errno::ECHILD
@@ -167,6 +174,7 @@ class E2E
       puts "Error stopping logstash (pid #{@logstash_pid}): #{e}"
     ensure
       @logstash_pid = nil
+      @logstash_process_group = nil
     end
   end
 
@@ -187,7 +195,8 @@ class E2E
   end
 
   def assert_data
-    max_timeout = 10
+    # Match the upstream CI allowance for asynchronous queued ingestion.
+    max_timeout = 120
     csv_data = CSV.read(@csv_file)
     # Static tables receive the full dataset and are validated row-by-row.
     Array[@table_with_mapping, @table_without_mapping].each { |tableop|

@@ -17,6 +17,7 @@ describe E2E do
     allow(results).to receive(:getObject) { |index| values[index] }
     allow(results).to receive(:getString) { |index| values[index].to_s }
     allow(query_client).to receive(:executeQuery).and_return(double('query', getPrimaryResults: results))
+    results
   end
 
   def expected_values(mapped:)
@@ -58,6 +59,145 @@ describe E2E do
     other = described_class.new
     expect(harness.destinations.map { |tuple| tuple[1] } & other.destinations.map { |tuple| tuple[1] }).to be_empty
     expect(harness.instance_variable_get(:@input_file)).not_to eq(other.instance_variable_get(:@input_file))
+  end
+
+  it 'validates both static tables and both routed subsets with the upstream ingestion retry allowance' do
+    rows = CSV.read(harness.instance_variable_get(:@csv_file))
+    mapped, unmapped, odd, even = harness.destinations
+    expect(harness).to receive(:validate_table_rows).with(mapped[1], rows, 120, mapped: true).ordered
+    expect(harness).to receive(:validate_table_rows).with(unmapped[1], rows, 120, mapped: false).ordered
+    expect(harness).to receive(:validate_table_rows)
+      .with(odd[1], rows.select { |item| item[0].to_i.odd? }, 120, mapped: true).ordered
+    expect(harness).to receive(:validate_table_rows)
+      .with(even[1], rows.select { |item| item[0].to_i.even? }, 120, mapped: true, database: even[0]).ordered
+
+    harness.assert_data
+  end
+
+  it 'retries a failed query without trying to read an unavailable result' do
+    ready = respond_with(expected_values(mapped: true))
+    attempts = 0
+    allow(query_client).to receive(:executeQuery) do
+      attempts += 1
+      raise 'temporary query failure' if attempts == 1
+      double('query', getPrimaryResults: ready)
+    end
+
+    harness.validate_table_rows('routed_table', [row], 2, mapped: true)
+    expect(attempts).to eq(2)
+    expect(ready).to have_received(:next).once
+  end
+
+  it 'waits for the expected row count before reading and comparing data' do
+    ready = respond_with(expected_values(mapped: false))
+    partial = double('partial ingestion', count: 0)
+    expect(partial).not_to receive(:next)
+    allow(query_client).to receive(:executeQuery).and_return(
+      double('partial query', getPrimaryResults: partial), double('ready query', getPrimaryResults: ready)
+    )
+
+    harness.validate_table_rows('static_table', [row], 2)
+    expect(query_client).to have_received(:executeQuery).twice
+    expect(ready).to have_received(:next).once
+  end
+
+  it 'fails after the retry limit instead of reporting a partially ingested table as successful' do
+    partial = double('partial ingestion', count: 0)
+    allow(query_client).to receive(:executeQuery).and_return(double('query', getPrimaryResults: partial))
+    expect(partial).not_to receive(:next)
+
+    expect { harness.validate_table_rows('incomplete_table', [row], 2) }
+      .to raise_error('Failed after timeouts validating table incomplete_table')
+    expect(query_client).to have_received(:executeQuery).twice
+  end
+
+  context 'Logstash process cleanup' do
+    let(:pid) { 4242 }
+
+    before do
+      harness.instance_variable_set(:@lslocalpath, '/logstash with spaces/bin/logstash')
+      allow(harness).to receive(:spawn).and_return(pid)
+      allow(harness).to receive(:wait_for_exit).and_return(true)
+      allow(Process).to receive(:kill)
+    end
+
+    after do
+      FileUtils.rm_rf(harness.instance_variable_get(:@work_directory))
+    end
+
+    [false, true].each do |windows|
+      it "stops Logstash before returning, preserving isolated paths (Windows=#{windows})" do
+        allow(Gem).to receive(:win_platform?).and_return(windows)
+        directory = harness.instance_variable_get(:@work_directory)
+        arguments = ['/logstash with spaces/bin/logstash', '-f', File.join(directory, 'logstash.conf'),
+                     '--path.data', File.join(directory, 'data')]
+        arguments << { pgroup: true } unless windows
+
+        harness.run_logstash
+        harness.stop_logstash # Cleanup from start's ensure must be idempotent.
+
+        expect(harness).to have_received(:spawn).with(*arguments).once
+        expect(Process).to have_received(:kill).with('TERM', windows ? pid : -pid).once
+        expect(harness).to have_received(:wait_for_exit).with(pid, 30).once
+        expect(harness.instance_variable_get(:@logstash_pid)).to be_nil
+        expect(File.read(harness.instance_variable_get(:@input_file)))
+          .to eq(File.read(harness.instance_variable_get(:@csv_file)))
+      end
+    end
+
+    it 'stops the process group even when preparing the input fails' do
+      allow(Gem).to receive(:win_platform?).and_return(false)
+      allow(File).to receive(:read).and_call_original
+      allow(File).to receive(:read).with(harness.instance_variable_get(:@csv_file)).and_raise(IOError, 'input failed')
+
+      expect { harness.run_logstash }.to raise_error(IOError, 'input failed')
+      expect(Process).to have_received(:kill).with('TERM', -pid).once
+      expect(harness.instance_variable_get(:@logstash_pid)).to be_nil
+    end
+
+    it 'escalates to group KILL with a bounded wait when TERM does not stop the child' do
+      harness.instance_variable_set(:@logstash_pid, pid)
+      harness.instance_variable_set(:@logstash_process_group, true)
+      allow(harness).to receive(:wait_for_exit).with(pid, 30).and_return(false)
+      allow(harness).to receive(:wait_for_exit).with(pid, 10).and_return(true)
+      expect(Process).to receive(:kill).with('TERM', -pid).ordered
+      expect(Process).to receive(:kill).with('KILL', -pid).ordered
+
+      harness.stop_logstash
+      expect(harness).to have_received(:wait_for_exit).with(pid, 10).once
+      expect(harness.instance_variable_get(:@logstash_pid)).to be_nil
+    end
+
+    it 'tolerates an already exited process and does not signal it a second time' do
+      harness.instance_variable_set(:@logstash_pid, pid)
+      harness.instance_variable_set(:@logstash_process_group, true)
+      allow(Process).to receive(:kill).with('TERM', -pid).and_raise(Errno::ESRCH)
+
+      expect { harness.stop_logstash; harness.stop_logstash }.not_to raise_error
+      expect(Process).to have_received(:kill).once
+      expect(harness).not_to have_received(:wait_for_exit)
+    end
+
+    it 'does not signal any process when spawn fails' do
+      allow(harness).to receive(:spawn).and_raise(Errno::ENOENT)
+
+      expect { harness.run_logstash }.to raise_error(Errno::ENOENT)
+      harness.stop_logstash
+      expect(Process).not_to have_received(:kill)
+    end
+
+    it 'drains Logstash before validating ADX and always closes the query client' do
+      allow(Gem).to receive(:win_platform?).and_return(false)
+      harness.instance_variable_set(:@engine_url, 'https://test.kusto.windows.net')
+      allow($kusto_java.data.ClientFactory).to receive(:createClient).and_return(query_client)
+      allow(harness).to receive(:create_table_and_mapping)
+      expect(Process).to receive(:kill).with('TERM', -pid).ordered
+      expect(harness).to receive(:assert_data).ordered
+      expect(harness).to receive(:drop_and_cleanup).ordered
+      expect(query_client).to receive(:close).ordered
+
+      harness.start
+    end
   end
 
   it 'closes the SDK client even when test-table cleanup fails' do

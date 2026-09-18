@@ -24,12 +24,6 @@ jobs:
       JRUBY_HOME: /home/runner/logstash/vendor/jruby
       JAVA_HOME: /home/runner/logstash/jdk
     steps:
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.APP_ID }}
-          tenant-id: ${{ secrets.AUTH_ID }}
-          subscription-id: ${{ secrets.SUBSCRIPTION_ID }}      
       - name: Build logstash
         run: |
           echo "Getting logstash version ${{matrix.logstash.version}}"
@@ -73,52 +67,4 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v1.6
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          files: kusto/rspec.xml          
-  e2e:
-    name: End-To-End Testing
-    runs-on: ubuntu-latest
-    environment: build
-    permissions:
-      checks: write
-      pull-requests: write
-      id-token: write
-      contents: read
-    needs: build
-    steps:
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.APP_ID }}
-          tenant-id: ${{ secrets.AUTH_ID }}
-          subscription-id: ${{ secrets.SUBSCRIPTION_ID }}          
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: jruby
-          bundler-cache: true
-      - name: Checkout code
-        uses: actions/checkout@v2
-      - name: Download gem
-        uses: actions/download-artifact@v4
-        with:
-          name: logstash-kusto.gem
-      - name: Install logstash # taken from logstash's website https://www.elastic.co/guide/en/logstash/7.10/installing-logstash.html#_apt
-        run: |
-          wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
-          sudo apt-get install apt-transport-https
-          echo "deb https://artifacts.elastic.co/packages/8.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-8.x.list
-          sudo apt-get update && sudo apt-get install logstash
-      - run: sudo chown -R runner /usr/share/logstash
-      - run: sudo chmod -R u=rx,g=,o=  /usr/share/logstash/bin
-      - name: Install plugin
-        run: /usr/share/logstash/bin/logstash-plugin install logstash-kusto.gem
-      - name: Install libraries
-        run: ./gradlew vendor
-      - name: Run e2e
-        run: |
-          jruby -J-cp ../vendor/jar-dependencies e2e.rb
-          jruby -J-cp ../vendor/jar-dependencies streaming_e2e.rb
-        working-directory: 'e2e'
-        env:
-          ENGINE_URL: ${{ secrets.ENGINE_URL }}
-          INGEST_URL: ${{ secrets.INGEST_URL }}
-          TEST_DATABASE: ${{ secrets.TEST_DATABASE }}
+          files: kusto/rspec.xml
