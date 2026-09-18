@@ -4,6 +4,7 @@
 
 - Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) so a single output can route events to different Azure Data Explorer destinations. Resolved values may contain letters, digits, spaces, dots, dashes and underscores.
 - Dynamic event routing requires queued ingestion; combining it with streaming ingestion is rejected at startup.
+- Keep static queued path preparation parallel across workers and cache fixed containment inputs. Deleted-file decisions, writer operations and cleanup remain synchronized; dynamic cap accounting is unchanged.
 - Allocate an exclusive physical file for each dynamic writer generation, preventing late events from modifying files already handed to upload. Preserve case-distinct destinations on case-insensitive filesystems.
 - Propagate queued storage failures instead of acknowledging unwritten events. Static authentication and streaming behavior are unchanged.
 - Unroutable events (missing routing field or a value containing unsupported characters such as a path separator) are sent to Logstash's native Dead Letter Queue when it is enabled, and otherwise dropped with startup and per-batch warnings (rather than mis-ingested into an unintended table). Enable the dead letter queue to capture them.

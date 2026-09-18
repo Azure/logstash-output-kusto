@@ -412,6 +412,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
                      File.dirname(path)
                    end
       @failure_path = File.join(@file_root, @filename_failure)
+      # These containment inputs are fixed for this registered output. Only the
+      # event's resolved path needs expanding/normalizing on the receive path.
+      @windows_paths = Gem.win_platform?
+      @normalized_file_root = File.expand_path(@file_root)
+      @normalized_file_root = @normalized_file_root.tr('\\', '/') if @windows_paths
+      @normalized_file_root.freeze
+      @file_root_prefix = "#{@normalized_file_root}/".freeze
+      @path_has_field_ref = !!path_with_field_ref?
     else
       validate_streaming_config
       @streaming_chunker = StreamingChunker.new(streaming_max_request_bytes.to_i)
@@ -730,13 +738,15 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       return
     end
 
+    return receive_static_encoded(events_and_encoded) unless @dynamic_routing
+
     encoded_by_path = Hash.new { |h, k| h[k] = [] }
     # Tally unroutable events by short, stable category so the per-batch warning
     # can show a breakdown (e.g. "2 missing or invalid table, 1 filename over
     # filesystem limit") instead of only a total. Populated via event_path.
     unroutable_reasons = Hash.new(0)
 
-    # Everything runs under @io_mutex. This output declares `concurrency :shared`,
+    # Dynamic route planning runs under @io_mutex. This output declares `concurrency :shared`,
     # so several pipeline worker threads can call this method at once; holding the
     # lock across route planning, the open-file cap decision, and the actual file
     # opens makes the cap a GLOBAL invariant (two threads cannot each accept new
@@ -781,14 +791,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
       log_unroutable_summary(unroutable_reasons)
 
-      encoded_by_path.each do |path, chunks|
-        # Invalid routes were handled while the original event was available.
-        # Storage failures are different: propagate them, as in static queued
-        # ingestion, rather than returning success for unwritten events.
-        fd = open(path)
-        chunks.each { |chunk| fd.write(chunk) }
-        fd.flush unless @flusher && @flusher.alive?
-      end
+      write_encoded_by_path(encoded_by_path)
 
       # Close any files that went stale in previous batches, then warn on the
       # files still open afterwards, so the high-cardinality signal reflects the
@@ -797,6 +800,60 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       warn_if_too_many_open_files
     end
   end
+
+  # Static outputs do not need dynamic cap accounting. Preserve parallel path
+  # preparation across pipeline workers, but never read writer state outside
+  # @io_mutex. Both collections below belong only to the receiving batch.
+  def receive_static_encoded(events_and_encoded)
+    encoded_by_path = Hash.new { |h, k| h[k] = [] }
+    if @create_if_deleted
+      events_and_encoded.each do |event, encoded|
+        path = prepare_static_path(event)
+        @logger.debug('Writing event to tmp file.', filename: path)
+        encoded_by_path[path] << encoded
+      end
+    else
+      # Do not group yet: distinct missing paths may converge on the failure
+      # file. Resolve deletion policy under the lock in original event order.
+      prepared = events_and_encoded.map { |event, encoded| [prepare_static_path(event), encoded] }
+    end
+
+    @io_mutex.synchronize do
+      if prepared
+        prepared.each do |path, encoded|
+          path = @failure_path if path != @failure_path && deleted?(path)
+          @logger.debug('Writing event to tmp file.', filename: path)
+          encoded_by_path[path] << encoded
+        end
+      end
+      write_encoded_by_path(encoded_by_path)
+      close_stale_files_locked if @stale_cleanup_type == 'events'
+    end
+  end
+  private :receive_static_encoded
+
+  # Only immutable configuration and this event are read here. Keep writer
+  # lookup and create_if_deleted decisions in the locked receive phase.
+  def prepare_static_path(event)
+    path = generate_filepath(event)
+    if @path_has_field_ref && !inside_file_root?(path)
+      @logger.warn('The event tried to write outside the files root, writing the event to the failure file', event: event, filename: @failure_path)
+      path = @failure_path
+    end
+    path
+  end
+  private :prepare_static_path
+
+  # Both queued receive paths hold @io_mutex here. Foreground storage errors
+  # must propagate rather than acknowledge unwritten events.
+  def write_encoded_by_path(encoded_by_path)
+    encoded_by_path.each do |path, chunks|
+      fd = open(path)
+      chunks.each { |chunk| fd.write(chunk) }
+      fd.flush unless @flusher && @flusher.alive?
+    end
+  end
+  private :write_encoded_by_path
 
   # Emits a single aggregated warning per batch summarising how many events could
   # not be routed and a breakdown by category (instead of one log line per
@@ -851,12 +908,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     # Backslashes are separators on Windows, but literal filename characters on
     # POSIX. Reinterpreting them on POSIX could admit a sibling directory.
     target_file = File.expand_path(log_path)
-    root = File.expand_path(@file_root)
-    if Gem.win_platform?
-      target_file = target_file.tr('\\', '/')
-      root = root.tr('\\', '/')
-    end
-    target_file == root || target_file.start_with?("#{root}/")
+    target_file = target_file.tr('\\', '/') if @windows_paths
+    target_file == @normalized_file_root || target_file.start_with?(@file_root_prefix)
   end
 
   private
