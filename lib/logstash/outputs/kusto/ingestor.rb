@@ -43,7 +43,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
 
       kusto_java = Java::com.microsoft.azure.kusto
       apache_http = Java::org.apache.http
-      # kusto_connection_string = kusto_java.data.auth.ConnectionStringBuilder.createWithAadApplicationCredentials(ingest_url, app_id, app_key.value, app_tenant)
       # If there is managed identity, use it. This means the AppId and AppKey are empty/nil
       # If there is CLI Auth, use that instead of managed identity
       is_managed_identity = (app_id.nil? && app_key.nil? && !cli_auth)
@@ -76,7 +75,6 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       @logger.debug("Client name for tracing: #{name_for_tracing}")
 
       java_util = Java::java.util
-      # kusto_connection_string.setClientVersionForTracing(name_for_tracing)
       version_for_tracing=Gem.loaded_specs['logstash-output-kusto']&.version || "unknown"
       kusto_connection_string.setConnectorDetails("Logstash",version_for_tracing.to_s,"","",false,"", java_util.Collections.emptyMap());
       @kusto_client = kusto_client || begin
@@ -143,8 +141,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
 
     def validate_config(database, table, json_mapping, dynamic_routing, proxy_protocol, app_id, app_key, managed_identity_id, cli_auth)
-      # Preserve the existing authentication policy; routing does not select or
-      # change credentials. Broader authentication validation is independent.
+      # All routed destinations share these credentials.
       if app_id.nil? && app_key.nil? && managed_identity_id.nil?
         if cli_auth
           @logger.info('Using CLI Auth, this is only for dev-test scenarios. This is ***NOT RECOMMENDED*** for production')
@@ -241,10 +238,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     rescue Java::JavaNioFile::NoSuchFileException => e
       @logger.error("File doesn't exist! Unrecoverable error.", exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
     rescue => e
-      # When the retry limit is reached or another error happen we will wait and retry.
-      #
-      # Thread might be stuck here, but I think its better than losing anything
-      # its either a transient errors or something bad really happened.
+      # Queued retries are unbounded; persistent failures can delay shutdown.
       @logger.error('Uploading failed, retrying.', exception: e.class, message: e.message, path: path, backtrace: e.backtrace)
       sleep RETRY_DELAY_SECONDS
       retry
@@ -503,10 +497,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       build_ingestion_properties(target[:database], target[:table], target[:mapping])
     end
 
-    # Decodes the (database, table, mapping) target encoded into a dynamic temp
-    # file name by the output plugin. Delegates to the shared decoder on the
-    # output class so the writer and ingestor sides can never drift. Returns nil
-    # when the marker is absent or database/table are missing/invalid.
+    # Reuse the writer's routing validator; nil means no valid destination.
     def decode_routing_target(path)
       LogStash::Outputs::Kusto.decode_routing_target(path)
     end
@@ -517,7 +508,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @retry_condition.broadcast
       end
       @workers_pool.shutdown
-      @workers_pool.wait_for_termination(nil) # block until its done
+      @workers_pool.wait_for_termination(nil) # Queued retries may keep workers alive indefinitely.
       @kusto_client.close
     end
 

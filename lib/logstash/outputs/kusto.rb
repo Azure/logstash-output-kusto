@@ -26,14 +26,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # can ever appear inside a segment and decoding is always unambiguous.
   ROUTING_MARKER = '.kusto~'
 
-  # Tag inserted into the temp file name (immediately before ROUTING_MARKER) to
-  # stamp each dynamic temp file with a stable identifier for the output that
-  # wrote it (see register). Crash recovery resends only files carrying this
-  # output's identifier, so a Kusto output does not pick up the leftover files of
-  # another output with a *different* routing configuration sharing the same path
-  # root. (Outputs identical in ingest_url/path/database/table/json_mapping share
-  # an identifier; see routing_owner_id.) It sits before the marker so the routing
-  # segments stay contiguous and decode_routing_target is unaffected.
+  # Recovery owner tag, placed before ROUTING_MARKER to keep routing segments
+  # contiguous. Its stable configuration identity is defined by routing_owner_id.
   ROUTING_OWNER_MARKER = '.kustoid-'
 
   # Encode uppercase too: ADX table/mapping names are case-sensitive, whereas
@@ -95,31 +89,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       utf8.match?(/\A%\{[^}]++\}\z/)
   end
 
-  # Decodes the (database, table, mapping) routing target encoded into a dynamic
-  # temp file name by the output. This is the single source of truth shared by
-  # the writer side (validating events before they are written) and the ingestor
-  # side (resolving the destination at upload time), so the two can never drift.
-  #
-  # Returns a hash { database:, table:, mapping: } when the marker is present and
-  # both database and table decode to valid values, or nil otherwise. The mapping
-  # segment is optional: an empty value or an unresolved field reference
-  # (e.g. `%{[@metadata][mapping]}`, left behind when the field is absent) is
-  # normalised to nil (route without a mapping), while a mapping that decoded to a
-  # genuinely invalid value makes the whole target unroutable so the event is not
-  # silently ingested with the wrong mapping.
+  # Shared writer/ingestor decoder. Returns { database:, table:, mapping: } or
+  # nil for an invalid target. Empty mappings and legacy exact unresolved
+  # references mean no mapping; malformed nonempty mappings invalidate the route.
   def self.decode_routing_target(path)
     target, _reason, _category = classify_routing_target(path)
     target
   end
 
-  # Single source of truth behind decode_routing_target. Returns a three-element
-  # array: [target_hash, nil, nil] when the path carries a valid routing target,
-  # or [nil, reason, category] when it does not. `reason` is a specific,
-  # operator-friendly message (used verbatim in the dead-letter-queue entry);
-  # `category` is a short, stable label (no variable content) used to aggregate a
-  # per-batch breakdown in the warning log. The writer uses all three; the
-  # ingestor uses decode_routing_target (the hash-or-nil view), so the two stay
-  # in lock-step.
+  # Returns [target, nil, nil] or [nil, reason, category]. The writer uses the
+  # reason for DLQ entries and the stable category for per-batch warnings; the
+  # ingestor uses the target-only view through decode_routing_target.
   def self.classify_routing_target(path)
     return [nil, 'generated file name carried no routing marker', 'no routing marker'] if path.nil?
 
@@ -274,38 +254,21 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # to disable.
   config :dynamic_routing_open_files_warning_threshold, validate: :number, default: 100
 
-  # Hard cap on the number of temporary files dynamic routing keeps open at once
-  # (opt-in; 0, the default, disables the cap and preserves the previous
-  # behaviour). When set, an event whose route would require opening a new file
-  # beyond this many concurrently-open files is sent to the dead letter queue (or
-  # dropped, with a warning, when the DLQ is disabled) instead of risking
-  # file-descriptor exhaustion (EMFILE) deeper in the write path — where only the
-  # encoded bytes remain and the original event can no longer be dead-lettered.
-  # The cap is enforced while the event object is still available, so capped
-  # events are never silently lost. Only applies in dynamic mode. Set it below the
-  # process file-descriptor limit (ulimit -n), leaving headroom for other
-  # inputs/outputs, and pair it with the dead letter queue so capped events are
-  # captured. Reduce routing cardinality or shorten stale_cleanup_interval to
-  # reclaim inactive writers sooner. Flushing alone does not close files.
+  # Dynamic writer cap (0 disables it). New routes over the cap follow the
+  # unroutable-event policy while the original event is still available for DLQ.
+  # Leave headroom below the process FD limit for other plugins. Stale cleanup
+  # reclaims inactive writers; flushing alone does not close them.
   config :dynamic_routing_max_open_files, validate: :number, default: 0
 
-  # Optional stable identifier that participates in the per-output crash-recovery
-  # owner tag (see the dynamic routing notes in the README). The owner tag is
-  # otherwise derived from ingest_url / path / database / table / json_mapping, so
-  # two outputs identical in all of those settings share recovery files. Set a
-  # distinct recovery_owner_id on each such output (for example when they differ
-  # only by credentials or by an upstream pipeline conditional) to keep their
-  # crash recovery separate without having to give them different `path` roots.
-  # Leave unset to preserve the previous behaviour. Logstash's auto-generated `id`
-  # is deliberately not used for this because it changes between runs and would
-  # make files written before a restart unrecoverable.
+  # Distinguishes otherwise identical recovery owners (see routing_owner_id).
+  # The auto-generated plugin id is unsuitable because it changes on restart.
   config :recovery_owner_id, validate: :string, default: nil
 
   # Specify how many files can be uploaded concurrently
   config :upload_concurrent_count, validate: :number, default: 3
 
-  # Specify how many files can be kept in the upload queue before the main process
-  # starts processing them in the main thread (not healthy)
+  # Maximum queued uploads before caller-runs backpressure executes an upload
+  # on the submitting thread (a pipeline worker or cleanup thread).
   config :upload_queue_size, validate: :number, default: 30
 
   # Queued ingestion is optimized for throughput. Streaming ingestion is
@@ -391,14 +354,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @routing_table = table
         @routing_mapping = final_mapping
         @path = File.expand_path(path)
-        # Stamp every dynamic temp file with a stable identifier for this output so
-        # crash recovery only resends files this output wrote (see recover_past_files).
-        # The identifier is derived from the settings that define where this output
-        # sends data (ingest_url/path/database/table/json_mapping), so it is stable
-        # across restarts yet differs from any output with a different one of those.
-        # Outputs that are identical in all of them (e.g. differing only by
-        # credentials or by an upstream pipeline conditional) share a tag; give such
-        # outputs distinct `path` roots if they must not recover each other's files.
+        # Recovery matches this stable configuration identity in the filename.
         @routing_owner_tag = "#{ROUTING_OWNER_MARKER}#{routing_owner_id(final_mapping)}"
       else
         @path = File.expand_path("#{path}.#{database}.#{table}")
@@ -456,9 +412,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       ].each { |counter| @streaming_metric.increment(counter, 0) }
     end
 
-    # Cache the native Logstash dead-letter-queue writer (when DLQ is enabled in
-    # logstash.yml). In dynamic mode, events that cannot be routed are sent here;
-    # when the DLQ is disabled they are dropped (see handle_unroutable_event).
+    # Cache a real DLQ writer; handle_unroutable_event defines the fallback policy.
     @dlq_writer = dlq_enabled? ? execution_context.dlq_writer : nil
     if @dynamic_routing
       if @dlq_writer
@@ -623,16 +577,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     !value.nil? && value =~ FIELD_REF ? true : false
   end
 
-  # Stable per-output identifier embedded in dynamic temp file names so crash
-  # recovery only picks up files this output wrote. Derived from the settings that
-  # determine where this output sends data (endpoint + routing config + path) plus
-  # the optional recovery_owner_id, so it stays constant across restarts of the
-  # same configuration and differs from any output configured with a different
-  # endpoint/path/database/table/mapping. Two outputs identical in all of those
-  # (e.g. differing only by credentials or a pipeline conditional) produce the
-  # same id unless they set distinct recovery_owner_id values (or distinct `path`
-  # roots). Returns a short hex digest: filename-safe and free of the marker /
-  # separator characters.
+  # Recovery identity is stable for endpoint, path, destination templates and
+  # recovery_owner_id. Identical configurations share files even if credentials
+  # or pipeline conditions differ; use distinct owner ids or path roots to
+  # isolate them. The filename-safe digest is an identity tag, not a process lock.
   def routing_owner_id(final_mapping)
     identity = [ingest_url, path, database, table, (final_mapping || ''), (recovery_owner_id || '')].join("\u0000")
     Digest::SHA256.hexdigest(identity)[0, 16]
@@ -679,12 +627,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     writer = execution_context.dlq_writer
     return false if writer.nil?
 
-    # When the DLQ is disabled Logstash hands plugins a dummy writer that silently
-    # discards everything. Depending on the Logstash version that dummy may be the
-    # writer itself or wrapped behind `inner_writer`, so check BOTH. Treating a
-    # dummy as "enabled" would report events as DLQ-routed when they would in fact
-    # be discarded, bypassing the plugin's explicit drop-with-warning policy, so we
-    # are conservative and treat any dummy as disabled.
+    # Dummy writers may be wrapped. Neither form persists events, so treating
+    # either as enabled would suppress the drop warning without providing a DLQ.
     return false if dummy_dlq_writer?(writer)
     return false if writer.respond_to?(:inner_writer) && dummy_dlq_writer?(writer.inner_writer)
 
@@ -940,10 +884,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     file_output_path
   end
 
-  # Routes one unroutable event to the dead letter queue (or drops it) with its
-  # specific reason, and tallies its short category into the optional per-batch
-  # accumulator so log_unroutable_summary can show a breakdown. Always returns
-  # nil so the caller writes nothing to disk for this event.
+  # Apply the unroutable-event policy, tally its category, and return no spool path.
   private
   def record_unroutable(event, reason, category, reasons)
     handle_unroutable_event(event, reason)
@@ -951,12 +892,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     nil
   end
 
-  # Handles a dynamic event that could not be routed to a Kusto destination.
-  # Sends it to Logstash's native dead letter queue when enabled (where it can be
-  # inspected and replayed). When the DLQ is disabled the event is dropped to
-  # avoid an unbounded local file; the drop is surfaced loudly (a startup warning
-  # plus the per-batch count) so it is never a silent loss. Always returns nil so
-  # the caller writes nothing to disk for this event.
+  # Unroutable events go to the native DLQ when available; otherwise they are
+  # dropped with startup and per-batch warnings. No fallback spool file is written.
   private
   def handle_unroutable_event(event, reason)
     if @dlq_writer
@@ -1022,7 +959,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     parts.take_while { |part| part !~ FIELD_REF }.join(File::SEPARATOR)
   end
 
-  # the back-bone of @flusher, our periodic-flushing interval.
+  # Flush buffers under the writer lock without closing files or initiating upload.
   private
   def flush_pending_files
     @io_mutex.synchronize do
@@ -1071,9 +1008,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @io_mutex.synchronize { close_stale_files_locked }
   end
 
-  # The actual stale-file cleanup. Assumes the caller already holds @io_mutex (it
-  # reads and mutates @files). every 10 seconds or so (triggered by events, but
-  # if there are no events there's no point closing files anyway)
+  # Caller holds @io_mutex. Retire inactive writers and queue their files for
+  # ingestion. Interval-triggered cleanup also uploads buffers when input is idle.
   private
   def close_stale_files_locked
     now = Time.now
@@ -1201,10 +1137,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       # match literally. Restrict to regular files so a directory whose name
       # happens to match is never sent to ingest.
       old_files = if @dynamic_routing
-                    # Only resend files this output wrote (owner-stamped), so a
-                    # shared path root does not cause an output to pick up the
-                    # leftover file of another output with a different routing
-                    # configuration (possibly bound for a different cluster/table).
+                    # Reject foreign owners and retain invalid owned files.
                     Find.find(new_path).select do |p|
                       next false unless File.file?(p) && !File.symlink?(p) && dynamic_temp_file_owned_by_this_output?(p)
                       next true unless self.class.decode_routing_target(p).nil?

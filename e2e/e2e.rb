@@ -7,6 +7,12 @@ require 'fileutils'
 $kusto_java = Java::com.microsoft.azure.kusto
 
 class E2E
+  class ShutdownError < StandardError; end
+
+  TERM_TIMEOUT_SECONDS = 30
+  KILL_TIMEOUT_SECONDS = 10
+
+  attr_reader :logstash_status
 
   def initialize
     super
@@ -121,13 +127,23 @@ class E2E
 
 
   def drop_and_cleanup
-    (@created_tables || []).each do |database, tableop|
-      puts "Dropping table #{tableop}"
-      @query_client.executeMgmt(database, ".drop table #{tableop} ifexists")
+    failures = []
+    (@created_tables || []).dup.each do |database, tableop|
+      begin
+        puts "Dropping table #{tableop}"
+        @query_client.executeMgmt(database, ".drop table #{tableop} ifexists")
+        @created_tables.delete([database, tableop])
+      rescue StandardError => e
+        failures << e
+        warn "Failed to drop #{database}.#{tableop}: #{e.class}: #{e.message}"
+      end
     end
+    raise failures.first unless failures.empty?
   end
 
   def run_logstash
+    raise ShutdownError, "Logstash (pid #{@logstash_pid}) is still tracked; cannot start another process" if @logstash_pid
+
     FileUtils.mkdir_p(@work_directory)
     logstashpath = File.join(@work_directory, 'logstash.conf')
     File.write(logstashpath, @logstash_config)
@@ -138,61 +154,111 @@ class E2E
     # Isolate the process group on POSIX so CI cleanup includes child processes.
     # Keep the per-run data directory and use PID-only cleanup on Windows.
     @logstash_process_group = !Gem.win_platform?
+    @logstash_status = nil
+    @logstash_reaped = false
+    @logstash_terminated = false
+    @logstash_term_sent = false
+    @logstash_kill_sent = false
     process_options = @logstash_process_group ? { pgroup: true } : {}
     @logstash_pid = spawn(@lslocalpath, '-f', logstashpath, '--path.data',
                           File.join(@work_directory, 'data'), **process_options)
-    begin
+    with_cleanup(:stop_logstash) do
       sleep(60)
       data = File.read(@csv_file)
       File.open(@input_file, 'a') { |file| file.write(data) }
       sleep(60)
       puts File.read(@output_file)
-    ensure
-      # Stop before querying ADX: shutdown drains queued files and the next
-      # streaming E2E test must not inherit a running Logstash process.
-      stop_logstash
     end
   end
 
-  # Terminate Logstash (and its POSIX process group). Safe to call repeatedly and
-  # when no process was started. Both TERM and KILL waits remain bounded so a
-  # hung child cannot prevent test-table cleanup and SDK client closure.
+  # Only clear ownership after reaping the child and confirming its group is
+  # gone. A forced shutdown is a test failure even when KILL finishes cleanup.
   def stop_logstash
     return if @logstash_pid.nil?
-    target = @logstash_process_group ? -@logstash_pid : @logstash_pid
-    begin
-      Process.kill('TERM', target)
-      reaped = wait_for_exit(@logstash_pid, 30)
-      unless reaped
-        puts "Logstash (pid #{@logstash_pid}) did not exit after TERM; sending KILL."
-        Process.kill('KILL', target)
-        wait_for_exit(@logstash_pid, 10)
+
+    pid = @logstash_pid
+    target = @logstash_process_group ? -pid : pid
+    status = wait_for_exit(pid, 0)
+    unless status
+      if @logstash_kill_sent
+        signal_logstash('KILL', target)
+        status = wait_for_exit(pid, KILL_TIMEOUT_SECONDS)
+      else
+        sent = signal_logstash('TERM', target)
+        @logstash_term_sent ||= sent && @logstash_status.nil?
+        status = wait_for_exit(pid, TERM_TIMEOUT_SECONDS)
+        unless status
+          @logstash_kill_sent = signal_logstash('KILL', target)
+          status = wait_for_exit(pid, KILL_TIMEOUT_SECONDS)
+        end
       end
-    rescue Errno::ESRCH, Errno::ECHILD
-      # Already exited / already reaped.
-    rescue => e
-      puts "Error stopping logstash (pid #{@logstash_pid}): #{e}"
-    ensure
+    end
+    raise ShutdownError, "Logstash (pid #{pid}) termination was not confirmed after TERM/KILL" unless status
+    raise ShutdownError, "Logstash (pid #{pid}) required KILL to terminate" if @logstash_kill_sent
+
+    term = Signal.list.fetch('TERM')
+    # JVMs may report a handled SIGTERM as exit status 128 + TERM.
+    expected_term = @logstash_term_sent && (status.termsig == term || status.exitstatus == 128 + term)
+    unless status.success? || expected_term
+      detail = status.termsig ? "signal #{status.termsig}" : "exit status #{status.exitstatus}"
+      raise ShutdownError, "Logstash (pid #{pid}) terminated with #{detail}"
+    end
+    status
+  ensure
+    if @logstash_terminated
       @logstash_pid = nil
       @logstash_process_group = nil
     end
   end
 
-  # Polls for the child process to be reaped, up to timeout_seconds. Returns true
-  # if it exited within the window, false otherwise. Uses a non-blocking wait so a
-  # process that ignores TERM cannot block cleanup indefinitely.
+  # Return the recorded status only after all members of the owned POSIX group
+  # disappear. On Windows only the spawned PID is tracked.
   def wait_for_exit(pid, timeout_seconds)
-    deadline = Time.now + timeout_seconds
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout_seconds
+    target = @logstash_process_group ? -pid : pid
     loop do
-      begin
-        return true if Process.waitpid(pid, Process::WNOHANG)
-      rescue Errno::ECHILD
-        return true # already reaped
+      unless @logstash_reaped
+        begin
+          result = Process.waitpid2(pid, Process::WNOHANG)
+          if result
+            @logstash_status = result.last
+            @logstash_reaped = true
+          end
+        rescue Errno::ECHILD
+          @logstash_reaped = true
+        end
       end
-      return false if Time.now >= deadline
-      sleep(0.5)
+      if @logstash_reaped && !logstash_alive?(target)
+        @logstash_terminated = true
+        raise ShutdownError, "Logstash (pid #{pid}) exit status is unavailable" unless @logstash_status
+        return @logstash_status
+      end
+      remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      return nil if remaining <= 0
+      sleep([remaining, 0.1].min)
     end
   end
+
+  def logstash_alive?(target)
+    # Reaping confirms this child is gone; do not probe a potentially reused PID.
+    return false if !@logstash_process_group && @logstash_status
+    Process.kill(0, target)
+    true
+  rescue Errno::ESRCH
+    false
+  end
+  private :logstash_alive?
+
+  def signal_logstash(signal, target)
+    if !@logstash_process_group && @logstash_reaped
+      raise ShutdownError, 'Logstash exit status is unavailable; refusing to signal a reaped PID'
+    end
+    Process.kill(signal, target)
+    true
+  rescue Errno::ESRCH
+    false
+  end
+  private :signal_logstash
 
   def assert_data
     max_timeout = 120
@@ -259,21 +325,41 @@ class E2E
   end
 
   def start
-    @query_client = $kusto_java.data.ClientFactory.createClient($kusto_java.data.auth.ConnectionStringBuilder::createWithAzureCli(@engine_url))
-    begin
+    with_cleanup(:stop_logstash, :drop_and_cleanup, :close_query_client) do
+      @query_client = $kusto_java.data.ClientFactory.createClient($kusto_java.data.auth.ConnectionStringBuilder::createWithAzureCli(@engine_url))
       create_table_and_mapping
       run_logstash
       assert_data
-    ensure
-      begin
-        stop_logstash
-        drop_and_cleanup
-      ensure
-        # Not all SDK query clients expose close.
-        @query_client.close if @query_client.respond_to?(:close)
-      end
     end
   end
+
+  def close_query_client
+    # Not all SDK query clients expose close.
+    @query_client.close if @query_client.respond_to?(:close)
+  end
+  private :close_query_client
+
+  def with_cleanup(*actions)
+    primary_error = nil
+    begin
+      yield
+    rescue Exception => e # Preserve interrupts as well as validation errors.
+      primary_error = e
+      raise
+    ensure
+      failures = []
+      actions.each do |action|
+        begin
+          send(action)
+        rescue StandardError => e
+          failures << e
+          warn "Cleanup #{action} failed: #{e.class}: #{e.message}"
+        end
+      end
+      raise failures.first if primary_error.nil? && !failures.empty?
+    end
+  end
+  private :with_cleanup
 end
 
 E2E.new.start if $PROGRAM_NAME == __FILE__

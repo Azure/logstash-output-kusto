@@ -315,6 +315,11 @@ tables and requires explicit test-cluster credentials (`ENGINE_URL`, `INGEST_URL
 mapping fan-out. Set `TEST_SECOND_DATABASE` to an existing test database for
 cross-database fan-out too. Do not run it against production resources. Each run
 uses independent table names and local paths; local artifacts remain for inspection.
+This is a finite smoke test, not a throughput, soak, or fault-recovery qualification.
+It requires confirmed shutdown before querying results; forced termination fails
+the run. Shutdown checks cover the owned process group on POSIX and only the
+spawned PID on Windows. Cleanup attempts all run-owned tables and reports failures
+without replacing an earlier validation error.
 
 ## Contributing
 

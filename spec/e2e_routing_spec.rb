@@ -113,11 +113,18 @@ describe E2E do
 
   context 'Logstash process cleanup' do
     let(:pid) { 4242 }
+    let(:status) { instance_double(Process::Status, success?: true, exitstatus: 0, termsig: nil) }
 
     before do
       harness.instance_variable_set(:@lslocalpath, '/logstash with spaces/bin/logstash')
       allow(harness).to receive(:spawn).and_return(pid)
-      allow(harness).to receive(:wait_for_exit).and_return(true)
+      allow(harness).to receive(:wait_for_exit) do |_pid, timeout|
+        unless timeout.zero?
+          harness.instance_variable_set(:@logstash_status, status)
+          harness.instance_variable_set(:@logstash_terminated, true)
+          status
+        end
+      end
       allow(Process).to receive(:kill)
     end
 
@@ -156,15 +163,14 @@ describe E2E do
       expect(harness.instance_variable_get(:@logstash_pid)).to be_nil
     end
 
-    it 'escalates to group KILL with a bounded wait when TERM does not stop the child' do
+    it 'reports forced group termination after the bounded KILL wait' do
       harness.instance_variable_set(:@logstash_pid, pid)
       harness.instance_variable_set(:@logstash_process_group, true)
-      allow(harness).to receive(:wait_for_exit).with(pid, 30).and_return(false)
-      allow(harness).to receive(:wait_for_exit).with(pid, 10).and_return(true)
+      allow(harness).to receive(:wait_for_exit).with(pid, 30).and_return(nil)
       expect(Process).to receive(:kill).with('TERM', -pid).ordered
       expect(Process).to receive(:kill).with('KILL', -pid).ordered
 
-      harness.stop_logstash
+      expect { harness.stop_logstash }.to raise_error(E2E::ShutdownError, /required KILL/)
       expect(harness).to have_received(:wait_for_exit).with(pid, 10).once
       expect(harness.instance_variable_get(:@logstash_pid)).to be_nil
     end
@@ -176,7 +182,7 @@ describe E2E do
 
       expect { harness.stop_logstash; harness.stop_logstash }.not_to raise_error
       expect(Process).to have_received(:kill).once
-      expect(harness).not_to have_received(:wait_for_exit)
+      expect(harness).to have_received(:wait_for_exit).with(pid, 30).once
     end
 
     it 'does not signal any process when spawn fails' do
