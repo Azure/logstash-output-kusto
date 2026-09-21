@@ -15,19 +15,19 @@ jobs:
     name: Upload Release Asset
     runs-on: ubuntu-latest
     steps:
-      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+      - uses: ruby/setup-ruby@bec3f19a76460dbe12f60def7d1a77585f07516c # v1.322.0
         with:
           ruby-version: jruby
           bundler-cache: true
       - name: Checkout code
-        uses: actions/checkout@0717577d45739eb3c851188b29f50ed6c0b2194e # v2.8.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run gradle vendor
         run: ./gradlew vendor
       - name: Build gem
         run: jruby -S gem build *.gemspec
       - name: Get release
         id: get_release
-        uses: bruceadams/get-release@f589ce0779c7bef1faf175f7488c972eb47dc046 # v1.2.2
+        uses: bruceadams/get-release@74c3d60f5a28f358ccf241a00c9021ea16f0569f # v1.3.2
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - name: Publish gem
