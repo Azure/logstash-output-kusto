@@ -136,8 +136,7 @@ describe E2E do
         harness.run_logstash
         harness.stop_logstash # Cleanup from start's ensure must be idempotent.
 
-        # Ruby 2.6 passes **{} as a trailing hash; Ruby 3 omits it. Match the
-        # harness's keyword forwarding while still checking exact spawn options.
+        # Match keyword forwarding: Ruby 2.6 retains **{}, whereas Ruby 3 omits it.
         expect(harness).to have_received(:spawn).with(*arguments, **process_options).once
         expect(Process).to have_received(:kill).with('TERM', windows ? pid : -pid).once
         expect(harness).to have_received(:wait_for_exit).with(pid, 30).once
@@ -188,7 +187,7 @@ describe E2E do
       expect(Process).not_to have_received(:kill)
     end
 
-    it 'drains Logstash before validating ADX and always closes the query client' do
+    it 'drains Logstash before validating ADX and closes a close-capable client' do
       allow(Gem).to receive(:win_platform?).and_return(false)
       harness.instance_variable_set(:@engine_url, 'https://test.kusto.windows.net')
       allow($kusto_java.data.ClientFactory).to receive(:createClient).and_return(query_client)
@@ -202,7 +201,7 @@ describe E2E do
     end
   end
 
-  it 'closes the SDK client even when test-table cleanup fails' do
+  it 'closes a close-capable client even when test-table cleanup fails' do
     harness.instance_variable_set(:@engine_url, 'https://test.kusto.windows.net')
     allow($kusto_java.data.ClientFactory).to receive(:createClient).and_return(query_client)
     allow(harness).to receive(:create_table_and_mapping)
@@ -214,5 +213,42 @@ describe E2E do
 
     expect { harness.start }.to raise_error('cleanup failed')
     expect(harness).to have_received(:stop_logstash)
+  end
+
+  context 'query-client cleanup compatibility' do
+    let(:query_client) { instance_double(Java::com.microsoft.azure.kusto.data.Client) }
+
+    before do
+      harness.instance_variable_set(:@engine_url, 'https://test.kusto.windows.net')
+      allow($kusto_java.data.ClientFactory).to receive(:createClient).and_return(query_client)
+      allow(harness).to receive(:create_table_and_mapping)
+      allow(harness).to receive(:run_logstash)
+      allow(harness).to receive(:assert_data)
+      allow(harness).to receive(:stop_logstash)
+      allow(harness).to receive(:drop_and_cleanup)
+    end
+
+    it 'finishes successfully with the pinned SDK query-client API' do
+      expect(query_client).not_to respond_to(:close)
+      expect { harness.start }.not_to raise_error
+      expect(harness).to have_received(:assert_data).once
+      expect(harness).to have_received(:stop_logstash).once
+      expect(harness).to have_received(:drop_and_cleanup).once
+    end
+
+    it 'preserves a validation error when the query client cannot be closed' do
+      allow(harness).to receive(:assert_data).and_raise('validation failed')
+
+      expect { harness.start }.to raise_error('validation failed')
+      expect(harness).to have_received(:stop_logstash).once
+      expect(harness).to have_received(:drop_and_cleanup).once
+    end
+
+    it 'preserves a table-cleanup error when the query client cannot be closed' do
+      allow(harness).to receive(:drop_and_cleanup).and_raise('cleanup failed')
+
+      expect { harness.start }.to raise_error('cleanup failed')
+      expect(harness).to have_received(:stop_logstash).once
+    end
   end
 end

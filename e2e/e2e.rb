@@ -195,7 +195,6 @@ class E2E
   end
 
   def assert_data
-    # Match the upstream CI allowance for asynchronous queued ingestion.
     max_timeout = 120
     csv_data = CSV.read(@csv_file)
     # Static tables receive the full dataset and are validated row-by-row.
@@ -266,13 +265,12 @@ class E2E
       run_logstash
       assert_data
     ensure
-      # Attempt cleanup even after validation fails. Release the SDK client
-      # even if a management request to drop a table fails.
       begin
         stop_logstash
         drop_and_cleanup
       ensure
-        @query_client.close
+        # Not all SDK query clients expose close.
+        @query_client.close if @query_client.respond_to?(:close)
       end
     end
   end
