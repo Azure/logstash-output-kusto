@@ -1,5 +1,6 @@
 require '../lib/logstash-output-kusto_jars'
 require 'csv'
+require 'timeout'
 
 $kusto_java = Java::com.microsoft.azure.kusto
 
@@ -81,21 +82,35 @@ class E2E
     File.write(@input_file, "")
     lscommand = "#{@lslocalpath} -f #{logstashpath}"
     puts "Running logstash from config path #{logstashpath} and final command #{lscommand}"
-    spawn(lscommand)
-    sleep(60)
-    data = File.read(@csv_file)
-    f = File.open(@input_file, "a")
-    f.write(data)
-    f.close
-    sleep(60)
-    puts File.read(@output_file)
+    process_id = spawn(@lslocalpath, "-f", logstashpath, pgroup: true)
+    begin
+      sleep(60)
+      data = File.read(@csv_file)
+      f = File.open(@input_file, "a")
+      f.write(data)
+      f.close
+      sleep(60)
+      puts File.read(@output_file)
+    ensure
+      stop_process_group(process_id)
+    end
+  end
+
+  def stop_process_group(process_id)
+    Process.kill('TERM', -process_id)
+    Timeout.timeout(30) { Process.wait(process_id) }
+  rescue Timeout::Error
+    Process.kill('KILL', -process_id)
+    Process.wait(process_id)
+  rescue Errno::ESRCH, Errno::ECHILD
   end
 
   def assert_data
-    max_timeout = 10
+    max_timeout = 120
     csv_data = CSV.read(@csv_file)
     Array[@table_with_mapping, @table_without_mapping].each { |tableop| 
       puts "Validating results for table  #{tableop}"    
+      validated = false
       (0...max_timeout).each do |_|
         begin
           sleep(5)
@@ -104,6 +119,7 @@ class E2E
           raise "Wrong count - expected #{csv_data.length}, got #{result.count()} in table #{tableop}" unless result.count() == csv_data.length
         rescue Exception => e
           puts "Error: #{e}"
+          next
         end
         (0...csv_data.length).each do |i|
           result.next()
@@ -127,9 +143,10 @@ class E2E
           end
           puts ""
         end
-        return
+        validated = true
+        break
       end
-      raise "Failed after timeouts"
+      raise "Failed after timeouts for table #{tableop}" unless validated
     }
   end
 
@@ -138,7 +155,8 @@ class E2E
     create_table_and_mapping
     run_logstash
     assert_data
-    drop_and_cleanup    
+  ensure
+    drop_and_cleanup if @query_client
   end  
 end
 
