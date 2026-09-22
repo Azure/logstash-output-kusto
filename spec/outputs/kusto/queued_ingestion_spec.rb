@@ -67,4 +67,33 @@ describe LogStash::Outputs::Kusto, 'queued ingestion compatibility' do
       expect(client).to have_received(:close).once
     end
   end
+
+  it 'never submits reference-looking event mapping values as unmapped data' do
+    template = '%{[@metadata][mapping]}'
+    @plugin = described_class.new(
+      'path' => "#{@directory}/out-%{+YYYY-MM-dd-HH-mm}",
+      'ingest_url' => 'https://ingest-test.kusto.windows.net',
+      'app_id' => 'test-app', 'app_key' => 'test-key', 'app_tenant' => 'test-tenant',
+      'database' => 'db', 'table' => 'orders', 'json_mapping' => template,
+      'flush_interval' => 0, 'recovery' => false
+    )
+    @plugin.instance_variable_set(:@logger, logger)
+    @plugin.register
+    dlq = spy('DLQ')
+    @plugin.instance_variable_set(:@dlq_writer, dlq)
+    events = [nil, '', 'real_mapping', '%{other}', template].each_with_index.map do |mapping, index|
+      LogStash::Event.new('id' => index, '@metadata' => { 'mapping' => mapping },
+                         '@timestamp' => '2026-09-16T01:00:00Z')
+    end
+    @plugin.multi_receive(events)
+    @plugin.close
+    @plugin = nil
+
+    expect(received.size).to eq(2)
+    actual = 2.times.map { received.pop }.to_h { |item| [item[:mapping], item[:events].map { |ev| ev['id'] }] }
+    expect(actual).to eq(nil => [0, 1], 'real_mapping' => [2])
+    events.last(2).each { |ev| expect(dlq).to have_received(:write).with(ev, /json_mapping.*unresolved/).once }
+    expect(Dir.children(@directory)).to be_empty
+    expect(client).to have_received(:close).once
+  end
 end

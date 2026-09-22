@@ -80,7 +80,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     decoded.valid_encoding? ? decoded : nil
   end
 
-  # Share the absent-mapping rule between new filenames and legacy recovery.
+  # Recognize exact references in configured templates and legacy filenames.
   # Interpret the same UTF-8 bytes as the decoder, without mutating the input.
   # Invalid or overlong references must remain visible to routing validation.
   def self.unresolved_optional_mapping?(value)
@@ -93,14 +93,14 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # nil for an invalid target. Empty mappings and legacy exact unresolved
   # references mean no mapping; malformed nonempty mappings invalidate the route.
   def self.decode_routing_target(path)
-    target, _reason, _category = classify_routing_target(path)
+    target, _reason, _category = classify_routing_target(path, allow_legacy_mapping: true)
     target
   end
 
   # Returns [target, nil, nil] or [nil, reason, category]. The writer uses the
   # reason for DLQ entries and the stable category for per-batch warnings; the
-  # ingestor uses the target-only view through decode_routing_target.
-  def self.classify_routing_target(path)
+  # ingestor's decoder also accepts unresolved mapping suffixes in legacy files.
+  def self.classify_routing_target(path, allow_legacy_mapping: false)
     return [nil, 'generated file name carried no routing marker', 'no routing marker'] if path.nil?
 
     path = File.basename(path)
@@ -125,11 +125,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     elsif mapping.length > ROUTING_VALUE_MAX_LENGTH || mapping.strip.empty?
       return [nil, 'json_mapping is blank or too long', 'invalid json_mapping']
     elsif mapping =~ FIELD_REF
-      # An exact, unresolved field reference like %{[@metadata][mapping]} (left
-      # when the field is absent) -> route without a mapping. A composite such as
-      # "prefix_%{...}" that is still unresolved is treated as unroutable so the
-      # event is not silently ingested without its intended mapping.
+      # New writes normalize absent fields before encoding. Only persisted
+      # legacy files may use an exact reference to represent no mapping.
       if unresolved_optional_mapping?(mapping)
+        unless allow_legacy_mapping
+          return [nil, 'json_mapping contains an unresolved field reference', 'invalid json_mapping']
+        end
         mapping = nil
       else
         return [nil, 'json_mapping resolved to a composite value that still contains an unresolved field reference', 'invalid json_mapping']
@@ -941,7 +942,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     database = self.class.encode_routing_segment(event.sprintf(@routing_database))
     table = self.class.encode_routing_segment(event.sprintf(@routing_table))
     resolved_mapping = @routing_mapping.nil? ? '' : event.sprintf(@routing_mapping)
-    resolved_mapping = '' if self.class.unresolved_optional_mapping?(resolved_mapping)
+    # A present value can equal its template; only a missing/null field is absent.
+    if resolved_mapping == @routing_mapping &&
+       self.class.unresolved_optional_mapping?(@routing_mapping) &&
+       event.get(@routing_mapping[2...-1]).nil?
+      resolved_mapping = ''
+    end
     mapping = self.class.encode_routing_segment(resolved_mapping)
     # @routing_owner_tag (before the marker) stamps the file as ours for recovery;
     # the marker and its encoded segments stay contiguous so decoding is unchanged.

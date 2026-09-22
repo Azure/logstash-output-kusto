@@ -229,6 +229,88 @@ describe LogStash::Outputs::Kusto, 'dynamic routing safety' do
       expect(stored_ids(plugin)).to eq(['empty'])
     end
 
+    [true, false].product([true, false]).each do |dlq_enabled, invalid_first|
+      it "rejects reference-looking field values without consuming a cap slot (DLQ=#{dlq_enabled}, first=#{invalid_first})" do
+        plugin = output('dynamic_routing_max_open_files' => 1, 'stale_cleanup_interval' => 60_000)
+        plugin.instance_variable_set(:@dlq_writer, nil) unless dlq_enabled
+        invalid = ['%{other}', '%{[other]}', '%{[@metadata][mapping]}'].each_with_index.map do |value, id|
+          ev = event('db', 'orders', value)
+          ev.set('id', "invalid-#{id}")
+          ev.set('other', 'real_mapping')
+          ev
+        end
+        valid = %i[missing null empty].map { |kind| unmapped_event(kind) }
+        plugin.multi_receive(invalid_first ? invalid + valid : valid + invalid)
+
+        expect(writers(plugin).length).to eq(1)
+        expect(stored_ids(plugin)).to contain_exactly('missing', 'null', 'empty')
+        if dlq_enabled
+          invalid.each { |ev| expect(dlq).to have_received(:write).with(ev, /json_mapping.*unresolved/).once }
+        else
+          expect(dlq).not_to have_received(:write)
+          expect(logger).to have_received(:warn).with(/3 event\(s\).*DROPPED.*3 invalid json_mapping/).once
+        end
+      end
+    end
+
+    ['%{mapping}', '%{[mapping]}', '%{[@metadata][mapping]}'].each do |template|
+      it "distinguishes a missing #{template} field from a present value equal to its template" do
+        plugin = output('json_mapping' => template)
+        absent = event
+        field = template[2...-1]
+        absent.remove(field)
+        present = event
+        present.set(field, template)
+        expect(absent.sprintf(template)).to eq(present.sprintf(template))
+
+        plugin.multi_receive([absent, present])
+
+        expect(writers(plugin).values.sum { |writer| File.readlines(writer.path).length }).to eq(1)
+        expect(dlq).to have_received(:write).with(present, /json_mapping.*unresolved/).once
+        expect(dlq).not_to have_received(:write).with(absent, anything)
+      end
+    end
+
+    it 'rejects a reference-looking value assembled by a composite template' do
+      plugin = output('json_mapping' => '%{[prefix]}%{[suffix]}')
+      ev = event
+      ev.set('prefix', '%{')
+      ev.set('suffix', 'other}')
+      expect(ev.sprintf('%{[prefix]}%{[suffix]}')).to eq('%{other}')
+
+      plugin.multi_receive([ev])
+
+      expect(writers(plugin)).to be_empty
+      expect(dlq).to have_received(:write).with(ev, /json_mapping.*unresolved/).once
+    end
+
+    it 'uses the same rejection rules with the deprecated mapping fallback' do
+      plugin = output('json_mapping' => nil, 'mapping' => '%{[@metadata][mapping]}')
+      absent = unmapped_event(:missing)
+      invalid = event('db', 'orders', '%{other}')
+      plugin.multi_receive([invalid, absent])
+
+      expect(stored_ids(plugin)).to eq(['missing'])
+      expect(dlq).to have_received(:write).with(invalid, /json_mapping.*unresolved/).once
+    end
+
+    it 'propagates DLQ errors for reference-looking field values without writing a fallback file' do
+      plugin = output
+      allow(dlq).to receive(:write).and_raise(IOError, 'DLQ unavailable')
+
+      expect { plugin.multi_receive([event('db', 'orders', '%{other}')]) }.to raise_error(IOError, 'DLQ unavailable')
+      expect(writers(plugin)).to be_empty
+    end
+
+    it 'validates new writes strictly while retaining legacy unresolved-mapping decoding' do
+      encoded = described_class.encode_routing_segment('%{[@metadata][mapping]}')
+      path = "out.kusto~db~orders~#{encoded}"
+
+      expect(described_class.classify_routing_target(path))
+        .to match([nil, /json_mapping.*unresolved/, 'invalid json_mapping'])
+      expect(described_class.decode_routing_target(path)).to eq(database: 'db', table: 'orders', mapping: nil)
+    end
+
     it 'recovers legacy unresolved and empty mapping filenames without changing ownership or appending to them' do
       original = output
       owner = original.instance_variable_get(:@routing_owner_tag)
