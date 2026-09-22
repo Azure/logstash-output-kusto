@@ -48,6 +48,18 @@ describe LogStash::Outputs::Kusto, 'dynamic routing safety' do
     plugin.instance_variable_get(:@files)
   end
 
+  def join_workers(threads)
+    errors = []
+    threads.each do |thread|
+      begin
+        thread.value
+      rescue Exception => e # RSpec assertion failures must not skip joining later workers.
+        errors << e
+      end
+    end
+    raise errors.first unless errors.empty?
+  end
+
   def retire(plugin)
     writers(plugin).each_value { |writer| writer.active = false }
     plugin.instance_variable_set(:@last_stale_cleanup_cycle, Time.now - 60)
@@ -129,7 +141,7 @@ describe LogStash::Outputs::Kusto, 'dynamic routing safety' do
         end
       end
       threads.length.times { start << true }
-      threads.each(&:value)
+      join_workers(threads)
 
       expect(writers(plugin).length).to eq(1)
       expect(stored_ids(plugin)).to contain_exactly(*(0...9).to_a)
@@ -467,11 +479,23 @@ describe LogStash::Outputs::Kusto, 'dynamic routing safety' do
       end
     end
     6.times { start << true }
-    threads.each(&:value)
+    join_workers(threads)
 
     expect(writers(plugin).length).to eq(2)
     expect(dlq).to have_received(:write).with(anything, /open temporary file limit/).exactly(4).times
     expect(writers(plugin).values.map { |writer| File.binread(writer.path).lines.length }).to eq([1, 1])
+  end
+
+  [RuntimeError, RSpec::Expectations::ExpectationNotMetError].each do |error_class|
+    it "joins every worker before re-raising #{error_class}" do
+      first, second, last = Array.new(3) { double('worker') }
+      failure = error_class.new('first worker failed')
+      expect(first).to receive(:value).ordered.and_raise(failure)
+      expect(second).to receive(:value).ordered.and_raise('another worker failed')
+      expect(last).to receive(:value).ordered.and_return(nil)
+
+      expect { join_workers([first, second, last]) }.to raise_error { |error| expect(error).to equal(failure) }
+    end
   end
 
   it 'rejects names that fit only before the generation token is added' do

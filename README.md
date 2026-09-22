@@ -236,10 +236,10 @@ Notes and caveats:
   manually.
 - **Routing only validates the *format* of the target, not its *existence*.** A
   syntactically valid but non-existent (e.g. mistyped) `database`/`table`/`json_mapping`
-  passes local validation. Upload failures may be retried by Logstash; failures
-  after queued submission surface **inside Azure Data Explorer** (visible via
-  `.show ingestion failures`). Double-check routing values against existing ADX
-  objects. Successful queued submission is not confirmation of table ingestion.
+  passes local validation. Check that the destination exists and the output's
+  identity has the required permissions. Successful queued submission is not
+  confirmation of table ingestion; use the separate signals described in
+  [Monitoring queued ingestion](#monitoring-queued-ingestion).
 - Dynamic routing does not add exactly-once delivery or power-loss durability.
   Queued buffering/retry behavior is unchanged: partial batches can be duplicated
   after a failure, buffered writes can be lost on abrupt termination, and an
@@ -272,6 +272,41 @@ Notes and caveats:
   file-descriptor exhaustion. The cap and warning threshold must be finite,
   nonnegative integers (0 disables them).
 
+### Monitoring queued ingestion
+
+Routing, submission and final ingestion have different failure signals:
+
+| Stage | What to monitor |
+| --- | --- |
+| Local routing rejection | Per-batch rejection reasons and native Logstash DLQ entries. Enable and size the DLQ, monitor its storage/retention, and verify replay. With DLQ disabled, rejected events are dropped with warnings. |
+| SDK upload/submission failure | Plugin upload/retry/enqueue errors, spool growth and pipeline backpressure. Queued retries are unbounded and can delay shutdown. These errors are not automatically written to the routing DLQ. |
+| Later ADX ingestion failure | Azure Monitor ingestion metrics and diagnostic logs for the target cluster. A successful SDK return, empty spool, or absence of local errors does not establish final ingestion. |
+| Final data verification | Reconcile source event IDs, expected destinations and payloads with table rows over an agreed observation window. Report missing, duplicate, wrong-route and deliberately rejected events separately; aggregate counts alone are insufficient. |
+
+The [`.show ingestion failures` command](https://learn.microsoft.com/en-us/kusto/management/ingestion-failures?view=azure-data-explorer)
+only covers failures associated with ingestion management commands, not every
+ingestion stage. **An empty result is not proof of successful delivery.** With
+`delete_temp_files => true`, the local file can already be deleted when a later
+service-side failure occurs; retain source data for investigation and replay.
+
+Before onboarding customer traffic:
+
+1. Configure and alert on the relevant [ADX ingestion metrics](https://learn.microsoft.com/en-us/azure/data-explorer/monitor-data-explorer-reference#category-ingestion-health-and-performance),
+   and enable [ingestion diagnostic logs](https://learn.microsoft.com/en-us/azure/data-explorer/monitor-data-explorer#monitor-azure-data-explorer-ingestion-commands-queries-and-tables-using-diagnostic-logs)
+   in an approved destination with appropriate access and retention. Diagnostic
+   logs are disabled by default. `FailedIngestion` reports final failed outcomes;
+   the **Ingestion result** metric can also include transient failures retried by
+   the service. Correlate metrics, logs and local errors rather than treating
+   every retry as data loss.
+2. On an approved test destination, verify that a successful canary and a
+   controlled service-side rejection produce the expected metrics/logs and alerts.
+   Exercise local rejection/DLQ capture separately. This environment-specific
+   monitoring check must be completed before preview traffic begins.
+3. Keep a source ledger with unique event IDs and expected destinations, reconcile
+   actual rows, and define investigation/replay steps for missing or duplicate data.
+
+Ingestion diagnostic logs support queued ingestion through the data-ingestion URI;
+they do not cover direct streaming ingestion. Validate streaming monitoring separately.
 
 ### Release Notes and versions
 
@@ -318,8 +353,11 @@ uses independent table names and local paths; local artifacts remain for inspect
 This is a finite smoke test, not a throughput, soak, or fault-recovery qualification.
 It requires confirmed shutdown before querying results; forced termination fails
 the run. Shutdown checks cover the owned process group on POSIX and only the
-spawned PID on Windows. Cleanup attempts all run-owned tables and reports failures
-without replacing an earlier validation error.
+spawned PID on Windows. Unique table names are tracked before creation so cleanup
+can handle a lost create response. If process termination is unconfirmed, table
+deletion is deferred and the retained identities are reported for follow-up. After
+termination is confirmed (or no process was started), cleanup attempts all run-owned
+tables and reports failures without replacing an earlier validation error.
 
 ## Contributing
 

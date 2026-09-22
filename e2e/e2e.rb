@@ -116,8 +116,9 @@ class E2E
   def create_table_and_mapping
     destinations.each do |database, tableop, mapping|
       puts "Creating table #{tableop}"
-      @query_client.executeMgmt(database, ".create table #{tableop} #{@columns}")
+      # Track this run's unique name before a create response can be lost.
       (@created_tables ||= []) << [database, tableop]
+      @query_client.executeMgmt(database, ".create table #{tableop} #{@columns}")
       @query_client.executeMgmt(database, ".alter table #{tableop} policy ingestionbatching @'{\"MaximumBatchingTimeSpan\":\"00:00:10\", \"MaximumNumberOfItems\": 1, \"MaximumRawDataSizeMB\": 100}'")
       if mapping
         @query_client.executeMgmt(database, ".create table #{tableop} ingestion json mapping '#{mapping}' '#{File.read(File.join(__dir__, 'dataset_mapping.json'))}'")
@@ -127,6 +128,12 @@ class E2E
 
 
   def drop_and_cleanup
+    if @logstash_pid && !@logstash_terminated
+      retained = (@created_tables || []).map { |database, table| "#{database}.#{table}" }.join(', ')
+      raise ShutdownError,
+            "Logstash (pid #{@logstash_pid}) termination is not confirmed; retaining run-owned tables: #{retained}"
+    end
+
     failures = []
     (@created_tables || []).dup.each do |database, tableop|
       begin

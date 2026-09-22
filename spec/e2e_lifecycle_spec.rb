@@ -246,6 +246,149 @@ describe E2E, 'lifecycle failures' do
     end
   end
 
+  context 'run-owned resources' do
+    let(:client) { double('query client', close: nil) }
+    let(:tables) { harness.destinations.map { |database, table, _mapping| [database, table] } }
+
+    before do
+      harness.instance_variable_set(:@engine_url, 'https://test.kusto.windows.net')
+      harness.instance_variable_set(:@database, 'db')
+      harness.instance_variable_set(:@even_database, 'other_db')
+      harness.instance_variable_set(:@query_client, client)
+      allow($kusto_java.data.ClientFactory).to receive(:createClient).and_return(client)
+      allow(client).to receive(:executeMgmt)
+    end
+
+    [0, 1].product([false, true]).each do |failed_index, created_before_error|
+      it "cleans attempted table names after create #{failed_index + 1} fails (created=#{created_before_error})" do
+        primary = IOError.new('create response unavailable')
+        foreign = ['db', 'another_run']
+        server_tables = [foreign]
+        attempted, tracked_at_create, dropped = [], [], []
+        allow(client).to receive(:executeMgmt) do |database, command|
+          table = command.split[2]
+          identity = [database, table]
+          if command.match?(/\A\.create table \S+ \(/)
+            attempted << identity
+            tracked_at_create << (harness.instance_variable_get(:@created_tables) || []).include?(identity)
+            failing = identity == tables[failed_index]
+            server_tables << identity unless failing && !created_before_error
+            raise primary if failing
+          elsif command.start_with?('.drop table ')
+            dropped << identity
+            server_tables.delete(identity)
+          end
+        end
+        expect(harness).not_to receive(:run_logstash)
+
+        expect { harness.start }.to raise_error { |e| expect(e).to equal(primary) }
+        expect(attempted).to eq(tables.take(failed_index + 1))
+        expect(tracked_at_create).to all(be(true))
+        expect(dropped).to eq(attempted)
+        expect(server_tables).to eq([foreign])
+        expect(harness.instance_variable_get(:@created_tables)).to be_empty
+        expect(client).to have_received(:close).once
+      end
+    end
+
+    it 'retains the intended table when both its create response and cleanup fail' do
+      primary = IOError.new('create response unavailable')
+      allow(client).to receive(:executeMgmt).with('db', /\A\.create table /).and_raise(primary)
+      allow(client).to receive(:executeMgmt).with('db', /\A\.drop table /).and_raise('drop unavailable')
+
+      expect { harness.start }.to raise_error { |e| expect(e).to equal(primary) }
+      expect(harness.instance_variable_get(:@created_tables)).to eq([tables.first])
+      expect(client).to have_received(:executeMgmt).with('db', ".drop table #{tables.first[1]} ifexists").once
+      expect(harness).to have_received(:warn).with(/drop unavailable/).at_least(:once)
+      expect(client).to have_received(:close).once
+    end
+
+    it 'blocks direct table cleanup when only the leader has been reaped' do
+      harness.instance_variable_set(:@created_tables, tables.dup)
+      harness.instance_variable_set(:@logstash_pid, pid)
+      harness.instance_variable_set(:@logstash_status, exit_status)
+      harness.instance_variable_set(:@logstash_reaped, true)
+      harness.instance_variable_set(:@logstash_terminated, false)
+
+      expect { harness.drop_and_cleanup }.to raise_error(E2E::ShutdownError, /termination.*not confirmed/)
+      expect(client).not_to have_received(:executeMgmt)
+      expect(harness.instance_variable_get(:@created_tables)).to eq(tables)
+      expect(harness.instance_variable_get(:@logstash_pid)).to eq(pid)
+    end
+
+    %i[signal_failure timeout].product([false, true]).each do |failure_kind, validation_failed|
+      it "defers table drops after #{failure_kind}, preserving any primary error (validation_failed=#{validation_failed})" do
+        primary = RuntimeError.new('validation failed')
+        primary.set_backtrace(['validation-origin'])
+        allow(harness).to receive(:create_table_and_mapping) do
+          harness.instance_variable_set(:@created_tables, tables.dup)
+        end
+        allow(harness).to receive(:run_logstash) do
+          harness.instance_variable_set(:@logstash_pid, pid)
+          harness.instance_variable_set(:@logstash_process_group, true)
+          harness.instance_variable_set(:@logstash_terminated, false)
+        end
+        allow(harness).to receive(:assert_data) { raise primary if validation_failed }
+        allow(harness).to receive(:wait_for_exit).and_return(nil)
+        allow(Process).to receive(:kill).and_return(1)
+        if failure_kind == :signal_failure
+          allow(Process).to receive(:kill).with('TERM', -pid).and_raise(Errno::EPERM)
+        end
+
+        expect { harness.start }.to raise_error do |e|
+          if validation_failed
+            expect(e).to equal(primary)
+            expect(e.backtrace).to eq(['validation-origin'])
+          else
+            expect(e).to be_a(failure_kind == :signal_failure ? Errno::EPERM : E2E::ShutdownError)
+          end
+        end
+        expect(client).not_to have_received(:executeMgmt)
+        expect(harness.instance_variable_get(:@created_tables)).to eq(tables)
+        expect(harness.instance_variable_get(:@logstash_pid)).to eq(pid)
+        expect(harness).to have_received(:warn).with(/retaining run-owned tables/)
+        expect(client).to have_received(:close).once
+      end
+    end
+
+    it 'allows table cleanup after a confirmed abnormal exit without hiding that failure' do
+      allow(harness).to receive(:create_table_and_mapping) do
+        harness.instance_variable_set(:@created_tables, tables.dup)
+      end
+      allow(harness).to receive(:run_logstash) do
+        harness.instance_variable_set(:@logstash_pid, pid)
+        harness.instance_variable_set(:@logstash_process_group, true)
+      end
+      allow(harness).to receive(:assert_data)
+      allow(Process).to receive(:waitpid2).with(pid, Process::WNOHANG).and_return([pid, exit_status(23)])
+      allow(Process).to receive(:kill).with(0, -pid).and_raise(Errno::ESRCH)
+
+      expect { harness.start }.to raise_error(E2E::ShutdownError, /exit status 23/)
+      tables.each do |database, table|
+        expect(client).to have_received(:executeMgmt).with(database, ".drop table #{table} ifexists").once
+      end
+      expect(harness.instance_variable_get(:@created_tables)).to be_empty
+      expect(harness.instance_variable_get(:@logstash_pid)).to be_nil
+      expect(client).to have_received(:close).once
+    end
+
+    it 'permits deferred table cleanup only after a later stop confirms termination' do
+      harness.instance_variable_set(:@created_tables, tables.dup)
+      harness.instance_variable_set(:@logstash_pid, pid)
+      harness.instance_variable_set(:@logstash_process_group, true)
+      harness.instance_variable_set(:@logstash_terminated, false)
+      expect { harness.drop_and_cleanup }.to raise_error(E2E::ShutdownError)
+      expect(client).not_to have_received(:executeMgmt)
+      allow(Process).to receive(:waitpid2).with(pid, Process::WNOHANG).and_return([pid, exit_status])
+      allow(Process).to receive(:kill).with(0, -pid).and_raise(Errno::ESRCH)
+
+      harness.stop_logstash
+      harness.drop_and_cleanup
+      expect(client).to have_received(:executeMgmt).exactly(tables.length).times
+      expect(harness.instance_variable_get(:@created_tables)).to be_empty
+    end
+  end
+
   context 'real POSIX children' do
     before do
       skip 'POSIX process groups' if Gem.win_platform?
