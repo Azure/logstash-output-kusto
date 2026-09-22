@@ -38,7 +38,7 @@ jobs:
       - name: Install bundler
         run: jruby -S gem install bundler -v 2.4.19
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@0717577d45739eb3c851188b29f50ed6c0b2194e # v2.8.0
         with:
           path: 'kusto'
       - name: List CWD
@@ -58,13 +58,13 @@ jobs:
         working-directory: 'kusto'
       - if: matrix.logstash.main == 'true'
         name: Upload gem
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: logstash-kusto.gem
           path: 'kusto/logstash-kusto.gem'
       - if: always() && matrix.logstash.main == 'true' && hashFiles('kusto/rspec.xml') != ''
         name: Publish Unit Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v1.6
+        uses: EnricoMi/publish-unit-test-result-action@bfb98ff5ee4396ec4b50e2fcc5e8e0137410e858 # v1.6
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           files: kusto/rspec.xml
