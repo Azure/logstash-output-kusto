@@ -1,5 +1,26 @@
 # Changelog
 
+# 2.3.0 (Unreleased)
+
+- Add dynamic event routing: `database`, `table` and `json_mapping` now accept Logstash field references (e.g. `%{[@metadata][table]}`) so a single output can route events to different Azure Data Explorer destinations. Resolved values may contain letters, digits, spaces, dots, dashes and underscores.
+- Dynamic event routing requires queued ingestion; combining it with streaming ingestion is rejected at startup.
+- Keep static queued path preparation parallel across workers and cache fixed containment inputs. Deleted-file decisions, writer operations and cleanup remain synchronized; dynamic cap accounting is unchanged.
+- Allocate an exclusive physical file for each dynamic writer generation, preventing late events from modifying files already handed to upload. Preserve case-distinct destinations on case-insensitive filesystems.
+- Propagate queued storage failures instead of acknowledging unwritten events. Static authentication and streaming behavior are unchanged.
+- Unroutable events (missing routing field or a value containing unsupported characters such as a path separator) are sent to Logstash's native Dead Letter Queue when it is enabled, and otherwise dropped with startup and per-batch warnings (rather than mis-ingested into an unintended table). Enable the dead letter queue to capture them.
+- Reject blank names and invalid UTF-8. Fail fast for invalid static literals alongside dynamic routing. The optional mapping may be absent, but malformed or unresolved composite mappings are rejected.
+- Normalize equivalent absent optional mappings before writer grouping, cap accounting and filename-budget checks; preserve legacy recovery filenames. Re-arm high-cardinality warnings when cleanup takes the open-file count below the threshold, including when upload handoff fails.
+- Reject unresolved references supplied as nonempty event mapping values instead of ingesting them without a mapping; retain no-mapping behavior for missing/null fields and legacy recovery files.
+- Crash recovery is isolated per output: each dynamic temp file is stamped with a stable identifier derived from the output's `ingest_url`/`database`/`table`/`json_mapping`/`path`, and recovery only resends files carrying that identifier, so outputs with a *different* routing configuration sharing a `path` root never pick up each other's leftover files. Outputs identical in all of those settings (e.g. differing only by credentials or pipeline conditionals) share an identifier — give them distinct `path` roots if they must not recover each other's files.
+- Enforce the ADX 1–1024 character name limit and a conservative 255-byte encoded basename budget, including the path prefix, owner tag, and 38-byte generation token. Over-budget routes are sent to the DLQ or dropped with a reason. Stricter filesystem limits still propagate storage errors.
+- Add `dynamic_routing_open_files_warning_threshold` (default 100, set 0 to disable) to log a warning when dynamic routing holds many temporary files open at once, as an early signal of high routing cardinality.
+- Add `dynamic_routing_max_open_files` (default 0 = no cap) as an optional hard limit on concurrently-open dynamic temp files: once reached, events whose route would open another file are sent to the dead letter queue (or dropped with a warning when it is disabled) while the event is still in hand, instead of risking file-descriptor exhaustion (`EMFILE`) deeper in the write path where the original event can no longer be dead-lettered.
+- Add `recovery_owner_id` (optional) so two outputs with otherwise-identical routing configuration (e.g. differing only by credentials or pipeline conditionals) can be given distinct crash-recovery ownership without needing different `path` roots. Logstash's auto-generated `id` is intentionally not used because it changes between runs and would break recovery.
+- Require finite nonnegative integer open-file limits. Anchor recovery ownership to the decoded routing suffix; retain invalid files for manual recovery rather than deleting them.
+- Add real-file concurrency/recovery and codec-to-SDK tests, plus stronger live E2E fan-out assertions. Unit tests are network-free.
+- Known limitation: routing validates target format, not existence. Upload errors may be retried locally; failures after queued submission require ADX ingestion-failure monitoring. Existing queued durability/retry semantics remain unchanged.
+- Upgrade caveat: switching an existing output from static to dynamic routing does not auto-recover legacy static temp files (`.database.table` suffix) still on disk, because dynamic recovery only resends files carrying the output's dynamic owner tag. Drain the pipeline before switching, briefly redeploy the previous static configuration to flush them, or resend them manually.
+
 # 2.2.0
 
 - Add opt-in streaming ingestion while preserving queued ingestion as the default.
