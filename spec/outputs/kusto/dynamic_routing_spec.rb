@@ -80,6 +80,97 @@ describe LogStash::Outputs::Kusto, 'dynamic routing safety' do
     end
   end
 
+  context 'startup filename budget' do
+    %w[database table json_mapping].each do |name|
+      it "rejects an oversized encoded #{name} literal before starting workers" do
+        allow(Concurrent::ThreadPoolExecutor).to receive(:new).and_call_original
+
+        expect { output(name => 'A' * 100) }.to raise_error(
+          LogStash::ConfigurationError,
+          'Dynamic routing filename requires at least 372 bytes from literal routing values and fixed overhead, ' \
+          'over the 255-byte filesystem limit (shorten database/table/json_mapping literals).'
+        )
+        expect(Concurrent::ThreadPoolExecutor).not_to have_received(:new)
+        expect(described_class::Ingestor).not_to have_received(:new)
+        expect(Dir.children(@directory)).to be_empty
+      end
+    end
+
+    it 'counts UTF-8 percent-encoded bytes rather than characters' do
+      expect { output('table' => 'é' * 50) }.to raise_error(
+        LogStash::ConfigurationError, /requires at least 372 bytes.*255-byte filesystem limit/
+      )
+    end
+
+    it 'combines all literal values with the owner, separators and generation token' do
+      expect do
+        output('database' => 'a' * 70, 'table' => 'b' * 70, 'json_mapping' => 'c' * 50,
+               'dynamic_event_routing' => true)
+      end.to raise_error(LogStash::ConfigurationError, /requires at least 262 bytes.*255-byte filesystem limit/)
+    end
+
+    it 'checks the effective deprecated mapping when json_mapping is absent' do
+      expect { output('json_mapping' => nil, 'mapping' => 'A' * 100) }.to raise_error(
+        LogStash::ConfigurationError, /requires at least 372 bytes.*255-byte filesystem limit/
+      )
+    end
+
+    it 'does not charge an unused deprecated mapping to the filename' do
+      plugin = output('json_mapping' => 'map', 'mapping' => 'A' * 100)
+      plugin.multi_receive([event])
+
+      expect(writers(plugin).length).to eq(1)
+      expect(described_class.decode_routing_target(writers(plugin).values.first.path)[:mapping]).to eq('map')
+    end
+
+    [255, 256].each do |bytes|
+      it "handles the #{bytes}-byte minimum filename boundary without an off-by-one" do
+        settings = {
+          'path' => "#{@directory}/%{[bucket]}", 'database' => 'db',
+          'table' => 'a' * (bytes - 74), 'json_mapping' => nil, 'dynamic_event_routing' => true
+        }
+        if bytes == 256
+          expect { output(settings) }.to raise_error(LogStash::ConfigurationError, /requires at least 256 bytes/)
+        else
+          plugin = output(settings)
+          ev = event
+          ev.set('bucket', '')
+          plugin.multi_receive([ev])
+
+          expect(File.basename(writers(plugin).values.first.path).bytesize).to eq(255)
+          expect(dlq).not_to have_received(:write)
+        end
+      end
+    end
+
+    it 'does not count reference spelling or directory length as resolved filename bytes' do
+      field = 'x' * 300
+      plugin = output('path' => "#{@directory}/#{'d' * 120}/#{'e' * 120}/%{[bucket]}",
+                      'table' => "%{[#{field}]}")
+      ev = event
+      ev.set(field, 'orders')
+      ev.set('bucket', 'out')
+
+      expect(plugin.send(:event_path, ev)).not_to be_nil
+      expect(dlq).not_to have_received(:write)
+    end
+
+    it 'continues rejecting oversized event-resolved values at runtime' do
+      plugin = output
+      ev = event('db', 'A' * 100, nil)
+      plugin.multi_receive([ev])
+
+      expect(writers(plugin)).to be_empty
+      expect(dlq).to have_received(:write).with(ev, /255-byte filesystem limit/).once
+    end
+
+    it 'does not impose the dynamic filename budget on legacy static outputs' do
+      plugin = output('database' => 'db', 'table' => 'A' * 100, 'json_mapping' => nil)
+
+      expect(plugin.instance_variable_get(:@dynamic_routing)).to be(false)
+    end
+  end
+
   context 'optional mapping normalization' do
     [0, 1].product([true, false], [true, false]).each do |cap, dlq_enabled, single_batch|
       it "shares one writer with cap=#{cap}, DLQ=#{dlq_enabled}, single_batch=#{single_batch}, in every order" do

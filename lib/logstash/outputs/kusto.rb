@@ -357,6 +357,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         @path = File.expand_path(path)
         # Recovery matches this stable configuration identity in the filename.
         @routing_owner_tag = "#{ROUTING_OWNER_MARKER}#{routing_owner_id(final_mapping)}"
+        validate_dynamic_filename_budget
       else
         @path = File.expand_path("#{path}.#{database}.#{table}")
       end
@@ -616,6 +617,22 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     return if value.finite? && value >= 0 && value == value.to_i
 
     raise LogStash::ConfigurationError, "#{name} must be 0 (disabled) or a positive finite integer."
+  end
+
+  # Lower bound only: do not guess the length of templates or the resolved path.
+  # Full per-event validation still includes every encoded value and the basename.
+  def validate_dynamic_filename_budget
+    literal_bytes = [@routing_database, @routing_table, @routing_mapping].sum do |value|
+      value_dynamic?(value) ? 0 : self.class.encode_routing_segment(value).bytesize
+    end
+    minimum_bytes = @routing_owner_tag.bytesize + ROUTING_MARKER.bytesize + 2 +
+                    ROUTING_GENERATION_BYTES + literal_bytes
+    return if minimum_bytes <= ROUTING_ENCODED_BASENAME_MAX_BYTES
+
+    raise LogStash::ConfigurationError,
+          "Dynamic routing filename requires at least #{minimum_bytes} bytes from literal routing values and " \
+          "fixed overhead, over the #{ROUTING_ENCODED_BASENAME_MAX_BYTES}-byte filesystem limit " \
+          '(shorten database/table/json_mapping literals).'
   end
 
   # True when Logstash's native dead-letter queue is enabled for this pipeline.

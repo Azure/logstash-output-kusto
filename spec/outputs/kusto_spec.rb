@@ -744,17 +744,19 @@ describe LogStash::Outputs::Kusto do
       kusto.instance_variable_set(:@logger, logger)
       kusto.instance_variable_set(:@open_files_warning_threshold, 2)
 
-      kusto.instance_variable_set(:@files, { 'a' => 1, 'b' => 2 })
+      files = kusto.instance_variable_get(:@files)
+      allow(files).to receive(:size).and_return(2)
       kusto.send(:warn_if_too_many_open_files)
       kusto.send(:warn_if_too_many_open_files) # latched: must not warn again
       expect(logger).to have_received(:warn).with(/temporary files open/, anything).once
 
-      kusto.instance_variable_set(:@files, {}) # drops below threshold -> re-arm
+      allow(files).to receive(:size).and_return(0) # drops below threshold -> re-arm
       kusto.send(:warn_if_too_many_open_files)
-      kusto.instance_variable_set(:@files, { 'a' => 1, 'b' => 2 })
+      allow(files).to receive(:size).and_return(2)
       kusto.send(:warn_if_too_many_open_files)
       expect(logger).to have_received(:warn).with(/temporary files open/, anything).twice
       kusto.close
+      expect(logger).not_to have_received(:error)
     end
 
     it 'does not warn when the threshold is 0 (disabled)' do
@@ -763,10 +765,11 @@ describe LogStash::Outputs::Kusto do
       logger = spy('logger')
       kusto.instance_variable_set(:@logger, logger)
       kusto.instance_variable_set(:@open_files_warning_threshold, 0)
-      kusto.instance_variable_set(:@files, { 'a' => 1, 'b' => 2, 'c' => 3 })
+      allow(kusto.instance_variable_get(:@files)).to receive(:size).and_return(3)
       kusto.send(:warn_if_too_many_open_files)
       expect(logger).not_to have_received(:warn).with(/temporary files open/, anything)
       kusto.close
+      expect(logger).not_to have_received(:error)
     end
 
   end
@@ -1195,17 +1198,23 @@ describe LogStash::Outputs::Kusto do
       # consumes capacity. With one file already open and a cap of 1, a NEW route
       # in this batch must be dead-lettered while the already-open route still
       # writes. The accounting and the open happen under one @io_mutex section.
-      kusto = described_class.new(dynamic_options.merge('dynamic_routing_max_open_files' => 1))
+      kusto = described_class.new(dynamic_options.merge(
+        'dynamic_routing_max_open_files' => 1, 'stale_cleanup_interval' => 60_000
+      ))
       kusto.register
+      logger = spy('logger')
+      kusto.instance_variable_set(:@logger, logger)
       kusto.instance_variable_set(:@dlq_writer, dlq_writer)
       allow(dlq_writer).to receive(:write)
-      writer = double('writer', write: nil, flush: nil)
-      allow(kusto).to receive(:open).and_return(writer)
+      allow(kusto).to receive(:kusto_send_file)
 
       existing = LogStash::Event.new
       existing.set('[@metadata][database]', 'db'); existing.set('[@metadata][table]', 'existing'); existing.set('[@metadata][mapping]', 'm')
       existing_path = kusto.send(:generate_filepath, existing)
       # Simulate a file already open from a prior batch.
+      writer = IOWriter.new(StringIO.new, existing_path)
+      writer.active = true
+      allow(kusto).to receive(:open).and_return(writer)
       kusto.instance_variable_get(:@files)[existing_path] = writer
 
       fresh = LogStash::Event.new
@@ -1215,6 +1224,9 @@ describe LogStash::Outputs::Kusto do
       # Cap already full (1 open) -> the fresh route is dead-lettered.
       expect(dlq_writer).to have_received(:write).with(fresh, /open temporary file limit \(1\) reached/).once
       kusto.close
+      expect(writer.closed?).to be(true)
+      expect(kusto).to have_received(:kusto_send_file).with(existing_path).once
+      expect(logger).not_to have_received(:error)
     end
 
     it 'does not enforce the open-file cap when it is left at the default (0 = disabled)' do

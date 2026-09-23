@@ -177,7 +177,10 @@ Notes and caveats:
   prefix, owner tag, separators, and a 38-byte generation token. Uppercase ASCII
   costs three encoded bytes; non-ASCII characters can cost more (`é` → 6 bytes).
   The remaining budget is shared by all three encoded values, not 255 bytes per
-  field. Over-budget events go to the DLQ or are dropped with a specific reason.
+  field. Registration fails if fully literal routing values plus mandatory
+  filename overhead already exceed this budget. This is only a lower-bound
+  check: templates and the resolved path are still checked per event.
+  Over-budget events go to the DLQ or are dropped with a specific reason.
   Filesystems with stricter component/full-path limits can still raise storage
   errors; those errors are propagated rather than silently dropping the batch.
 - **File lifetime.** Each active route/time-window writer uses an exclusively
