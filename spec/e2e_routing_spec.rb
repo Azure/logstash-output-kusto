@@ -61,7 +61,7 @@ describe E2E do
     expect(harness.instance_variable_get(:@input_file)).not_to eq(other.instance_variable_get(:@input_file))
   end
 
-  it 'validates both static tables and both routed subsets with the upstream ingestion retry allowance' do
+  it 'validates both static tables and both routed subsets within one shared deadline' do
     rows = CSV.read(harness.instance_variable_get(:@csv_file))
     mapped, unmapped, odd, even = harness.destinations
     allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC).and_return(10.0)

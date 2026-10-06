@@ -19,7 +19,7 @@
 - Require finite nonnegative integer open-file limits. Anchor recovery ownership to the decoded routing suffix; retain invalid files for manual recovery rather than deleting them.
 - Validate persisted routing suffix structure and encoded syntax before recovery or deletion, including empty files; retain malformed and backup files while preserving supported legacy names.
 - Add real-file concurrency/recovery and codec-to-SDK tests, plus stronger live E2E fan-out assertions. Unit tests are network-free.
-- Check E2E readiness and input consumption before proving idle ingestion while Logstash remains running, followed by post-shutdown reconciliation. Require a distinct pre-provisioned second database in CI.
+- Check E2E readiness and input consumption before proving idle ingestion while Logstash remains running, followed by post-shutdown reconciliation. Default CI uses multiple tables in one database; cross-database qualification is opt-in.
 - Known limitation: routing validates target format, not existence. Upload errors may be retried locally; failures after queued submission require ADX ingestion-failure monitoring. Existing queued durability/retry semantics remain unchanged.
 - Upgrade caveat: switching an existing output from static to dynamic routing does not auto-recover legacy static temp files (`.database.table` suffix) still on disk, because dynamic recovery only resends files carrying the output's dynamic owner tag. Drain the pipeline before switching, briefly redeploy the previous static configuration to flush them, or resend them manually.
 

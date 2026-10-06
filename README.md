@@ -277,7 +277,8 @@ Notes and caveats:
   letter queue (or dropped, with a warning, when it is disabled) instead of
   risking file-descriptor exhaustion. The cap is **off by default** (warning
   only), because a default cap combined with the default-disabled dead letter
-  queue would silently drop events for a legitimately high-cardinality pipeline.
+  queue would drop events for a legitimately high-cardinality pipeline, even
+  though each rejected batch logs a warning.
   **For production, setting `dynamic_routing_max_open_files` together with an
   enabled dead letter queue is recommended hardening:** keep the cap below the
   process descriptor limit (`ulimit -n`, leaving headroom for other
@@ -360,13 +361,16 @@ specific behaviors and failure paths.
 The live harness in [e2e/e2e.rb](e2e/e2e.rb) is separate: it creates and drops test
 tables and requires explicit test-cluster credentials (`ENGINE_URL`, `INGEST_URL`,
 `TEST_DATABASE`, Azure CLI auth). It checks static ingestion and dynamic table/
-mapping fan-out. Set `TEST_SECOND_DATABASE` to an existing test database for
-cross-database fan-out too, and set `E2E_REQUIRE_SECOND_DATABASE=true` to reject a
-missing or non-distinct second database before any resources are created. The
-committed Azure pipeline requires this mode: configure `TEST_SECOND_DATABASE`
-there and grant the test identity table/mapping creation, query, ingestion and
-cleanup permissions in both databases. An optional single-database local smoke
-run prints an explicit coverage warning; it does not qualify cross-database routing.
+mapping fan-out. By default, including in CI, the two dynamic tables and two
+static controls use the existing `TEST_DATABASE`; no second database is required.
+This run prints an explicit coverage warning and does not qualify cross-database
+routing. For an optional cross-database run, supply `TEST_SECOND_DATABASE` in the
+test process environment and grant the test identity table/mapping creation,
+query, ingestion and cleanup permissions in both databases. Set
+`E2E_REQUIRE_SECOND_DATABASE=true` for that run to reject a missing or non-distinct
+second database before any resources are created. Both settings are opt-in; the
+default pipeline does not map these optional variables. If using secret pipeline
+variables for an opt-in run, explicitly map them into that task's environment.
 Do not run it against production resources. Each run uses independent table names
 and local paths; local artifacts remain for inspection.
 This is a finite smoke test, not a throughput, soak, or fault-recovery qualification.
@@ -381,8 +385,9 @@ transport behavior still require live qualification. Failures report progress an
 the process-log tail; local logs remain for inspection.
 Forced termination fails the run. Shutdown checks cover the owned process group
 on POSIX and only the spawned PID on Windows. Unique table names are tracked before
-creation so cleanup can handle a lost create response. If process termination is unconfirmed, table
-deletion is deferred and the retained identities are reported for follow-up. After
+creation so cleanup can handle a lost create response. If process termination is
+unconfirmed, table deletion is deferred and the retained identities are reported
+for follow-up. After
 termination is confirmed (or no process was started), cleanup attempts all run-owned
 tables and reports failures without replacing an earlier validation error.
 

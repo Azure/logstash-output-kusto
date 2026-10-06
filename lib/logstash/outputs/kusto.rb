@@ -737,12 +737,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     # filesystem limit") instead of only a total. Populated via event_path.
     unroutable_reasons = Hash.new(0)
 
-    # Dynamic route planning runs under @io_mutex. This output declares `concurrency :shared`,
-    # so several pipeline worker threads can call this method at once; holding the
-    # lock across route planning, the open-file cap decision, and the actual file
-    # opens makes the cap a GLOBAL invariant (two threads cannot each accept new
-    # routes under the cap and together exceed it) and keeps @files reads and
-    # writes consistent. The file I/O below was already serialized here.
+    # Shared workers must plan routes, reserve cap slots and open/write files
+    # under one lock so concurrent batches cannot exceed the global writer cap.
     @io_mutex.synchronize do
       # Optional hard cap on concurrently-open temp files. Free capacity first by
       # running any due stale-file cleanup, then snapshot the files that will
@@ -1050,14 +1046,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
   end
 
-  # Closes temp files that have gone stale and queues them for ingestion. This is
-  # the entry point for the interval cleaner thread (stale_cleanup_type =>
-  # 'interval'), which runs concurrently with the pipeline worker threads under
-  # `concurrency :shared`. It acquires @io_mutex so its @files mutation is
-  # serialized with route planning, the open-file cap snapshot, and writes in
-  # multi_receive_encoded. Ruby's Mutex is NOT reentrant, so callers that already
-  # hold @io_mutex (the event-driven path in multi_receive_encoded) must call
-  # close_stale_files_locked instead.
+  # The interval cleaner shares writer state with receive workers. Mutex is not
+  # reentrant; callers already holding it must use close_stale_files_locked.
   private
   def close_stale_files
     @io_mutex.synchronize { close_stale_files_locked }
@@ -1353,11 +1343,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     @streaming_lock_file = nil
   end
 
-  # Computes the directory to scan for leftover temp files on startup: the fixed
-  # portion of the (already expanded) @path up to the first dynamic field. Both
-  # the index and the slice are taken from @path so relative configured paths
-  # resolve correctly (slicing the raw `path` here left `%{...}` in the result
-  # and broke recovery for relative paths).
+  # Scan the fixed directory prefix before the first '%' in the expanded path.
+  # Take both the index and slice from @path so relative paths stay consistent.
   private
   def recovery_scan_dir
     # Normalise separators (length-preserving) before locating the last directory

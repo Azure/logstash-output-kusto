@@ -225,7 +225,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         return
       end
       if file_size > 0
-        file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path); # 0 - let the sdk figure out the size of the file
+        file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path)
         @kusto_client.ingestFromFile(file_source_info, ingestion_properties)
       else
         @logger.warn("File #{path} is an empty file and is not ingested.")
@@ -496,7 +496,7 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       build_ingestion_properties(target[:database], target[:table], target[:mapping])
     end
 
-    # Reuse the writer's routing validator; nil means no valid destination.
+    # Decode persisted routes with the shared validator's legacy-file compatibility.
     def decode_routing_target(path)
       LogStash::Outputs::Kusto.decode_routing_target(path)
     end

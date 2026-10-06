@@ -9,7 +9,7 @@ This is a Logstash output plugin (`logstash-output-kusto`) that sends events fro
 The plugin has three core classes, all nested under `LogStash::Outputs::Kusto`:
 
 - **`Kusto` (kusto.rb)** — Main output plugin. Extends `LogStash::Outputs::Base`. Handles Logstash config registration, file I/O (writing events to temp files with time-based rotation), and lifecycle (`register`, `multi_receive_encoded`, `close`). Uses `concurrency :shared`.
-- **`Ingestor` (kusto/ingestor.rb)** — Manages authentication (AAD app credentials, managed identity, or CLI auth) and async upload to Kusto via the Java SDK. Runs uploads on a `Concurrent::ThreadPoolExecutor`. Retries indefinitely on transient upload failures.
+- **`Ingestor` (kusto/ingestor.rb)** — Manages authentication (AAD app credentials, managed identity, or CLI auth) and async upload to Kusto via the Java SDK. Runs uploads on a `Concurrent::ThreadPoolExecutor`. Queued upload retries are unbounded; streaming uses interruptible retry cycles for transient failures.
 - **`Interval` (kusto/interval.rb)** — Simple timer utility that runs a callable at a fixed interval using a background thread with `Mutex`/`ConditionVariable`.
 - **`IOWriter`** — Wrapper around file descriptors at the bottom of `kusto.rb`, tracking active/inactive state for stale file cleanup.
 

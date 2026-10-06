@@ -214,6 +214,38 @@ describe E2E, 'readiness and live ingestion evidence' do
   end
 
   context 'cross-database qualification' do
+    it 'defaults to one database with two dynamic tables and two static controls when optional settings are unset' do
+      allow(ENV).to receive(:[]).and_call_original
+      allow(ENV).to receive(:[]).with('TEST_DATABASE').and_return('db')
+      allow(ENV).to receive(:[]).with('E2E_REQUIRE_SECOND_DATABASE').and_return(nil)
+      allow(ENV).to receive(:fetch).and_call_original
+      allow(ENV).to receive(:fetch).with('TEST_SECOND_DATABASE', 'db').and_return('db')
+      configured = described_class.new
+      allow(configured).to receive(:warn)
+
+      expect { configured.validate_test_databases }.not_to raise_error
+      expect(configured.destinations.map(&:first).uniq).to eq(['db'])
+      expect(configured.destinations.map { |_, table, _| table }.uniq.length).to eq(4)
+      expect(configured.destinations.last(2).map(&:last)).to eq(%w[odd_mapping even_mapping])
+      expect(configured.instance_variable_get(:@require_second_database)).to be(false)
+      expect(configured).to have_received(:warn)
+        .with('Single-database smoke test: cross-database routing is NOT covered.')
+    end
+
+    it 'uses a supplied second database even when strict qualification is not requested' do
+      allow(ENV).to receive(:[]).and_call_original
+      allow(ENV).to receive(:[]).with('TEST_DATABASE').and_return('db')
+      allow(ENV).to receive(:[]).with('E2E_REQUIRE_SECOND_DATABASE').and_return(nil)
+      allow(ENV).to receive(:fetch).and_call_original
+      allow(ENV).to receive(:fetch).with('TEST_SECOND_DATABASE', 'db').and_return('other_db')
+      configured = described_class.new
+      allow(configured).to receive(:warn)
+
+      expect { configured.validate_test_databases }.not_to raise_error
+      expect(configured.destinations.last(2).map(&:first)).to eq(%w[db other_db])
+      expect(configured).not_to have_received(:warn)
+    end
+
     [nil, '', 'db', 'DB', '$(TEST_SECOND_DATABASE)'].each do |second|
       it "rejects an unqualified second database #{second.inspect} before creating a client" do
         harness.instance_variable_set(:@database, 'db')
