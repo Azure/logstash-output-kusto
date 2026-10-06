@@ -36,6 +36,9 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # when filenames are compared case-insensitively.
   ROUTING_SEGMENT_UNSAFE = /[^a-z0-9_-]/n
 
+  # Legacy writers left uppercase ASCII literal; dots were always encoded.
+  ROUTING_ENCODED_SEGMENT_PATTERN = /\A(?:[A-Za-z0-9_-]|%[0-9A-Fa-f]{2})*\z/n
+
   # Each newly opened dynamic writer gets an exclusive physical generation.
   # The deterministic route remains the cache key, never an upload pathname.
   ROUTING_GENERATION_MARKER = '.part-'
@@ -76,7 +79,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # do not form valid UTF-8 (a corrupt or foreign file name).
   def self.decode_routing_segment(value)
     return '' if value.nil? || value.empty?
-    decoded = value.to_s.b.gsub(/%([0-9A-Fa-f]{2})/n) { [Regexp.last_match(1).hex].pack('C') }.force_encoding('UTF-8')
+    decoded = value.to_s.b.gsub(/%([0-9A-Fa-f]{2})/n) { [Regexp.last_match(1).hex].pack('C') }
+    decoded.force_encoding('UTF-8')
     decoded.valid_encoding? ? decoded : nil
   end
 
@@ -108,13 +112,32 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     return [nil, 'generated file name carried no routing marker', 'no routing marker'] if marker_index.nil?
 
     encoded = path[(marker_index + ROUTING_MARKER.length)..-1]
-    database_enc, table_enc, mapping_enc = encoded.split('~', 3)
+    segments = encoded.split('~', -1)
+    unless segments.length == 3
+      return [nil, 'routing suffix must contain database, table and an explicit mapping segment',
+              'invalid routing suffix']
+    end
+    database_enc, table_enc, mapping_enc = segments
+    # Preserve the legacy exact-reference mapping form, but never backup tails
+    # or incomplete percent escapes. New writers always encode every segment.
+    valid_mapping = mapping_enc.b.match?(ROUTING_ENCODED_SEGMENT_PATTERN) ||
+                    (allow_legacy_mapping && unresolved_optional_mapping?(mapping_enc))
+    unless database_enc.b.match?(ROUTING_ENCODED_SEGMENT_PATTERN) &&
+           table_enc.b.match?(ROUTING_ENCODED_SEGMENT_PATTERN) && valid_mapping
+      return [nil, 'routing suffix contains an invalid encoded segment', 'invalid routing suffix']
+    end
 
     database = decode_routing_segment(database_enc)
-    return [nil, "database field is missing, unresolved, or invalid (allowed: #{ROUTING_VALUE_DESCRIPTION}; 1-#{ROUTING_VALUE_MAX_LENGTH} characters)", 'missing or invalid database'] if unresolved_or_invalid_routing_value?(database)
+    if unresolved_or_invalid_routing_value?(database)
+      return [nil, "database field is missing, unresolved, or invalid (allowed: #{ROUTING_VALUE_DESCRIPTION}; " \
+                   "1-#{ROUTING_VALUE_MAX_LENGTH} characters)", 'missing or invalid database']
+    end
 
     table = decode_routing_segment(table_enc)
-    return [nil, "table field is missing, unresolved, or invalid (allowed: #{ROUTING_VALUE_DESCRIPTION}; 1-#{ROUTING_VALUE_MAX_LENGTH} characters)", 'missing or invalid table'] if unresolved_or_invalid_routing_value?(table)
+    if unresolved_or_invalid_routing_value?(table)
+      return [nil, "table field is missing, unresolved, or invalid (allowed: #{ROUTING_VALUE_DESCRIPTION}; " \
+                   "1-#{ROUTING_VALUE_MAX_LENGTH} characters)", 'missing or invalid table']
+    end
 
     mapping = decode_routing_segment(mapping_enc)
     if mapping.nil?
@@ -133,10 +156,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
         end
         mapping = nil
       else
-        return [nil, 'json_mapping resolved to a composite value that still contains an unresolved field reference', 'invalid json_mapping']
+        return [nil, 'json_mapping resolved to a composite value that still contains an unresolved field reference',
+                'invalid json_mapping']
       end
     elsif mapping !~ ROUTING_VALUE_PATTERN
-      return [nil, "json_mapping is invalid or too long (allowed: #{ROUTING_VALUE_DESCRIPTION}; 1-#{ROUTING_VALUE_MAX_LENGTH} characters)", 'invalid json_mapping']
+      return [nil, "json_mapping is invalid or too long (allowed: #{ROUTING_VALUE_DESCRIPTION}; " \
+                   "1-#{ROUTING_VALUE_MAX_LENGTH} characters)", 'invalid json_mapping']
     end
 
     [{ database: database, table: table, mapping: mapping }, nil, nil]
@@ -603,13 +628,17 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     end
 
     unless value =~ ROUTING_VALUE_PATTERN
-      @logger.error("#{name} static value '#{value}' must contain only #{ROUTING_VALUE_DESCRIPTION} when dynamic routing is enabled.")
-      raise LogStash::ConfigurationError.new("#{name} static value '#{value}' must contain only #{ROUTING_VALUE_DESCRIPTION} when dynamic routing is enabled.")
+      message = "#{name} static value '#{value}' must contain only #{ROUTING_VALUE_DESCRIPTION} " \
+                'when dynamic routing is enabled.'
+      @logger.error(message)
+      raise LogStash::ConfigurationError, message
     end
 
     if value.length > ROUTING_VALUE_MAX_LENGTH
-      @logger.error("#{name} static value is #{value.length} characters; it must be #{ROUTING_VALUE_MAX_LENGTH} characters or fewer when dynamic routing is enabled.")
-      raise LogStash::ConfigurationError.new("#{name} static value is #{value.length} characters; it must be #{ROUTING_VALUE_MAX_LENGTH} characters or fewer when dynamic routing is enabled.")
+      message = "#{name} static value is #{value.length} characters; it must be " \
+                "#{ROUTING_VALUE_MAX_LENGTH} characters or fewer when dynamic routing is enabled."
+      @logger.error(message)
+      raise LogStash::ConfigurationError, message
     end
   end
 
@@ -940,7 +969,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
     basename = File.basename(file_output_path)
     physical_bytes = basename.bytesize + ROUTING_GENERATION_BYTES
     if physical_bytes > ROUTING_ENCODED_BASENAME_MAX_BYTES
-      return ["encoded routing file name including its generation token is #{physical_bytes} bytes, over the #{ROUTING_ENCODED_BASENAME_MAX_BYTES}-byte filesystem limit (shorten database/table/json_mapping or the path prefix)", 'filename over filesystem limit']
+      reason = "encoded routing file name including its generation token is #{physical_bytes} bytes, " \
+               "over the #{ROUTING_ENCODED_BASENAME_MAX_BYTES}-byte filesystem limit " \
+               '(shorten database/table/json_mapping or the path prefix)'
+      return [reason, 'filename over filesystem limit']
     end
 
     nil

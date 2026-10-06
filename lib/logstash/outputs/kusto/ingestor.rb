@@ -218,14 +218,13 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
       file_size = File.size(path)
       @logger.debug("Sending file to kusto: #{path}. size: #{file_size}")
 
+      ingestion_properties = ingestion_properties_for(path)
+      if ingestion_properties.nil?
+        # Invalid persisted names must remain untouched, even for empty files.
+        @logger.warn('Invalid dynamic routing target; file retained for manual recovery.', path: path)
+        return
+      end
       if file_size > 0
-        ingestion_properties = ingestion_properties_for(path)
-        if ingestion_properties.nil?
-          # Never delete data that was not ingested. Recovery also excludes
-          # invalid targets, leaving their original bytes for manual repair.
-          @logger.warn('Invalid dynamic routing target; file retained for manual recovery.', path: path)
-          return
-        end
         file_source_info = Java::com.microsoft.azure.kusto.ingest.source.FileSourceInfo.new(path); # 0 - let the sdk figure out the size of the file
         @kusto_client.ingestFromFile(file_source_info, ingestion_properties)
       else

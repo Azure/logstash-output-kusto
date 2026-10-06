@@ -714,6 +714,24 @@ describe LogStash::Outputs::Kusto::Ingestor do
         expect(logger).to have_received(:warn).with(/retained for manual recovery/, hash_including(path: path))
       end
     end
+
+    malformed_suffixes = ['db~orders', 'db~orders~map.bak', 'db~orders~.bak', 'db~orders~map~extra']
+    malformed_suffixes.product(['', "payload\n"]).each do |suffix, data|
+      it "retains malformed suffix #{suffix.inspect} even with #{data.bytesize} bytes and deletion enabled" do
+        Dir.mktmpdir('kusto-invalid-recovery') do |directory|
+          path = File.join(directory, "out.kusto~#{suffix}")
+          File.binwrite(path, data)
+          expect(ingestor.instance_variable_get(:@kusto_client)).not_to receive(:ingestFromFile)
+
+          ingestor.upload(path, true)
+
+          expect(File.binread(path)).to eq(data)
+          expect(logger).to have_received(:warn).with(
+            'Invalid dynamic routing target; file retained for manual recovery.', hash_including(path: path)
+          ).once
+        end
+      end
+    end
   end
 
   # describe 'receiving events' do

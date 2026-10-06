@@ -41,11 +41,11 @@ describe E2E do
       expect do
         harness.validate_table_rows('routed_table', [row], 1, mapped: mapped, database: 'routed_database')
       end.not_to raise_error
-      expect(query_client).to have_received(:executeQuery).with('routed_database', /routed_table/)
+      expect(query_client).to have_received(:executeQuery).with('routed_database', /routed_table/, anything)
     end
   end
 
-  it 'uses separate mapping names for each dynamic destination and drains idle files' do
+  it 'uses separate mapping names for each dynamic destination and configures interval cleanup' do
     destinations = harness.destinations
     expect(destinations.last(2).map(&:last).uniq.length).to eq(2)
     config = harness.instance_variable_get(:@logstash_config)
@@ -64,12 +64,15 @@ describe E2E do
   it 'validates both static tables and both routed subsets with the upstream ingestion retry allowance' do
     rows = CSV.read(harness.instance_variable_get(:@csv_file))
     mapped, unmapped, odd, even = harness.destinations
-    expect(harness).to receive(:validate_table_rows).with(mapped[1], rows, 120, mapped: true).ordered
-    expect(harness).to receive(:validate_table_rows).with(unmapped[1], rows, 120, mapped: false).ordered
+    allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC).and_return(10.0)
+    polling = { while_running: false, deadline: 610.0 }
+    expect(harness).to receive(:validate_table_rows).with(mapped[1], rows, 120, mapped: true, **polling).ordered
+    expect(harness).to receive(:validate_table_rows).with(unmapped[1], rows, 120, mapped: false, **polling).ordered
     expect(harness).to receive(:validate_table_rows)
-      .with(odd[1], rows.select { |item| item[0].to_i.odd? }, 120, mapped: true).ordered
+      .with(odd[1], rows.select { |item| item[0].to_i.odd? }, 120, mapped: true, **polling).ordered
     expect(harness).to receive(:validate_table_rows)
-      .with(even[1], rows.select { |item| item[0].to_i.even? }, 120, mapped: true, database: even[0]).ordered
+      .with(even[1], rows.select { |item| item[0].to_i.even? }, 120,
+            mapped: true, database: even[0], **polling).ordered
 
     harness.assert_data
   end
@@ -118,6 +121,9 @@ describe E2E do
     before do
       harness.instance_variable_set(:@lslocalpath, '/logstash with spaces/bin/logstash')
       allow(harness).to receive(:spawn).and_return(pid)
+      allow(harness).to receive(:wait_for_readiness)
+      allow(harness).to receive(:wait_for_input)
+      allow(harness).to receive(:assert_data).with(while_running: true)
       allow(harness).to receive(:wait_for_exit) do |_pid, timeout|
         unless timeout.zero?
           harness.instance_variable_set(:@logstash_status, status)
@@ -136,14 +142,16 @@ describe E2E do
       it "stops Logstash before returning, preserving isolated paths (Windows=#{windows})" do
         allow(Gem).to receive(:win_platform?).and_return(windows)
         directory = harness.instance_variable_get(:@work_directory)
-        arguments = ['/logstash with spaces/bin/logstash', '-f', File.join(directory, 'logstash.conf'),
+        config = File.join(directory, 'logstash.conf')
+        config = config.tr('/', '\\') if windows
+        arguments = ['/logstash with spaces/bin/logstash', '-f', config,
                      '--path.data', File.join(directory, 'data')]
-        process_options = windows ? {} : { pgroup: true }
+        process_options = { out: File.join(directory, 'logstash.log'), err: [:child, :out] }
+        process_options[:pgroup] = true unless windows
 
         harness.run_logstash
         harness.stop_logstash # Cleanup from start's ensure must be idempotent.
 
-        # Match keyword forwarding: Ruby 2.6 retains **{}, whereas Ruby 3 omits it.
         expect(harness).to have_received(:spawn).with(*arguments, **process_options).once
         expect(Process).to have_received(:kill).with('TERM', windows ? pid : -pid).once
         expect(harness).to have_received(:wait_for_exit).with(pid, 30).once
@@ -193,13 +201,14 @@ describe E2E do
       expect(Process).not_to have_received(:kill)
     end
 
-    it 'drains Logstash before validating ADX and closes a close-capable client' do
+    it 'validates live ingestion before TERM and final reconciliation after confirmed shutdown' do
       allow(Gem).to receive(:win_platform?).and_return(false)
       harness.instance_variable_set(:@engine_url, 'https://test.kusto.windows.net')
       allow($kusto_java.data.ClientFactory).to receive(:createClient).and_return(query_client)
       allow(harness).to receive(:create_table_and_mapping)
+      expect(harness).to receive(:assert_data).with(while_running: true).ordered
       expect(Process).to receive(:kill).with('TERM', -pid).ordered
-      expect(harness).to receive(:assert_data).ordered
+      expect(harness).to receive(:assert_data).with(no_args).ordered
       expect(harness).to receive(:drop_and_cleanup).ordered
       expect(query_client).to receive(:close).ordered
 

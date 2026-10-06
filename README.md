@@ -233,6 +233,12 @@ Notes and caveats:
   locks. Invalid owned files are logged and left untouched for manual recovery,
   not uploaded or deleted. Symlinked dynamic recovery files are not uploaded.
   Both older owner-stamped dynamic filenames and new generations can be recovered.
+  Persisted routing suffixes must contain all three segments, including the final
+  separator for an empty mapping. Literal ASCII letters/digits, `_`, `-` and
+  complete `%HH` escapes are supported; legacy uppercase and exact unresolved
+  mapping references remain compatible. Missing separators, raw dots (such as an
+  appended `.bak`), extra segments and malformed escapes are retained for manual
+  recovery, not submitted. Legitimate dots in destination names are encoded.
 - **Upgrade caveat (static → dynamic).** Dynamic recovery only resends temp files
   carrying this output's dynamic owner tag; legacy static temp files use a
   `.database.table` suffix instead. If you switch an existing output from static
@@ -355,13 +361,27 @@ The live harness in [e2e/e2e.rb](e2e/e2e.rb) is separate: it creates and drops t
 tables and requires explicit test-cluster credentials (`ENGINE_URL`, `INGEST_URL`,
 `TEST_DATABASE`, Azure CLI auth). It checks static ingestion and dynamic table/
 mapping fan-out. Set `TEST_SECOND_DATABASE` to an existing test database for
-cross-database fan-out too. Do not run it against production resources. Each run
-uses independent table names and local paths; local artifacts remain for inspection.
+cross-database fan-out too, and set `E2E_REQUIRE_SECOND_DATABASE=true` to reject a
+missing or non-distinct second database before any resources are created. The
+committed Azure pipeline requires this mode: configure `TEST_SECOND_DATABASE`
+there and grant the test identity table/mapping creation, query, ingestion and
+cleanup permissions in both databases. An optional single-database local smoke
+run prints an explicit coverage warning; it does not qualify cross-database routing.
+Do not run it against production resources. Each run uses independent table names
+and local paths; local artifacts remain for inspection.
 This is a finite smoke test, not a throughput, soak, or fault-recovery qualification.
-It requires confirmed shutdown before querying results; forced termination fails
-the run. Shutdown checks cover the owned process group on POSIX and only the
-spawned PID on Windows. Unique table names are tracked before creation so cleanup
-can handle a lost create response. If process termination is unconfirmed, table
+It waits up to 300 seconds for pipeline readiness in the captured process log, then
+up to 120 seconds for the file output to contain every expected row identity.
+It validates all four ADX destinations **while Logstash is still running and input
+is idle**, then confirms shutdown and reconciles the rows again. A shutdown upload
+cannot substitute for the pre-shutdown check. Each validation phase shares a
+600-second polling deadline across destinations, with SDK query timeouts bounded
+by the remaining allowance (at most 60 seconds per query). Authentication and SDK
+transport behavior still require live qualification. Failures report progress and
+the process-log tail; local logs remain for inspection.
+Forced termination fails the run. Shutdown checks cover the owned process group
+on POSIX and only the spawned PID on Windows. Unique table names are tracked before
+creation so cleanup can handle a lost create response. If process termination is unconfirmed, table
 deletion is deferred and the retained identities are reported for follow-up. After
 termination is confirmed (or no process was started), cleanup attempts all run-owned
 tables and reports failures without replacing an earlier validation error.

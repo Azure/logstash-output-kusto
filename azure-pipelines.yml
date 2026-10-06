@@ -85,4 +85,6 @@ jobs:
           ENGINE_URL: $(ENGINE_URL)
           INGEST_URL: $(INGEST_URL)
           TEST_DATABASE: $(TEST_DATABASE)
+          TEST_SECOND_DATABASE: $(TEST_SECOND_DATABASE)
+          E2E_REQUIRE_SECOND_DATABASE: 'true'
           LS_LOCAL_PATH: /home/vsts/logstash/bin/logstash

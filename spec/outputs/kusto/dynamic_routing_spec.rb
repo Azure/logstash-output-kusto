@@ -629,6 +629,37 @@ describe LogStash::Outputs::Kusto, 'dynamic routing safety' do
     expect(logger).to have_received(:warn).with(/invalid.*routing|routing.*invalid/i, hash_including(path: invalid)).twice
   end
 
+  it 'retains malformed and backup suffixes while recovering supported current and legacy files' do
+    plugin = output
+    owner = plugin.instance_variable_get(:@routing_owner_tag)
+    malformed = ['db~orders', 'db~orders~map.bak', 'db~orders~.bak', 'db~orders~map~extra',
+                 'd.b~orders~map', 'db~o.rders~map', 'db~orders~map%2', 'db~orders~map%GG',
+                 'db~orders~map extra', 'db~orders~%{mapping}.bak']
+    invalid_paths = malformed.each_with_index.map do |suffix, index|
+      File.join(@directory, "bad#{index}#{owner}.kusto~#{suffix}")
+    end
+    supported = ['db~orders~', 'db~orders~map%2Ebak', 'Db~Orders~Map',
+                 'db~orders~%25%7B%5B%40metadata%5D%5Bmapping%5D%7D']
+    valid_paths = supported.each_with_index.map do |suffix, index|
+      File.join(@directory, "good#{index}#{owner}.kusto~#{suffix}")
+    end
+    (invalid_paths + valid_paths).each { |path| File.binwrite(path, "original\n") }
+
+    2.times { plugin.send(:recover_past_files) }
+
+    expect(uploads).to contain_exactly(*(valid_paths * 2))
+    invalid_paths.each do |path|
+      expect(File.binread(path)).to eq("original\n")
+      expect(described_class.decode_routing_target(path)).to be_nil
+      expect(logger).to have_received(:warn).with(
+        'Ignoring invalid dynamic routing file; retained for manual recovery.', hash_including(path: path)
+      ).twice
+    end
+    expect(described_class.decode_routing_target(valid_paths[1])[:mapping]).to eq('map.bak')
+    expect(described_class.decode_routing_target(valid_paths[2]))
+      .to eq(database: 'Db', table: 'Orders', mapping: 'Map')
+  end
+
   it 'lets create_if_deleted=false create new routes but dead-letters an externally deleted active file' do
     plugin = output('create_if_deleted' => false)
     plugin.multi_receive_encoded([[event, "first\n"]])

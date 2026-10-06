@@ -222,6 +222,7 @@ describe E2E, 'lifecycle failures' do
     it 'keeps an input failure primary when stopping Logstash also fails' do
       allow(harness).to receive(:run_logstash).and_call_original
       allow(harness).to receive(:spawn).and_return(pid)
+      allow(harness).to receive(:wait_for_readiness)
       allow(File).to receive(:read).and_call_original
       allow(File).to receive(:read).with(harness.instance_variable_get(:@csv_file)).and_raise(IOError, 'input failed')
       allow(harness).to receive(:stop_logstash).and_raise('stop failed')
@@ -433,6 +434,25 @@ describe E2E, 'lifecycle failures' do
       expect(harness.instance_variable_get(:@logstash_status).termsig).to eq(Signal.list.fetch('TERM'))
       expect(harness.instance_variable_get(:@logstash_pid)).to be_nil
       expect { Process.kill(0, -@child_pid) }.to raise_error(Errno::ESRCH)
+    end
+
+    it 'observes real redirected readiness output before stopping a live child' do
+      Dir.mktmpdir('kusto-readiness-child') do |directory|
+        log = File.join(directory, 'logstash.log')
+        @input_read, @input_write = IO.pipe
+        @child_pid = Process.spawn('/bin/sh', '-c', 'printf "Pipeline started\n"; exec cat',
+                                   in: @input_read, out: log, err: [:child, :out], pgroup: true)
+        @input_read.close
+        harness.instance_variable_set(:@logstash_log, log)
+        harness.instance_variable_set(:@logstash_pid, @child_pid)
+        harness.instance_variable_set(:@logstash_process_group, true)
+
+        harness.wait_for_readiness(5)
+        expect(harness.instance_variable_get(:@logstash_status)).to be_nil
+        expect(harness.instance_variable_get(:@logstash_pid)).to eq(@child_pid)
+        harness.stop_logstash
+        expect { Process.kill(0, -@child_pid) }.to raise_error(Errno::ESRCH)
+      end
     end
   end
 end
