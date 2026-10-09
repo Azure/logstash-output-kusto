@@ -1077,9 +1077,8 @@ describe LogStash::Outputs::Kusto do
     end
 
     it 'routes without mapping when an exact single field reference is unresolved' do
-      # An exact field reference like json_mapping => "%{[@metadata][mapping]}"
-      # with a missing field should route without mapping (mapping = nil), which
-      # is the existing intended behavior. We verify this is unchanged by the fix.
+      # A missing field in an exact-reference mapping template routes without a
+      # mapping; database and table must still resolve.
       kusto = described_class.new(dynamic_options)
       kusto.register
 

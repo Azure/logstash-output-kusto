@@ -191,13 +191,12 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # E.g: `/%{myfield}/`, `/test-%{myfield}/` are not valid paths
   config :path, validate: :string, required: false
 
-  # Flush interval (in seconds) for flushing writes to files.
-  # 0 will flush on every message. Increase this value to reduce IO calls but keep
-  # in mind that events buffered before flush can be lost in case of abrupt failure.
+  # Queued-mode flush cadence in seconds; 0 flushes after each file's writes
+  # within a received batch. Buffered writes may be lost on abrupt failure.
   config :flush_interval, validate: :number, default: 2
 
-  # If the generated path is invalid, the events will be saved
-  # into this file and inside the defined path.
+  # Static queued fallback file under the path root. Dynamic routing uses the
+  # DLQ/drop policy instead of this file.
   config :filename_failure, validate: :string, default: '_filepath_failures'
 
   # If the configured file is deleted, but an event is handled by the plugin,
@@ -216,8 +215,10 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # Example: `"file_mode" => 0640`
   config :file_mode, validate: :number, default: -1
 
-  # TODO: fix the interval type...
+  # Minimum seconds between queued stale-file checks. A check closes inactive
+  # writers and marks the rest inactive; writes reactivate them.
   config :stale_cleanup_interval, validate: :number, default: 10
+  # 'events' checks during receive; 'interval' schedules checks when the interval is positive.
   config :stale_cleanup_type, validate: %w[events interval], default: 'events'
 
   # Should the plugin recover from failure?
@@ -301,7 +302,8 @@ class LogStash::Outputs::Kusto < LogStash::Outputs::Base
   # optimized for low latency and automatically falls back to queued ingestion.
   config :ingestion_mode, validate: %w[queued streaming], default: 'queued'
 
-  # Maximum encoded bytes in one streaming request. Events are never split.
+  # Target maximum encoded bytes per streaming request. An oversized event is
+  # sent intact rather than split.
   config :streaming_max_request_bytes, validate: :number, default: 1_048_576
 
   # Additional retries for transient errors that escape the streaming client.
