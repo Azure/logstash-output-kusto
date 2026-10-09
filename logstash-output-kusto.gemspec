@@ -10,8 +10,8 @@ Gem::Specification.new do |s|
   s.require_paths = ["lib", "vendor/jar-dependencies"]
   s.platform = 'java'
 
-  # Files
-  s.files = Dir["lib/**/*","spec/**/*","*.gemspec","*.md","CONTRIBUTORS","Gemfile","LICENSE","NOTICE.TXT", "vendor/jar-dependencies/**/*", "vendor/jar-dependencies/**/*.rb", "version", "docs/**/*"]
+  # Include the E2E harness and fixtures required by its offline specs.
+  s.files = Dir["lib/**/*","spec/**/*","e2e/**/*","*.gemspec","*.md","CONTRIBUTORS","Gemfile","LICENSE","NOTICE.TXT", "vendor/jar-dependencies/**/*", "vendor/jar-dependencies/**/*.rb", "version", "docs/**/*"]
 
   # Tests
   s.test_files = s.files.grep(%r{^(test|spec|features)/})
